@@ -1,0 +1,92 @@
+/* ═══════════════════════════════════════
+   GLOBAL RESETS + VARIABLES
+═══════════════════════════════════════ */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html,
+body,
+#root,
+#stage,
+#stage * {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+img,
+svg {
+  -webkit-user-drag: none;
+  user-drag: none;
+}
+
+:root {
+  /* ── B&W core palette ── */
+  --color-black:    #000000;
+  --color-white:    #ffffff;
+  --color-ink:      #0a0a0a;
+  --color-charcoal: #171717;
+  --color-gray-900: #1f1f1f;
+  --color-gray-700: #4a4a4a;
+  --color-gray-500: #7a7a7a;
+  --color-gray-300: #d4d4d4;
+  --color-gray-100: #f4f4f4;
+
+  /* ── semantic tokens ── */
+  --bg:              #ffffff;
+  --surface:         #ffffff;
+  --surface-inverse: #000000;
+  --text:            #000000;
+  --text-muted:      #666666;
+  --border:          #d9d9d9;
+
+  /* ── shared component aliases (legacy names kept for backward compat) ── */
+  --primary:   #000000;
+  --primary-2: #1f1f1f;
+  --primary-3: #4a4a4a;
+  --secondary: #ffffff;
+  --sec-dark:  #f4f4f4;
+  --white:     #ffffff;
+  --dark:      #0a0a0a;
+  --mid:       #7a7a7a;
+  --light-bg:  #f4f4f4;
+
+  /* ── radii ── */
+  --r:         16px;
+  --r-lg:      24px;
+  --radius-sm: 8px;
+  --radius-md: 16px;
+  --radius-lg: 28px;
+  --radius-pill: 999px;
+}
+
+html, body, #root {
+  width: 100vw; height: 100vh;
+  background: #000000;
+  font-family: 'Inter', sans-serif;
+  overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+}
+
+#stage {
+  width: 1920px; height: 1080px;
+  position: relative;
+  transform-origin: center center;
+  flex-shrink: 0;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+/* ── SCREENS ── */
+.screen {
+  position: absolute; inset: 0;
+  display: flex;
+  opacity: 0; pointer-events: none;
+  transition: opacity .45s ease;
+}
+.screen.active { opacity: 1; pointer-events: all; }
+
+/* flash */
+.flash { position: fixed; inset: 0; background: #fff; z-index: 9999; opacity: 0; pointer-events: none; }
+.flash.on { opacity: 1; transition: none; }

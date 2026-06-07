@@ -1,0 +1,112 @@
+/* ═══════════════════════════════════════
+   SCREEN — LAYOUT SELECTION
+   Mirrors the visual language of SelectionScreen so the new
+   "first-step" reads as part of the same family.
+═══════════════════════════════════════ */
+#s-layout { background: var(--light-bg); flex-direction: column; }
+
+.layout-body {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  gap: 15px;
+  overflow: hidden;
+}
+
+.layout-card {
+  width: 450px;
+  height: 600px;
+  flex-shrink: 0;
+  background: var(--white);
+  border-radius: var(--r-lg);
+  border: 2.5px solid transparent;
+  cursor: pointer;
+  transition: transform .2s, border-color .2s, box-shadow .2s;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, .1);
+}
+.layout-card:hover {
+  transform: translateY(-6px);
+  box-shadow: 0 20px 56px rgba(0, 0, 0, .16);
+}
+.layout-card.selected {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 4px rgba(0, 0, 0, .12), 0 20px 56px rgba(0, 0, 0, .16);
+}
+
+/* Preview thumbnails are mixed-aspect (portrait/landscape) — let
+   the image dictate height, with object-fit: contain so we never
+   crop a layout's defining shape. */
+.layout-img-wrap {
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  background: linear-gradient(135deg, #f4f4f4 0%, #e8e8e8 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  position: relative;
+  flex-shrink: 0;
+}
+.layout-img-wrap img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  display: block;
+  filter: drop-shadow(0 8px 24px rgba(0, 0, 0, .18));
+}
+
+.layout-badge {
+  position: absolute; top: 16px; right: 16px;
+  background: var(--primary); color: var(--secondary);
+  font-size: 12px; font-weight: 700; letter-spacing: 1px;
+  padding: 6px 14px; border-radius: 100px;
+  opacity: 0; transform: scale(.85);
+  transition: opacity .2s, transform .2s;
+}
+.layout-card.selected .layout-badge { opacity: 1; transform: scale(1); }
+
+.layout-info {
+  padding: 22px 24px 26px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.layout-name { font-size: 25px; font-weight: 700; color: var(--dark); }
+.layout-desc { font-size: 13px; color: var(--mid); margin-top: 6px; }
+.layout-meta {
+  display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px;
+}
+.layout-tag {
+  background: rgba(0, 0, 0, .07);
+  color: var(--primary);
+  font-size: 15px; font-weight: 600; letter-spacing: .4px;
+  padding: 4px 10px; border-radius: 100px;
+  white-space: nowrap;
+}
+
+.layout-empty-state {
+  width: min(720px, 82%);
+  padding: 48px 42px;
+  border: 1.5px dashed rgba(0, 0, 0, .18);
+  border-radius: 18px;
+  background: #ffffff;
+  color: #000000;
+  text-align: center;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, .08);
+}
+
+.layout-empty-title {
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: -.2px;
+}
+
+.layout-empty-copy {
+  margin-top: 8px;
+  font-size: 16px;
+  color: rgba(0, 0, 0, .62);
+}

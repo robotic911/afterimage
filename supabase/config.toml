@@ -1,0 +1,5 @@
+[functions.softcopy-page]
+verify_jwt = false
+
+[functions.cleanup-softcopies]
+verify_jwt = false

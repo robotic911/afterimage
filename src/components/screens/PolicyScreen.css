@@ -1,0 +1,80 @@
+/* ═══════════════════════════════════════
+   SCREEN 3 — POLICY
+═══════════════════════════════════════ */
+#s-policy { background: var(--light-bg); flex-direction: column; }
+
+.policy-body {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 32px 48px;
+}
+
+.policy-left {
+  width: 800px;
+  background: var(--white);
+  padding: 48px 44px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  overflow-y: auto;
+  border-radius: 32px;
+  box-shadow: 0 20px 48px rgba(0,0,0,.18);
+}
+.policy-left-title {
+  font-size: 42px; font-weight: 800; color: var(--primary);
+  letter-spacing: -1.5px; line-height: 1.15;
+}
+.policy-left-title span { color: rgba(0,0,0,.4); font-weight: 300; font-style: italic; }
+
+.policy-stat-card {
+  background: rgba(0,0,0,.04);
+  border: 1px solid rgba(0,0,0,.1);
+  border-radius: var(--r); padding: 24px 26px;
+  display: flex; align-items: center; gap: 18px;
+}
+.pstat-icon {
+  width: 58px; height: 58px; border-radius: 14px;
+  background: rgba(0,0,0,.08);
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.pstat-icon svg { width: 30px; height: 30px; color: var(--primary); }
+.pstat-val { font-size: 30px; font-weight: 800; color: var(--primary); line-height: 1; }
+.pstat-lbl { font-size: 16px; color: rgba(0,0,0,.55); margin-top: 5px; }
+
+.policy-actions {
+  margin-top: auto;
+  padding-top: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.policy-rules {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.rule-card {
+  background: rgba(255,255,255,.08);
+  border-radius: var(--r); padding: 24px 28px;
+  display: flex; 
+  align-items: center; gap: 20px;
+  border: 1px solid rgba(255,255,255,.14);
+  transition: border-color .2s, transform .2s;
+}
+.rule-card:hover { border-color: rgba(255,255,255,.28); transform: translateX(4px); }
+.rule-num {
+  width: 70px; height: 70px; border-radius: 50%;
+  background: rgba(255,255,255,.14); color: var(--secondary);
+  font-size: 25px; font-weight: 800;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0; margin-top: 2px;
+}
+.rule-content h4 { font-size: 23px; font-weight: 700; color: var(--secondary); }
+.rule-content p  { font-size: 17px; color: rgba(255,255,255,.7); margin-top: 5px; line-height: 1.55; }

@@ -1,0 +1,725 @@
+body.window-monitor {
+  background: #f5f5f5;
+  display: block;
+  align-items: initial;
+  justify-content: initial;
+}
+
+body.window-monitor #root {
+  width: 100vw;
+  height: 100vh;
+  display: block;
+}
+
+body.window-monitor #stage {
+  width: 100%;
+  height: 100%;
+  position: static;
+  transform: none;
+  overflow: hidden;
+}
+
+.today-monitor,
+.monitor-shell {
+  width: 100%;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  background: #f5f5f5;
+  color: #000;
+  overflow: hidden;
+  overflow-x: hidden;
+}
+
+.today-monitor .monitor-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  padding-bottom: 4px;
+}
+
+.today-monitor.is-exit-modal-open .monitor-body {
+  filter: blur(0.5px);
+  pointer-events: none;
+  user-select: none;
+}
+
+.monitor-layout {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+  gap: 12px;
+}
+
+.monitor-panel {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.monitor-panel-right {
+  overflow: hidden;
+}
+
+.today-monitor .monitor-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.monitor-header-copy {
+  min-width: 0;
+}
+
+.today-monitor .monitor-title {
+  font-size: 17px;
+  font-weight: 900;
+  letter-spacing: 0;
+  line-height: 1.2;
+}
+
+.today-monitor .monitor-date {
+  margin-top: 4px;
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.62);
+}
+
+.monitor-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.monitor-updated {
+  text-align: right;
+}
+
+.monitor-updated span {
+  display: block;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: rgba(0, 0, 0, 0.48);
+}
+
+.monitor-updated strong {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+  font-weight: 900;
+  color: #000;
+}
+
+.monitor-refresh {
+  min-height: 34px;
+  padding: 8px 12px;
+  border: 1px solid #d3d3d3;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #000;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.monitor-refresh:hover:not(:disabled) {
+  background: #f2f2f2;
+}
+
+.monitor-refresh:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.monitor-mode {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.monitor-mode-item,
+.monitor-stat,
+.monitor-error,
+.monitor-empty,
+.monitor-row {
+  background: #ffffff;
+  border: 1px solid #dedede;
+  border-radius: 12px;
+}
+
+.monitor-mode-item {
+  padding: 9px 12px;
+}
+
+.monitor-mode-item span,
+.monitor-stat span {
+  display: block;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: rgba(0, 0, 0, 0.48);
+}
+
+.monitor-mode-item strong,
+.monitor-stat strong {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.25;
+}
+
+.monitor-mode-item--softcopy strong {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.monitor-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  color: #7f1d1d;
+  background: #fef2f2;
+  border-color: #fca5a5;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.monitor-error button {
+  min-height: 30px;
+  padding: 6px 10px;
+  border: 1px solid #e5b3b3;
+  border-radius: 999px;
+  background: #fff;
+  color: #7f1d1d;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.monitor-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.monitor-stat,
+.monitor-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.monitor-controls-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.monitor-operation-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.monitor-controls-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.monitor-toggle {
+  border: 1px solid #dedede;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #000;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 10px;
+}
+
+.monitor-toggle span,
+.monitor-countdown span {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: rgba(0, 0, 0, 0.48);
+}
+
+.monitor-toggle button {
+  min-height: 28px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid #d5d5d5;
+  background: #fff;
+  color: #000;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.monitor-queue-action {
+  min-height: 28px;
+  padding: 5px 10px;
+  border: 1px solid #d5d5d5;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #000;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.monitor-queue-action:hover:not(:disabled) {
+  background: #f2f2f2;
+}
+
+.monitor-queue-action.warning {
+  border-color: #f2c98f;
+  background: #fff8ed;
+}
+
+.monitor-queue-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.monitor-toggle.on {
+  background: #f4f7f5;
+  border-color: #d3e6d8;
+}
+
+.monitor-toggle.off {
+  background: #fcf4f4;
+  border-color: #e6c8c8;
+}
+
+.monitor-toggle.on button {
+  border-color: #b9e3c4;
+}
+
+.monitor-toggle.off button {
+  border-color: #f8b4b4;
+}
+
+.monitor-toggle button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.monitor-countdown {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 10px;
+  border: 1px solid #dedede;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.monitor-countdown input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.monitor-countdown input {
+  width: 100%;
+  min-height: 28px;
+  border: 1px solid #d5d5d5;
+  border-radius: 8px;
+  padding: 4px 8px;
+  background: #fff;
+  color: #000;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.monitor-stat {
+  padding: 9px 10px;
+}
+
+.monitor-stat strong {
+  font-size: 15px;
+}
+
+.monitor-print-queue {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.monitor-print-job-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: min(240px, 34vh);
+  overflow: auto;
+}
+
+.monitor-print-job {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 9px 10px;
+  border: 1px solid #dedede;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.monitor-print-job.status-printing {
+  border-color: #b9d3ff;
+  background: #f3f7ff;
+}
+
+.monitor-print-job.status-queued {
+  background: #fbfbfb;
+}
+
+.monitor-print-job.status-failed {
+  border-color: #f8b4b4;
+  background: #fff7f7;
+}
+
+.monitor-print-job.status-cancelled {
+  border-color: #e4d1a4;
+  background: #fffaf0;
+}
+
+.monitor-print-job-main {
+  min-width: 0;
+}
+
+.monitor-print-job-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.monitor-print-job-top strong {
+  min-width: 0;
+  font-size: 11px;
+  font-weight: 900;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.monitor-print-job-title {
+  margin-top: 5px;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.2;
+}
+
+.monitor-print-job-meta {
+  margin-top: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  font-size: 10px;
+  color: rgba(0, 0, 0, 0.62);
+}
+
+.monitor-print-job-error {
+  margin-top: 6px;
+  font-size: 10px;
+  font-weight: 800;
+  color: #7f1d1d;
+}
+
+.monitor-print-job-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 6px;
+}
+
+.monitor-list-wrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: hidden;
+}
+
+.monitor-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.monitor-list-title {
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.monitor-list-sub {
+  font-size: 11px;
+  color: rgba(0, 0, 0, 0.5);
+}
+
+.monitor-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.monitor-empty {
+  padding: 14px 12px;
+  text-align: center;
+  color: rgba(0, 0, 0, 0.55);
+  font-size: 12px;
+  border-style: dashed;
+  background: #f7f7f7;
+}
+
+.monitor-row {
+  padding: 9px 10px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 10px;
+}
+
+.monitor-row.is-failed {
+  background: #fbfbfb;
+}
+
+.monitor-row-main {
+  min-width: 0;
+}
+
+.monitor-row-time {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  color: rgba(0, 0, 0, 0.52);
+}
+
+.monitor-row-template {
+  margin-top: 3px;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.2;
+}
+
+.monitor-row-sub {
+  margin-top: 3px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  font-size: 10px;
+  color: rgba(0, 0, 0, 0.62);
+}
+
+.monitor-row-metrics {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  text-align: right;
+}
+
+.monitor-row-metrics strong {
+  font-size: 13px;
+}
+
+.monitor-row-metrics span {
+  font-size: 10px;
+  color: rgba(0, 0, 0, 0.6);
+}
+
+.monitor-row-badges {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.monitor-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #f2f2f2;
+  border: 1px solid #dedede;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: #000;
+}
+
+.monitor-badge.good {
+  background: #e7f5eb;
+  border-color: #b9e3c4;
+}
+
+.monitor-badge.bad {
+  background: #fef2f2;
+  border-color: #f8b4b4;
+}
+
+.monitor-badge.test {
+  background: #fff7ed;
+  border-color: #fdba74;
+}
+
+.monitor-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.42);
+}
+
+.monitor-modal {
+  width: min(360px, 100%);
+  padding: 18px;
+  border: 1px solid #d8d8d8;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.22);
+}
+
+.monitor-modal-title {
+  font-size: 15px;
+  font-weight: 900;
+  line-height: 1.2;
+  color: #000;
+}
+
+.monitor-modal-text {
+  margin-top: 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(0, 0, 0, 0.78);
+}
+
+.monitor-modal-text span {
+  display: block;
+  margin-top: 8px;
+  color: rgba(0, 0, 0, 0.58);
+}
+
+.monitor-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.monitor-modal-cancel,
+.monitor-modal-confirm {
+  min-height: 34px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid #d2d2d2;
+  background: #f5f5f5;
+  color: #111;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.monitor-modal-confirm {
+  border-color: #111;
+  background: #111;
+  color: #fff;
+}
+
+.monitor-modal-cancel:hover {
+  background: #ededed;
+}
+
+.monitor-modal-confirm:hover {
+  background: #000;
+}
+
+@media (max-width: 380px) {
+  .monitor-layout,
+  .monitor-controls-grid,
+  .monitor-mode,
+  .monitor-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .monitor-row {
+    grid-template-columns: 1fr;
+  }
+
+  .monitor-row-metrics {
+    align-items: flex-start;
+    text-align: left;
+  }
+}
+
+@media (max-width: 720px) {
+  .monitor-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .monitor-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .monitor-controls-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 520px) {
+  .monitor-layout {
+    gap: 10px;
+  }
+
+  .monitor-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .monitor-header-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .monitor-updated {
+    text-align: left;
+  }
+
+  .monitor-print-job {
+    grid-template-columns: 1fr;
+  }
+
+  .monitor-print-job-actions {
+    align-items: stretch;
+  }
+}

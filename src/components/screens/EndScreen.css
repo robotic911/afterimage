@@ -1,0 +1,47 @@
+/* ═══════════════════════════════════════
+   SCREEN 6 — END
+═══════════════════════════════════════ */
+#s-end {
+  background: var(--primary);
+  align-items: center; justify-content: center;
+  flex-direction: column;
+}
+
+.end-bg-radial {
+  position: absolute; inset: 0;
+  background: radial-gradient(ellipse 900px 700px at 50% 40%, rgba(255,255,255,.06) 0%, transparent 65%);
+  pointer-events: none;
+}
+
+.end-inner {
+  position: relative; z-index: 2;
+  display: flex; flex-direction: column; align-items: center;
+  text-align: center; gap: 20px;
+}
+.end-tick {
+  width: 100px; height: 100px; border-radius: 50%;
+  background: rgba(255,255,255,.1);
+  border: 2px solid rgba(255,255,255,.2);
+  display: flex; align-items: center; justify-content: center;
+  margin-bottom: 12px;
+}
+.end-tick svg { width: 48px; height: 48px; color: var(--secondary); }
+.end-headline {
+  font-size: 88px; font-weight: 900; color: var(--secondary);
+  letter-spacing: -4px; line-height: 1;
+}
+.end-headline span { color: rgba(255,255,255,.3); font-weight: 300; font-style: italic; }
+.end-sub { font-size: 22px; color: rgba(255,255,255,.5); max-width: 560px; line-height: 1.6; }
+
+.end-progress-wrap {
+  width: 360px; background: rgba(255,255,255,.1);
+  border-radius: 100px; height: 5px; margin-top: 24px; overflow: hidden;
+}
+.end-progress-bar {
+  height: 100%; background: var(--secondary);
+  border-radius: 100px; transition: width 1s linear;
+}
+.end-countdown-txt {
+  font-size: 14px; font-weight: 500; color: rgba(255,255,255,.35);
+  letter-spacing: 1px; margin-top: 10px;
+}

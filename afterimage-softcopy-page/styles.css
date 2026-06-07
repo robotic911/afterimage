@@ -1,0 +1,142 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #000;
+  color: #fff;
+}
+
+.page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.card {
+  width: min(100%, 560px);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 32px;
+  padding: clamp(28px, 6vw, 56px);
+  background: #fff;
+  color: #000;
+  text-align: center;
+  box-shadow: 0 24px 80px rgba(255, 255, 255, 0.08);
+}
+
+.brand {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 32px;
+}
+
+.brand img {
+  display: block;
+  width: min(100%, 360px);
+  height: auto;
+  object-fit: contain;
+}
+
+h1 {
+  margin: 0 0 12px;
+  font-size: clamp(28px, 6vw, 48px);
+  line-height: 0.95;
+  letter-spacing: -0.06em;
+}
+
+.muted {
+  margin: 0 auto 26px;
+  max-width: 420px;
+  color: #666;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.preview-wrap {
+  width: 100%;
+  margin: 24px 0;
+  border-radius: 22px;
+  overflow: hidden;
+  background: #f2f2f2;
+  border: 1px solid #ddd;
+}
+
+.preview-wrap img {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.empty-media {
+  margin: 22px 0;
+  padding: 18px;
+  border-radius: 18px;
+  border: 1px solid #d9d9d9;
+  background: #f5f5f5;
+  color: #555;
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+.actions {
+  display: grid;
+  gap: 12px;
+}
+
+.video-section {
+  margin-top: 28px;
+  padding-top: 26px;
+  border-top: 1px solid #e3e3e3;
+}
+
+.video-section h2 {
+  margin: 0 0 14px;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.video-frame {
+  width: min(100%, 360px);
+  margin: 0 auto 14px;
+  border-radius: 22px;
+  overflow: hidden;
+  background: #111;
+  border: 1px solid #d9d9d9;
+}
+
+.video-frame video {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 70vh;
+  background: #111;
+}
+
+.button {
+  display: block;
+  width: 100%;
+  padding: 17px 22px;
+  border-radius: 999px;
+  text-decoration: none;
+  font-weight: 800;
+  font-size: 16px;
+}
+
+.button.primary {
+  background: #000;
+  color: #fff;
+}
+
+.button.secondary {
+  background: #fff;
+  color: #000;
+  border: 1px solid #000;
+}

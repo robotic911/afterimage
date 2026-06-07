@@ -1,0 +1,40 @@
+{
+  "templates": [
+    {
+      "id": "default-dark-teal",
+      "file": "dark-teal.png",
+      "name": "Dark Teal",
+      "desc": "Deep moody tones with a cinematic edge"
+    },
+    {
+      "id": "default-classic-black",
+      "file": "black.png",
+      "name": "Classic Black",
+      "desc": "A clean black frame with a sleek studio feel"
+    },
+    {
+      "id": "default-warm-blush",
+      "file": "warm-blush.png",
+      "name": "Warm Blush",
+      "desc": "Soft rosy warmth for a dreamy feel"
+    },
+    {
+      "id": "default-dark-maroon",
+      "file": "dark-maroon.png",
+      "name": "Dark Maroon",
+      "desc": "Rich burgundy depth with vintage character"
+    },
+    {
+      "id": "default-soft-white",
+      "file": "white.png",
+      "name": "Soft White",
+      "desc": "Bright minimal tones for a crisp timeless strip"
+    },
+    {
+      "id": "default-original",
+      "file": "original.png",
+      "name": "Original",
+      "desc": "The classic KUKU look with familiar booth styling"
+    }
+  ]
+}

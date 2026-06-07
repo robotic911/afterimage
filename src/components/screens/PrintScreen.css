@@ -1,0 +1,254 @@
+/* ═══════════════════════════════════════
+   SCREEN 5 — PRINT
+═══════════════════════════════════════ */
+#s-print { background: var(--light-bg); flex-direction: column; }
+
+.print-body {
+  flex: 1; display: flex; gap: 0; overflow: hidden;
+}
+
+.print-preview-panel {
+  flex: 1; padding: 20px 20px; display: flex; flex-direction: column; gap: 16px;
+  position: relative;
+}
+.print-preview-label { font-size: 14px; font-weight: 600; letter-spacing: 2px; text-transform: uppercase; color: var(--mid); }
+
+.print-test-badge {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  z-index: 2;
+  padding: 7px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(0,0,0,.16);
+  background: rgba(0,0,0,.08);
+  color: #000;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+}
+.print-frame-box {
+  flex: 1; background: var(--white);
+  border-radius: var(--r-lg);
+  border: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden; padding: 24px;
+  box-shadow: 0 2px 16px rgba(0,0,0,.06);
+  position: relative;
+}
+
+/* The wrap's aspect-ratio is set inline by PrintScreen.jsx from the
+   chosen layout's canvas dimensions — most layouts are 2:3 portrait
+   (1200×1800), the landscape quad is 3:2 (1800×1200). */
+.print-frame-wrap {
+  height: 100%;
+  width: auto;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.print-frame-cell {
+  border-radius: 0px;
+  background: rgba(0,0,0,.06);
+}
+
+.print-frame-wrap .layout-preview-grid {
+  background: #fff;
+}
+
+.tmpl-bg {
+  border-radius: 0px;
+}
+
+.print-sidebar {
+  width: 678px; flex-shrink: 0;
+  background: var(--white);
+  border-left: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: 48px 48px;
+  gap: 32px;
+}
+.print-brand-lockup {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 14px;
+  padding: 0 0 10px;
+  border-bottom: 1px solid rgba(0,0,0,.1);
+}
+.print-brand-mark {
+  width: 60px;
+  height: 60px;
+  object-fit: contain;
+  flex: 0 0 auto;
+}
+.print-brand-wordmark {
+  width: min(280px, 72%);
+  height: auto;
+  object-fit: contain;
+  display: block;
+}
+
+.print-sidebar-title { font-size: 40px; font-weight: 800; color: var(--dark); letter-spacing: -1px; }
+
+.softcopy-qr-card {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 24px;
+  border: 1px solid #d9d9d9;
+  border-radius: 24px;
+  background: #fff;
+  color: #000;
+  text-align: center;
+}
+.softcopy-qr-card canvas {
+  width: min(240px, 34vw);
+  height: auto;
+}
+.softcopy-qr-card h3 {
+  margin: 0;
+  font-size: clamp(22px, 2vw, 34px);
+  line-height: 1.05;
+  letter-spacing: 0;
+}
+.softcopy-qr-card p {
+  margin: 0;
+  color: #666;
+  font-size: 15px;
+  line-height: 1.45;
+}
+.softcopy-qr-card--error {
+  background: #f5f5f5;
+  border-color: #bdbdbd;
+}
+.softcopy-error-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+.softcopy-error-actions .btn-ghost {
+  min-height: 42px;
+}
+.softcopy-spinner {
+  width: 46px;
+  height: 46px;
+  border: 3px solid #d8d8d8;
+  border-top-color: #000;
+  border-radius: 999px;
+  animation: softcopy-spin .8s linear infinite;
+}
+@keyframes softcopy-spin {
+  to { transform: rotate(360deg); }
+}
+
+.copies-section { display: flex; flex-direction: column; gap: 12px; }
+.copies-label { font-size: 12px; font-weight: 600; letter-spacing: 2px; text-transform: uppercase; color: var(--mid); }
+.copies-row {
+  display: flex; align-items: center; gap: 0;
+  background: var(--light-bg); border-radius: 100px;
+  padding: 6px; width: fit-content;
+}
+.cnt-btn {
+  width: 52px; height: 52px; border-radius: 50%;
+  background: var(--white); border: 1.5px solid var(--border);
+  font-size: 22px; color: var(--primary); font-weight: 400;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  transition: background .15s, border-color .15s;
+}
+.cnt-btn:hover { background: var(--primary); color: var(--secondary); border-color: var(--primary); }
+.cnt-btn:disabled {
+  opacity: .4;
+  cursor: not-allowed;
+  background: #f5f5f5;
+  color: #777;
+  border-color: var(--border);
+}
+.cnt-btn:disabled:hover {
+  background: #f5f5f5;
+  color: #777;
+  border-color: var(--border);
+}
+.cnt-num {
+  font-size: 36px; font-weight: 800; color: var(--dark);
+  width: 72px; text-align: center;
+}
+
+.retry-banner {
+  background: rgba(0,0,0,.05);
+  border: 1px solid var(--border);
+  border-radius: var(--r); padding: 16px 20px;
+  display: flex; align-items: flex-start; gap: 12px;
+}
+.retry-banner svg { width: 20px; height: 20px; color: var(--primary-3); flex-shrink: 0; margin-top: 2px; }
+.retry-banner p { font-size: 14px; color: var(--mid); line-height: 1.55; }
+.retry-banner strong { color: var(--dark); }
+.print-error-banner {
+  border-color: rgba(170, 0, 0, .28);
+  background: rgba(170, 0, 0, .06);
+}
+.print-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+  justify-content: flex-end;
+  /* margin-top: auto; */
+}
+.btn-print {
+  background: var(--primary); color: var(--secondary);
+  border: 2px solid var(--primary); border-radius: 16px;
+  font-family: 'Inter', sans-serif; font-size: 24px; font-weight: 900;
+  min-height: 78px;
+  padding: 22px 28px; cursor: pointer;
+  transition: background .15s, transform .15s;
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  box-shadow: 0 8px 28px rgba(0,0,0,.22);
+  width: 100%;
+}
+.btn-print:hover { background: var(--color-gray-900); transform: translateY(-2px); }
+.btn-print:active { transform: translateY(0); }
+.btn-print:disabled {
+  opacity: .6;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+.print-secondary-action,
+.print-calibration-action {
+  width: 100%;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.print-secondary-action {
+  min-height: 64px;
+  background: #fff;
+  border-color: rgba(0,0,0,.22);
+  color: #000;
+  font-size: 18px;
+  font-weight: 800;
+  gap: 8px;
+}
+.print-secondary-action:hover {
+  border-color: #000;
+  background: #f2f2f2;
+}
+.print-calibration-action {
+  min-height: 46px;
+  border-width: 1px;
+  color: rgba(0,0,0,.62);
+  font-size: 13px;
+  font-weight: 700;
+  padding: 10px 14px;
+}
+.print-calibration-action:hover {
+  color: #000;
+  border-color: rgba(0,0,0,.4);
+}

@@ -1,0 +1,30 @@
+/* ═══════════════════════════════════════
+   TWEAKS PANEL
+═══════════════════════════════════════ */
+#tweaks-panel {
+  position: fixed; bottom: 28px; right: 28px;
+  width: 280px; background: var(--white);
+  border-radius: 20px; box-shadow: 0 12px 48px rgba(0,0,0,.18);
+  padding: 20px; z-index: 9000;
+  display: none; flex-direction: column; gap: 16px;
+  font-family: 'Inter', sans-serif;
+}
+#tweaks-panel.open { display: flex; }
+.tw-title { font-size: 12px; font-weight: 700; letter-spacing: 2.5px; text-transform: uppercase; color: var(--primary); padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+.tw-row { display: flex; flex-direction: column; gap: 8px; }
+.tw-lbl { font-size: 11px; font-weight: 600; letter-spacing: 1.5px; text-transform: uppercase; color: var(--mid); }
+.tw-swatches { display: flex; gap: 8px; }
+.tw-swatch {
+  width: 32px; height: 32px; border-radius: 50%; cursor: pointer;
+  border: 3px solid transparent; transition: transform .15s, border-color .15s;
+}
+.tw-swatch:hover { transform: scale(1.2); }
+.tw-swatch.active { border-color: var(--dark); }
+.tw-btns { display: flex; gap: 6px; }
+.tw-btn {
+  flex: 1; padding: 9px 6px; border-radius: 8px;
+  border: 1.5px solid var(--border); background: transparent;
+  font-size: 12px; font-weight: 600; color: var(--mid); cursor: pointer;
+  transition: all .15s; text-align: center;
+}
+.tw-btn.active { background: var(--primary); color: var(--secondary); border-color: var(--primary); }

@@ -1,0 +1,26 @@
+node_modules/
+dist/
+release/
+out/
+.DS_Store
+
+.env
+.env.local
+.env.*.local
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+.vite/
+.cache/
+
+*.sqlite
+*.db
+
+# Electron build artifacts
+*.dmg
+*.exe
+*.AppImage
+*.blockmap

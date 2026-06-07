@@ -1,0 +1,266 @@
+#s-arrange { background: var(--light-bg); flex-direction: column; }
+
+.arrange-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.arrange-preview-panel {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  padding: 10px 56px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.arrange-preview-label {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--mid);
+}
+
+.arrange-frame-box {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--white);
+  border-radius: var(--r-lg);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  padding: 24px;
+  box-shadow: 0 2px 16px rgba(0,0,0,.06);
+}
+
+.arrange-preview-panel .layout-preview-frame {
+  --layout-preview-height: 76vh;
+}
+
+.arrange-frame-wrap {
+  border-radius: 0;
+  box-shadow: 0 12px 30px rgba(0,0,0,.14);
+}
+
+/* Layout-specific preview hooks for Arrange Pictures.
+   Keep slot math shared; use these selectors only for visual tuning. */
+.arrange-frame-wrap.layout-preview--classic-strip-4 {
+  --layout-preview-height: 76vh;
+  --grid-inset-top: 0px;
+  --grid-inset-right: 0px;
+  --grid-inset-bottom: 0px;
+  --grid-inset-left: 0px;
+}
+
+.arrange-frame-wrap.layout-preview--classic-strip-3 {
+  --layout-preview-height: 76vh;
+  --grid-inset-top: 0px;
+  --grid-inset-right: 0px;
+  --grid-inset-bottom: 0px;
+  --grid-inset-left: 0px;
+}
+
+.arrange-frame-wrap.layout-preview--portrait-grid {
+  --layout-preview-height: 76vh;
+  --grid-inset-top: 0px;
+  --grid-inset-right: 0px;
+  --grid-inset-bottom: 0px;
+  --grid-inset-left: 0px;
+}
+
+.arrange-frame-wrap.layout-preview--studio-quad {
+  --layout-preview-height: 76vh;
+  --grid-inset-top: 0px;
+  --grid-inset-right: 0px;
+  --grid-inset-bottom: 0px;
+  --grid-inset-left: 0px;
+}
+
+.arrange-frame-wrap .layout-preview-grid {
+  background-color: rgb(240, 240, 240);
+}
+
+.arrange-frame-cell {
+  background: transparent;
+  border: 2px dashed rgba(0,0,0,.12);
+}
+
+.arrange-frame-cell img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.arrange-frame-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  display: block;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.arrange-slot-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: var(--mid);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: .5px;
+  padding: 12px;
+}
+
+.arrange-sidebar {
+  max-width: 800px;
+    flex-shrink: 0;
+  background: var(--white);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  padding: 40px 40px 32px;
+  gap: 16px;
+}
+
+.arrange-sidebar-title {
+  font-size: 30px;
+  font-weight: 800;
+  color: var(--dark);
+  letter-spacing: -1px;
+}
+
+.arrange-sidebar-copy {
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--mid);
+}
+
+.arrange-thumb-grid {
+  --arrange-thumb-width: clamp(150px, 12vw, 220px);
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, var(--arrange-thumb-width)));
+  grid-auto-rows: auto;
+  justify-content: center;
+  align-content: start;
+  gap: 16px 20px;
+  overflow: hidden;
+  margin-top: 4px;
+}
+
+.arrange-thumb-cell {
+  width: 100%;
+  height: auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.arrange-thumb {
+  position: relative;
+  aspect-ratio: var(--shot-ratio);
+  width: 100%;
+  height: auto;
+  min-width: 0;
+  min-height: 0;
+  max-width: 100%;
+  max-height: 100%;
+  border: 2px solid var(--border);
+  border-radius: 18px;
+  background: var(--light-bg);
+  cursor: pointer;
+  transition: transform .15s, border-color .15s, box-shadow .15s;
+  text-align: left;
+  overflow: hidden;
+  padding: 0;
+}
+
+.arrange-thumb-grid--portrait .arrange-thumb {
+  width: 100%;
+  height: auto;
+}
+
+.arrange-thumb-grid--landscape .arrange-thumb {
+  width: 100%;
+  height: auto;
+}
+
+.arrange-thumb.selected {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 4px rgba(0,0,0,.08);
+}
+
+.arrange-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  background: rgba(0,0,0,.06);
+}
+
+.arrange-thumb-label {
+  display: block;
+  margin-top: 10px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--dark);
+}
+
+.arrange-thumb-order {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: var(--secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  font-weight: 800;
+  box-shadow: 0 6px 18px rgba(0,0,0,.18);
+}
+
+.arrange-reset-btn {
+  margin-top: auto;
+  font-size: 22px;
+  padding-left: 28px;
+  padding-right: 28px;
+}
+
+.arrange-footer {
+  display: flex;
+  gap: 16px;
+}
+
+.arrange-retake-btn {
+  flex: 0 0 auto;
+  min-width: 320px;
+  font-size: 20px;
+  padding-left: 28px;
+  padding-right: 28px;
+}
+
+.arrange-continue-btn {
+  flex: 1 1 auto;
+}

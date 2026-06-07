@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Afterimage Softcopy</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <main class="page">
+    <section class="card">
+      <div class="brand">
+        <img src="./assets/ai-typo-black.png" alt="Afterimage" />
+      </div>
+
+      <div id="loading" class="state">
+        <h1>Preparing your softcopies...</h1>
+        <p>Please wait a moment.</p>
+      </div>
+
+      <div id="ready" class="state hidden">
+        <h1>Your softcopies are ready</h1>
+        <p class="muted">Download your photo, GIF, and video below. This link expires 6 hours after your session.</p>
+
+        <div class="preview-wrap">
+          <img id="photoPreview" alt="Afterimage photo preview" />
+        </div>
+
+        <div id="noMediaMessage" class="empty-media hidden">
+          No softcopy files are available for this session.
+        </div>
+
+        <div class="actions">
+          <a id="photoLink" class="button primary" href="#" download>Download Photo</a>
+          <a id="gifLink" class="button secondary" href="#" download>Download GIF</a>
+        </div>
+
+        <section id="videoSection" class="video-section hidden" aria-label="Afterimage session video">
+          <h2>Session video</h2>
+          <div class="video-frame">
+            <video id="videoPreview" controls playsinline preload="metadata"></video>
+          </div>
+          <a id="videoLink" class="button secondary" href="#" download>Download Video</a>
+        </section>
+      </div>
+
+      <div id="error" class="state hidden">
+        <h1>Softcopy unavailable</h1>
+        <p id="errorMessage" class="muted">This download link may be invalid or expired.</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="./app.js"></script>
+</body>
+</html>
