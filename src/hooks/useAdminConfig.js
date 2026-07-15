@@ -17,6 +17,10 @@ import {
   normalizeLayoutSettings,
   saveStoredLayoutSettings,
 } from '../constants/layoutSettings';
+import {
+  DEFAULT_BEAUTIFICATION_SETTINGS,
+  normalizeBeautificationSettings,
+} from '../constants/beautificationSettings';
 import { useCallback, useEffect, useState } from 'react';
 
 const IS_DEV = import.meta.env.DEV;
@@ -25,12 +29,15 @@ const DEFAULT_SETTINGS = {
   mode: 'daily',
   activeEventId: null,
   printEnabled: true,
+  printCopiesEnabled: false,
+  selectedPrinterName: null,
   printerProfileId: DEFAULT_PRINTER_PROFILE_ID,
   safeMarginOverride: DEFAULT_SAFE_MARGIN_OVERRIDE,
   softcopySettings: DEFAULT_SOFTCOPY_SETTINGS,
   layoutSettings: DEFAULT_LAYOUT_SETTINGS,
   bundledTemplateOverrides: {},
   countdownSeconds: DEFAULT_COUNTDOWN_SECONDS,
+  beautificationSettings: DEFAULT_BEAUTIFICATION_SETTINGS,
   testModeEnabled: false,
 };
 
@@ -112,12 +119,17 @@ export function useAdminConfig() {
         mode: settingsRes.settings?.mode === 'event' ? 'event' : 'daily',
         activeEventId: settingsRes.settings?.activeEventId ?? null,
         printEnabled: settingsRes.settings?.printEnabled !== false,
+        printCopiesEnabled: settingsRes.settings?.printCopiesEnabled === true,
+        selectedPrinterName: settingsRes.settings?.selectedPrinterName || null,
         printerProfileId: settingsRes.settings?.printerProfileId === 'dnp_4x6' ? 'dnp_4x6' : DEFAULT_PRINTER_PROFILE_ID,
         safeMarginOverride: settingsRes.settings?.safeMarginOverride ?? DEFAULT_SAFE_MARGIN_OVERRIDE,
         softcopySettings: loadedSoftcopySettings,
         layoutSettings: loadedLayoutSettings,
         bundledTemplateOverrides: settingsRes.settings?.bundledTemplateOverrides ?? {},
         countdownSeconds: normalizeCountdownSeconds(settingsRes.settings?.countdownSeconds),
+        beautificationSettings: normalizeBeautificationSettings(
+          settingsRes.settings?.beautificationSettings,
+        ),
         testModeEnabled: settingsRes.settings?.testModeEnabled === true,
       });
       setEvents(eventsRes.events || []);
@@ -181,12 +193,17 @@ export function useAdminConfig() {
         mode: nextSettings.mode === 'event' ? 'event' : 'daily',
         activeEventId: nextSettings.activeEventId ?? null,
         printEnabled: nextSettings.printEnabled !== false,
+        printCopiesEnabled: nextSettings.printCopiesEnabled === true,
+        selectedPrinterName: nextSettings.selectedPrinterName || null,
         printerProfileId: nextSettings.printerProfileId === 'dnp_4x6' ? 'dnp_4x6' : DEFAULT_PRINTER_PROFILE_ID,
         safeMarginOverride: nextSettings.safeMarginOverride ?? DEFAULT_SAFE_MARGIN_OVERRIDE,
         softcopySettings: loadedSoftcopySettings,
         layoutSettings: loadedLayoutSettings,
         bundledTemplateOverrides: nextSettings.bundledTemplateOverrides ?? {},
         countdownSeconds: normalizeCountdownSeconds(nextSettings.countdownSeconds),
+        beautificationSettings: normalizeBeautificationSettings(
+          nextSettings.beautificationSettings,
+        ),
         testModeEnabled: nextSettings.testModeEnabled === true,
       });
       setError(null);

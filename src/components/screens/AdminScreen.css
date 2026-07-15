@@ -1312,6 +1312,58 @@
   background: #ebebeb;
 }
 
+.admin-printer-selector-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.admin-printer-queue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.admin-printer-queue {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #dedede;
+  border-radius: 12px;
+  background: #f8f8f8;
+}
+
+.admin-printer-queue.active {
+  border-color: var(--admin-success-border);
+  background: var(--admin-success-soft);
+}
+
+.admin-printer-queue.offline {
+  border-color: var(--admin-warning-border);
+}
+
+.admin-printer-queue-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.admin-printer-queue-main strong,
+.admin-printer-queue-main span {
+  overflow-wrap: anywhere;
+}
+
+.admin-printer-queue-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
 .admin-softcopy-options,
 .admin-softcopy-media {
   display: flex;
@@ -1321,10 +1373,6 @@
 
 .admin-softcopy-media {
   padding-top: 2px;
-}
-
-.admin-softcopy-media.is-disabled {
-  opacity: .72;
 }
 
 .admin-softcopy-toggle {
@@ -1361,13 +1409,6 @@
 }
 
 .admin-softcopy-toggle:disabled {
-  cursor: not-allowed;
-}
-
-.admin-softcopy-toggle.is-blocked {
-  background: #f1f1f1;
-  border-color: #d8d8d8;
-  color: rgba(0,0,0,.46);
   cursor: not-allowed;
 }
 
@@ -1416,17 +1457,6 @@
   box-shadow: 0 1px 2px rgba(0,0,0,.14);
 }
 
-.admin-softcopy-toggle.is-blocked .admin-softcopy-toggle-ui,
-.admin-softcopy-toggle.is-blocked.is-on .admin-softcopy-toggle-ui {
-  background: #d7d7d7;
-  border-color: #c8c8c8;
-}
-
-.admin-softcopy-toggle.is-blocked .admin-softcopy-toggle-ui::after,
-.admin-softcopy-toggle.is-blocked.is-on .admin-softcopy-toggle-ui::after {
-  transform: translateX(0);
-}
-
 .admin-softcopy-toggle:disabled strong,
 .admin-softcopy-toggle:disabled small {
   color: rgba(0,0,0,.46);
@@ -1444,6 +1474,56 @@
   font-size: 12px;
   line-height: 1.35;
   color: rgba(0,0,0,.58);
+}
+
+.admin-beautification-range {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1.5px solid #e0e0e0;
+  border-radius: 14px;
+  background: #fafafa;
+}
+
+.admin-beautification-range > span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 14px;
+}
+
+.admin-beautification-range output {
+  min-width: 52px;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: #000000;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.admin-beautification-range input[type=range] {
+  width: 100%;
+  min-height: 32px;
+  accent-color: #000000;
+  cursor: pointer;
+}
+
+.admin-beautification-range small {
+  color: rgba(0,0,0,.58);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.admin-beautification-range.is-disabled {
+  opacity: .55;
+}
+
+.admin-beautification-range.is-disabled input {
+  cursor: not-allowed;
 }
 
 /* ═══════════════════════════════════════
@@ -1641,5 +1721,82 @@
     min-width: 0;
     width: calc(100vw - 32px);
     max-height: calc(100vh - 32px);
+  }
+}
+
+/* Touch-friendly admin sizing without expanding data-heavy layouts excessively. */
+#s-admin {
+  font-size: 16px;
+}
+
+.admin-title {
+  font-size: 21px;
+}
+
+.admin-system-controls-label,
+.admin-status-label,
+.admin-chip,
+.admin-list-meta {
+  font-size: 12px;
+}
+
+.admin-status-value,
+.admin-list-desc,
+.admin-field > span,
+.admin-field small,
+.admin-active-copy,
+.admin-modal-subtitle,
+.admin-inline-note {
+  font-size: 14px;
+}
+
+.admin-list-name,
+.admin-field,
+.admin-field-row > span,
+.template-active-toggle,
+.admin-modal-body {
+  font-size: 16px;
+}
+
+.admin-field input[type=text],
+.admin-field input[type=number],
+.admin-field input[type=password],
+.admin-field input[type=date],
+.admin-field select,
+.admin-field textarea {
+  min-height: var(--admin-control-min-height);
+  font-size: 16px;
+  padding: 12px 14px;
+}
+
+.admin-field-row input[type=checkbox] {
+  width: 22px;
+  height: 22px;
+}
+
+.admin-status-toggle,
+.template-active-toggle {
+  min-height: var(--admin-control-min-height);
+}
+
+.admin-btn {
+  min-height: var(--admin-control-min-height);
+  padding: 11px 18px;
+  font-size: 15px;
+}
+
+.admin-modal-title {
+  font-size: 25px;
+}
+
+.admin-modal-actions .admin-btn {
+  min-height: 48px;
+  padding-inline: 20px;
+}
+
+@media (max-height: 820px) {
+  .admin-modal {
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
   }
 }

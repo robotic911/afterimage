@@ -5,6 +5,8 @@ import {
   SESSION_VIDEO_SCALE,
   VIDEO_SOFTCOPY_DURATION_MS,
 } from '../constants/softcopySettings';
+import { MIRROR_CAMERA_OUTPUT } from '../constants/cameraSettings';
+import { getCameraDrawRect } from './cameraFraming';
 import { loadImageCached } from './imageCache';
 
 const SHOT_CLIP_SCALE = 1;
@@ -24,10 +26,6 @@ function pickSupportedVideoMimeType() {
 
 function extensionFromMimeType(mimeType = '') {
   return mimeType.includes('mp4') ? 'mp4' : 'webm';
-}
-
-function clamp(value, min, max) {
-  return Math.max(min, Math.min(max, value));
 }
 
 function loadVideoFromBlob(blob) {
@@ -85,47 +83,42 @@ function drawCover(ctx, source, dx, dy, dw, dh, { mirror = false } = {}) {
   ctx.restore();
 }
 
-function drawCameraCover(ctx, video, canvasW, canvasH, layout) {
+function drawHeightLockedCamera(ctx, video, canvasW, canvasH, layout, { mirror = false } = {}) {
   const vw = video.videoWidth || layout?.camera?.width || canvasW;
   const vh = video.videoHeight || layout?.camera?.height || canvasH;
-  const destAspect = canvasW / canvasH;
-  const srcAspect = vw / vh;
-
-  let sx = 0;
-  let sy = 0;
-  let sw = vw;
-  let sh = vh;
-
-  if (srcAspect > destAspect) {
-    sh = vh;
-    sw = vh * destAspect;
-    sx = (vw - sw) / 2;
-  } else {
-    sw = vw;
-    sh = vw / destAspect;
-    sy = (vh - sh) / 2;
-  }
-
-  const framing = layout?.cameraFraming || {};
-  const zoom = Math.max(1, Number(framing.zoom) || 1);
-  const offsetX = clamp(Number(framing.offsetX) || 0, -0.5, 0.5);
-  const offsetY = clamp(Number(framing.offsetY) || 0, -0.5, 0.5);
-  const zoomedSw = sw / zoom;
-  const zoomedSh = sh / zoom;
-
-  sx += (sw - zoomedSw) / 2;
-  sy += (sh - zoomedSh) / 2;
-  sx += offsetX * zoomedSw;
-  sy += offsetY * zoomedSh;
-  sw = zoomedSw;
-  sh = zoomedSh;
-  sx = clamp(sx, 0, Math.max(0, vw - sw));
-  sy = clamp(sy, 0, Math.max(0, vh - sh));
+  const {
+    sourceX,
+    sourceY,
+    sourceWidth,
+    sourceHeight,
+    drawX,
+    drawY,
+    drawWidth,
+    drawHeight,
+  } = getCameraDrawRect({
+    sourceWidth: vw,
+    sourceHeight: vh,
+    targetWidth: canvasW,
+    targetHeight: canvasH,
+    framing: layout?.cameraFraming,
+  });
 
   ctx.save();
-  ctx.translate(canvasW, 0);
-  ctx.scale(-1, 1);
-  ctx.drawImage(video, sx, sy, sw, sh, 0, 0, canvasW, canvasH);
+  if (mirror) {
+    ctx.translate(canvasW, 0);
+    ctx.scale(-1, 1);
+  }
+  ctx.drawImage(
+    video,
+    sourceX,
+    sourceY,
+    sourceWidth,
+    sourceHeight,
+    drawX,
+    drawY,
+    drawWidth,
+    drawHeight,
+  );
   ctx.restore();
 }
 
@@ -134,6 +127,7 @@ export async function startShotClipRecording({
   video,
   shotIndex,
   durationTargetMs = null,
+  photoFilter = '',
   fps = SESSION_VIDEO_FPS,
 }) {
   if (typeof MediaRecorder === 'undefined') {
@@ -176,7 +170,12 @@ export async function startShotClipRecording({
     ctx.fillStyle = '#000000';
     ctx.fillRect(0, 0, canvasW, canvasH);
     if (video.readyState >= 2) {
-      drawCameraCover(ctx, video, canvasW, canvasH, layout);
+      ctx.save();
+      if (photoFilter) ctx.filter = photoFilter;
+      drawHeightLockedCamera(ctx, video, canvasW, canvasH, layout, {
+        mirror: MIRROR_CAMERA_OUTPUT,
+      });
+      ctx.restore();
     }
     if (!stopped) frameRequest = requestAnimationFrame(render);
   };
@@ -219,6 +218,28 @@ export async function startShotClipRecording({
   recorder.start(1000);
   startedAt = Date.now();
   if (IS_DEV) {
+    const framing = getCameraDrawRect({
+      sourceWidth: video.videoWidth || layout.camera.width,
+      sourceHeight: video.videoHeight || layout.camera.height,
+      targetWidth: canvasW,
+      targetHeight: canvasH,
+      framing: layout.cameraFraming,
+    });
+    console.log('[video] session framing mode', framing.fitMode);
+    console.log('[camera-framing] height-locked', {
+      layoutId: layout.id,
+      sourceWidth: framing.sourceWidth,
+      sourceHeight: framing.sourceHeight,
+      sourceAspect: framing.sourceAspect,
+      targetWidth: canvasW,
+      targetHeight: canvasH,
+      targetAspect: framing.targetAspect,
+      drawWidth: framing.drawWidth,
+      drawHeight: framing.drawHeight,
+      drawX: framing.drawX,
+      drawY: framing.drawY,
+      fullSourceHeightVisible: true,
+    });
     console.log('[video] shot clip recording started', {
       shotIndex,
       durationTargetMs,
@@ -226,6 +247,11 @@ export async function startShotClipRecording({
       width: canvasW,
       height: canvasH,
       fps,
+    });
+    console.log('[mirror] gif/video/keychain', {
+      gifMirrorApplied: false,
+      videoMirrorApplied: MIRROR_CAMERA_OUTPUT,
+      keychainMirrorApplied: false,
     });
   }
 
@@ -237,6 +263,8 @@ export async function composeSimultaneousSlotVideo({
   shotVideoClips = [],
   backgroundSrc = null,
   templateSrc = null,
+  photoFilter = '',
+  selectedFilter = 'none',
   fps = SESSION_VIDEO_FPS,
   scale = SESSION_VIDEO_SCALE,
 }) {
@@ -254,6 +282,10 @@ export async function composeSimultaneousSlotVideo({
   const finalDurationMs = VIDEO_SOFTCOPY_DURATION_MS;
 
   if (IS_DEV) {
+    console.log('[filter] final render filter', {
+      selectedFilter: selectedFilter || 'none',
+      outputType: 'video',
+    });
     console.log('[video] target duration ms', VIDEO_SOFTCOPY_DURATION_MS);
     console.log('[video] simultaneous composition started', {
       clipCount: usableClips.length,
@@ -310,6 +342,8 @@ export async function composeSimultaneousSlotVideo({
       for (const slot of matchingSlots) {
         const layoutW = layout?.canvas?.w || layout?.canvas?.width || 1200;
         const layoutH = layout?.canvas?.h || layout?.canvas?.height || 1800;
+        ctx.save();
+        if (photoFilter) ctx.filter = photoFilter;
         drawCover(
           ctx,
           video,
@@ -318,6 +352,7 @@ export async function composeSimultaneousSlotVideo({
           (slot.w / layoutW) * width,
           (slot.h / layoutH) * height,
         );
+        ctx.restore();
       }
     }
 

@@ -1,5 +1,5 @@
 // Filter presets used on the Camera screen.
-// `css` is applied as a CSS filter to both the live preview and the capture canvas.
+// `css` is applied to previews and downstream print/softcopy render canvases.
 export const FILTERS = [
   { id: 'none',    name: 'Natural',     desc: 'No filter',          bg: 'linear-gradient(135deg,#f4f4f4,#cfcfcf)', css: '' },
   { id: 'warm',    name: 'Golden Hour', desc: 'Warm & bright',      bg: 'linear-gradient(135deg,#fff1b8,#f59e0b)', css: 'sepia(0.3) saturate(1.4) brightness(1.05)' },

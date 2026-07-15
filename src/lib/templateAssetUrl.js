@@ -5,3 +5,15 @@ export function versionTemplateAssetSrc(src, template = {}) {
   const separator = src.includes('?') ? '&' : '?';
   return `${src}${separator}v=${encodeURIComponent(version)}`;
 }
+
+export function getTemplatePreviewBackgroundSrc(template = {}) {
+  return template?.backgroundSrc || template?.previewSrc || template?.src || null;
+}
+
+export function getTemplateOverlaySrc(template = {}) {
+  if (template?.overlaySrc) return template.overlaySrc;
+  if (template?.source === 'bundled' || template?.storageSource === 'bundled' || template?.isBundled === true) {
+    return template?.src || null;
+  }
+  return null;
+}

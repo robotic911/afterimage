@@ -38,26 +38,28 @@ export default function LayoutScreen({
             <div className="layout-empty-copy">Please enable a layout in Admin.</div>
           </div>
         ) : availableLayouts.map((l) => (
-          <div
+          <button
+            type="button"
             key={l.id}
             id={`lay-${l.id}`}
             className={`layout-card ${selectedLayout === l.id ? 'selected' : ''}`}
             onClick={() => onSelect(l.id)}
+            aria-pressed={selectedLayout === l.id}
           >
             <div className="layout-img-wrap">
               <img src={l.previewSrc || l.frameSrc} alt={l.name} loading="lazy" decoding="async" />
               <div className="layout-badge">✓ Selected</div>
             </div>
             <div className="layout-info">
-              {/* <div className="layout-name">{l.name}</div> */}
-              {/* <div className="layout-desc">{l.desc}</div> */}
+              <div className="layout-name">{l.name}</div>
+              <div className="layout-desc">{l.desc}</div>
               <div className="layout-meta">
                 {l.tags.map((tag) => (
                   <span className="layout-tag" key={tag}>{tag}</span>
                 ))}
               </div>
             </div>
-          </div>
+          </button>
         ))}
       </div>
 
@@ -69,7 +71,7 @@ export default function LayoutScreen({
           disabled={!selectedLayout || availableLayouts.length === 0}
           onClick={onNext}
         >
-          Continue →
+          Continue to Instructions →
         </button>
       </div>
     </div>

@@ -9,9 +9,10 @@
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(380px, .95fr);
-  gap: 28px;
-  padding: 24px 48px 8px;
+  grid-template-columns: minmax(560px, 1fr) minmax(760px, 900px);
+  gap: clamp(28px, 2.25vw, 44px);
+  align-items: stretch;
+  padding: 18px 40px 8px;
   overflow: hidden;
 }
 
@@ -25,6 +26,11 @@
 .sel-options-panel {
   min-width: 0;
   min-height: 0;
+}
+
+.sel-options-panel {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .sel-preview-box,
@@ -47,28 +53,37 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
+  gap: 12px;
 }
 
 .sel-card-kicker {
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 2px;
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 1.6px;
   text-transform: uppercase;
   color: var(--primary-3);
 }
 
 .sel-card-title {
   margin-top: 6px;
-  font-size: 21px;
+  font-size: clamp(24px, 1.55vw, 28px);
   font-weight: 800;
-  letter-spacing: -.8px;
+  letter-spacing: 0;
+  line-height: 1.12;
   color: var(--dark);
+}
+
+.sel-section-helper {
+  margin-top: 7px;
+  color: rgba(0,0,0,.62);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.3;
 }
 
 .sel-card-mode-note {
   margin-top: 8px;
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 700;
   color: rgba(0,0,0,.62);
 }
@@ -76,14 +91,13 @@
 .sel-card-chip,
 .sel-card-count {
   flex-shrink: 0;
-  padding: 9px 14px;
+  padding: 7px 11px;
   border-radius: 999px;
   background: rgba(0,0,0,.06);
   color: var(--primary);
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 700;
-  letter-spacing: .8px;
-  text-transform: uppercase;
+  line-height: 1.2;
 }
 
 .sel-preview-stage {
@@ -161,158 +175,33 @@
 .sel-options-box {
   display: flex;
   flex-direction: column;
-  padding: 24px;
-  gap: 18px;
-  overflow: hidden;
-}
-
-.sel-filters-section {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  flex-shrink: 0;
-}
-
-.sel-filters-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  width: min(100%, 900px);
+  max-width: 900px;
+  box-sizing: border-box;
+  padding: clamp(20px, 1.35vw, 26px);
   gap: 16px;
+  border-color: rgba(0,0,0,.1);
+  border-radius: 28px;
+  box-shadow: 0 18px 44px rgba(0,0,0,.09);
 }
 
-.sel-filters-title {
-  margin-top: 6px;
-  font-size: 20px;
-  font-weight: 800;
-  letter-spacing: -.4px;
-  color: var(--dark);
+.tmpl-card:focus-visible {
+  outline: 3px solid #2f6feb;
+  outline-offset: 3px;
 }
 
-.sel-filter-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(132px, 1fr));
-  gap: 12px;
-}
-
-.sel-filter-card {
-  position: relative;
-  display: grid;
-  grid-template-columns: 58px minmax(0, 1fr);
-  align-items: center;
-  gap: 11px;
-  width: 100%;
-  min-height: 82px;
-  padding: 11px 12px;
-  border: 1.5px solid rgba(0,0,0,.12);
-  border-radius: 14px;
-  background: #ffffff;
-  color: var(--primary);
-  cursor: pointer;
-  text-align: left;
-  appearance: none;
-  overflow: hidden;
-  transition: transform .18s, border-color .18s, box-shadow .18s, background .18s;
-}
-
-.sel-filter-card:hover {
-  transform: translateY(-1px);
-  border-color: rgba(0,0,0,.32);
-  box-shadow: 0 12px 28px rgba(0,0,0,.1);
-  background: #fafafa;
-}
-
-.sel-filter-card.active {
-  border-color: #000000;
-  background: #f6f6f6;
-  box-shadow: inset 0 0 0 1px #000000, 0 12px 28px rgba(0,0,0,.12);
-}
-
-.sel-filter-swatch {
-  position: relative;
-  width: 58px;
-  height: 58px;
-  border-radius: 12px;
-  border: 1px solid rgba(0,0,0,.18);
-  box-shadow:
-    inset 0 0 0 1px rgba(255,255,255,.38),
-    0 8px 18px rgba(0,0,0,.1);
-  overflow: hidden;
-}
-
-.sel-filter-swatch::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background:
-    radial-gradient(circle at 30% 24%, rgba(255,255,255,.42), transparent 34%),
-    linear-gradient(180deg, rgba(255,255,255,.14), rgba(0,0,0,.16));
-  pointer-events: none;
-}
-
-.sel-filter-swatch-shine {
-  position: absolute;
-  inset: 8px auto auto 8px;
-  width: 16px;
-  height: 16px;
-  border-radius: 999px;
-  background: rgba(255,255,255,.58);
-  filter: blur(3px);
-  pointer-events: none;
-}
-
-.sel-filter-copy {
+.sel-backgrounds-section {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-
-.sel-filter-name {
-  font-size: 14.5px;
-  font-weight: 800;
-  color: var(--dark);
-  line-height: 1.1;
-}
-
-.sel-filter-desc {
-  font-size: 12px;
-  font-weight: 600;
-  color: rgba(0,0,0,.7);
-  line-height: 1.2;
-}
-
-.sel-filter-check {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  width: 20px;
-  height: 20px;
-  border-radius: 999px;
-  display: grid;
-  place-items: center;
-  background: #000000;
-  color: #ffffff;
-  font-size: 12px;
-  font-weight: 900;
-  opacity: 0;
-  transform: scale(.72);
-  transition: opacity .18s ease, transform .18s ease;
-}
-
-.sel-filter-card.active .sel-filter-check {
-  opacity: 1;
-  transform: scale(1);
+  gap: 10px;
+  min-height: 0;
 }
 
 .sel-grid {
-  flex: 1;
-  min-height: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 9px 10px;
   align-content: start;
-  overflow-y: auto;
-  padding: 6px;
 }
 
 .sel-empty {
@@ -329,34 +218,45 @@
 
 .tmpl-card {
   position: relative;
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
   width: 100%;
-  border: 1.5px solid rgba(0,0,0,.12);
-  background: #f4f4f4;
-  padding: 0;
+  min-height: 50px;
+  padding: 5px 30px 5px 5px;
+  border: 1px solid rgba(0,0,0,.14);
+  border-radius: 12px;
+  background: #ffffff;
+  color: var(--dark);
   cursor: pointer;
-  transition: transform .18s, border-color .18s, box-shadow .18s;
+  transition: transform .18s, border-color .18s, box-shadow .18s, background .18s;
   overflow: hidden;
-  box-shadow: 0 5px 18px rgba(0,0,0,.08);
+  box-shadow: 0 5px 14px rgba(0,0,0,.06);
   appearance: none;
   text-align: left;
 }
 
 .tmpl-card:hover {
-  transform: translateY(-3px);
-  border-color: rgba(0,0,0,.24);
-  box-shadow: 0 16px 34px rgba(0,0,0,.12);
+  transform: translateY(-1px);
+  border-color: rgba(0,0,0,.34);
+  background: #fafafa;
+  box-shadow: 0 10px 22px rgba(0,0,0,.1);
 }
 
 .tmpl-card.selected {
-  transform: translateY(-2px) scale(1.01);
-  border-color: var(--primary);
-  box-shadow: 0 0 0 4px rgba(0,0,0,.08), 0 18px 36px rgba(0,0,0,.16);
+  border: 2px solid #111111;
+  background: #f7f7f7;
+  box-shadow: 0 8px 18px rgba(0,0,0,.11);
 }
 
 .tmpl-img-wrap {
   position: relative;
-  width: 100%;
-  aspect-ratio: 3 / 4;
+  display: block;
+  width: 60px;
+  height: 60px;
+  border: 1px solid rgba(0,0,0,.1);
+  border-radius: 8px;
   overflow: hidden;
   background: linear-gradient(180deg, #f7f7f7 0%, #ececec 100%);
 }
@@ -370,48 +270,68 @@
   display: block;
 }
 
-.tmpl-overlay {
-  position: absolute;
-  inset: 0;
-  background:
-    linear-gradient(180deg, rgba(0,0,0,.1) 0%, rgba(0,0,0,.04) 34%, rgba(0,0,0,.48) 100%);
+.tmpl-preview-empty {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+  color: rgba(0,0,0,.55);
+  font-size: 18px;
+  font-weight: 800;
 }
 
-.tmpl-name-center {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 18px;
-  text-align: center;
-  color: #fff;
-  font-size: 22px;
-  font-weight: 800;
-  letter-spacing: -.4px;
-  text-shadow: 0 8px 24px rgba(0,0,0,.35);
-  z-index: 2;
+.tmpl-card-name {
+  min-width: 0;
+  padding-left: 25px;
+  color: var(--dark);
+  font-size: clamp(14px, .85vw, 16px);
+  font-weight: 700;
+  line-height: 1.12;
+  overflow-wrap: anywhere;
 }
 
 .tmpl-badge {
   position: absolute;
-  top: 5px;
-  right: 5px;
+  top: 50%;
+  right: 7px;
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
   background: var(--primary);
   color: var(--secondary);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: .8px;
-  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 900;
   border-radius: 999px;
   opacity: 0;
-  transform: scale(.88);
+  transform: translateY(-50%) scale(.78);
   transition: opacity .18s, transform .18s;
-  box-shadow: 0 8px 18px rgba(0,0,0,.18);
-  z-index: 100;
+  box-shadow: 0 5px 12px rgba(0,0,0,.18);
 }
 
 .tmpl-card.selected .tmpl-badge {
   opacity: 1;
-  transform: scale(1);
+  transform: translateY(-50%) scale(1);
+}
+
+@media (max-width: 1500px), (max-height: 820px) {
+  .sel-body {
+    grid-template-columns: minmax(520px, 1fr) minmax(720px, 860px);
+    gap: 24px;
+    padding: 14px 32px 6px;
+  }
+
+  .sel-options-box {
+    padding: 18px 20px;
+    gap: 13px;
+  }
+
+  .tmpl-card {
+    min-height: 46px;
+  }
+
+  .tmpl-img-wrap {
+    width: 34px;
+    height: 34px;
+  }
 }

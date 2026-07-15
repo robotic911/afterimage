@@ -1,18 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
 import './CameraScreen.css';
 import { useCamera } from '../../hooks/useCamera';
+import { FILTERS } from '../../constants/filters';
+import { getBeautificationFilterCss } from '../../constants/beautificationSettings';
+import { MIRROR_CAMERA_OUTPUT } from '../../constants/cameraSettings';
+import { getCameraDrawRect } from '../../lib/cameraFraming';
 import { saveShots } from '../../lib/shotStorage';
+import {
+  canvasToPngDataUrl,
+  getShotImageSource,
+  inspectDataUrl,
+  testImageLoad,
+} from '../../lib/shotImageSource';
 
 const CAPTURE_SCALE = 2;
 const CAPTURE_MIME = 'image/png';
 const CAPTURE_JPEG_QUALITY = 0.98;
-const LANDSCAPE_THUMB_RAIL_RESERVED_PX = 520;
-const PORTRAIT_THUMB_RAIL_RESERVED_PX = 360;
 const IS_DEV = import.meta.env.DEV;
-
-function clamp(value, min, max) {
-  return Math.max(min, Math.min(max, value));
-}
 
 /**
  * Auto-runs the shooting sequence once the user clicks "Start Session".
@@ -27,7 +31,13 @@ export default function CameraScreen({
   totalShots = 4,
   shots,
   setShots,
+  selectedFilter = 'none',
+  selectedFilterCss = '',
+  onSelectFilter,
+  beautificationSettings,
+  beautificationPreviewCss = '',
   recordVideo = true,
+  retakeQueue = [],
   onFlash,
   onDone,
   onBack,
@@ -45,6 +55,11 @@ export default function CameraScreen({
   const [countdownCycleKey, setCountdownCycleKey] = useState(0);
   const [captureLabel, setCaptureLabel] = useState(null);
   const [previewSize, setPreviewSize] = useState({ width: 0, height: 0 });
+  const safeRetakeQueue = retakeQueue.filter((shotIndex) => (
+    Number.isInteger(shotIndex) && shotIndex >= 0 && shotIndex < totalShots
+  ));
+  const isRetakingShot = safeRetakeQueue.length > 0;
+  const activeRetakeShotIndex = isRetakingShot ? safeRetakeQueue[0] : null;
 
   const cntIntervalRef = useRef(null);
   const nextShotTimerRef = useRef(null);
@@ -52,6 +67,14 @@ export default function CameraScreen({
   const previewAreaRef = useRef(null);
   const shotVideoRecorderRef = useRef(null);
   const shotVideoClipsRef = useRef([]);
+  const previewLogKeyRef = useRef('');
+  const currentRetakePositionRef = useRef(0);
+  const [currentRetakePosition, setCurrentRetakePosition] = useState(0);
+  const livePhotoFilter = [beautificationPreviewCss, selectedFilterCss].filter(Boolean).join(' ');
+  const captureBeautificationCss = getBeautificationFilterCss(
+    beautificationSettings,
+    { pixelScale: CAPTURE_SCALE },
+  );
 
   // captureShot / shootNext fire from setTimeouts scheduled on earlier renders,
   // so `shots` in their closures is stale. We keep a ref mirrored to the latest
@@ -66,7 +89,9 @@ export default function CameraScreen({
     if (active) {
       queueMicrotask(() => {
         if (cancelled) return;
-        setShotIndex(shots.length);
+        currentRetakePositionRef.current = 0;
+        setCurrentRetakePosition(0);
+        setShotIndex(isRetakingShot ? activeRetakeShotIndex : shots.length);
         setCounting(false);
         setShowCountdown(false);
         setCaptureLabel(null);
@@ -124,11 +149,7 @@ export default function CameraScreen({
         return { width: 0, height: 0 };
       }
 
-      const reservedRailWidth = isPortraitCamera
-        ? PORTRAIT_THUMB_RAIL_RESERVED_PX
-        : LANDSCAPE_THUMB_RAIL_RESERVED_PX;
-      const safeWidth = Math.max(0, containerW - reservedRailWidth);
-      let width = safeWidth || containerW;
+      let width = containerW;
       let height = width / aspect;
 
       if (height > containerH) {
@@ -157,7 +178,78 @@ export default function CameraScreen({
     const observer = new ResizeObserver(update);
     observer.observe(el);
     return () => observer.disconnect();
-  }, [active, cameraAspect, cameraHeight, cameraWidth, isPortraitCamera]);
+  }, [active, cameraAspect, cameraHeight, cameraWidth]);
+
+  useEffect(() => {
+    if (!IS_DEV || !active || !hasSignal || !previewSize.width || !previewSize.height) {
+      return undefined;
+    }
+
+    const video = videoRef.current;
+    if (!video) return undefined;
+
+    const logPreviewFraming = () => {
+      const videoWidth = video.videoWidth;
+      const videoHeight = video.videoHeight;
+      if (!videoWidth || !videoHeight) return;
+
+      const framing = layout?.cameraFraming || {};
+      const drawRect = getCameraDrawRect({
+        sourceWidth: videoWidth,
+        sourceHeight: videoHeight,
+        targetWidth: previewSize.width,
+        targetHeight: previewSize.height,
+        framing,
+      });
+      const logKey = [
+        layout?.id,
+        videoWidth,
+        videoHeight,
+        previewSize.width,
+        previewSize.height,
+        framing.fitMode,
+        framing.zoom,
+        framing.offsetX,
+        framing.offsetY,
+      ].join(':');
+      if (previewLogKeyRef.current === logKey) return;
+      previewLogKeyRef.current = logKey;
+
+      console.log('[camera-preview]', {
+        containerWidth: previewSize.width,
+        containerHeight: previewSize.height,
+        containerAspect: drawRect.targetAspect,
+        objectFit: 'height-locked',
+        cssObjectFit: getComputedStyle(video).objectFit || 'none',
+        zoom: Number(framing.zoom) || 1,
+        offsetX: Number(framing.offsetX) || 0,
+        offsetY: Number(framing.offsetY) || 0,
+        sourceWidth: videoWidth,
+        sourceHeight: videoHeight,
+        sourceAspect: drawRect.sourceAspect,
+        drawWidth: drawRect.drawWidth,
+        drawHeight: drawRect.drawHeight,
+        drawX: drawRect.drawX,
+        drawY: drawRect.drawY,
+      });
+      console.log('[mirror] live preview', {
+        mirrored: MIRROR_CAMERA_OUTPUT,
+        method: 'css',
+      });
+    };
+
+    logPreviewFraming();
+    video.addEventListener('loadedmetadata', logPreviewFraming);
+    return () => video.removeEventListener('loadedmetadata', logPreviewFraming);
+  }, [
+    active,
+    hasSignal,
+    layout?.cameraFraming,
+    layout?.id,
+    previewSize.height,
+    previewSize.width,
+    videoRef,
+  ]);
 
   if (!cameraWidth || !cameraHeight) {
     return (
@@ -203,10 +295,22 @@ export default function CameraScreen({
   }
 
   async function captureShot(nextIndex) {
+    if (IS_DEV) {
+      console.log('[filter] applying to capture', {
+        selectedFilter: selectedFilter || 'none',
+        shotIndex: nextIndex,
+        layoutId: layout?.id || null,
+      });
+    }
     // flash
     onFlash();
 
     const video = videoRef.current;
+    if (IS_DEV && isRetakingShot) {
+      console.log('[retake-flow] replacing photo', {
+        activeRetakeIndex: nextIndex,
+      });
+    }
     const baseCameraWidth = cameraWidth;
     const baseCameraHeight = cameraHeight;
     const canvas = document.createElement('canvas');
@@ -219,64 +323,87 @@ export default function CameraScreen({
     ctx.imageSmoothingQuality = 'high';
 
     if (video && video.srcObject && video.readyState >= 2) {
-      // Match CSS object-fit: cover so preview and saved capture share the
-      // same crop for the selected layout camera frame.
+      // Match the CSS height-locked preview: use the full source and let the
+      // destination width overflow or pad while the canvas clips its bounds.
       const vw = video.videoWidth || cameraWidth;
       const vh = video.videoHeight || cameraHeight;
-      const destAspect = cameraAspect;
-      const srcAspect = vw / vh;
-
-      let sx, sy, sw, sh;
-      if (srcAspect > destAspect) {
-        // Source is wider than the selected camera frame → crop left/right
-        sh = vh;
-        sw = vh * destAspect;
-        sx = (vw - sw) / 2;
-        sy = 0;
-      } else {
-        // Source is taller than the selected camera frame → crop top/bottom
-        sw = vw;
-        sh = vw / destAspect;
-        sx = 0;
-        sy = (vh - sh) / 2;
-      }
-
-      const framing = layout?.cameraFraming || {};
-      const zoom = Math.max(1, Number(framing.zoom) || 1);
-      const offsetX = clamp(Number(framing.offsetX) || 0, -0.5, 0.5);
-      const offsetY = clamp(Number(framing.offsetY) || 0, -0.5, 0.5);
-      const zoomedSw = sw / zoom;
-      const zoomedSh = sh / zoom;
-
-      sx += (sw - zoomedSw) / 2;
-      sy += (sh - zoomedSh) / 2;
-      sx += offsetX * zoomedSw;
-      sy += offsetY * zoomedSh;
-      sw = zoomedSw;
-      sh = zoomedSh;
-      sx = clamp(sx, 0, Math.max(0, vw - sw));
-      sy = clamp(sy, 0, Math.max(0, vh - sh));
+      const drawRect = getCameraDrawRect({
+        sourceWidth: vw,
+        sourceHeight: vh,
+        targetWidth: outputWidth,
+        targetHeight: outputHeight,
+        framing: layout?.cameraFraming,
+      });
+      const {
+        sourceX,
+        sourceY,
+        sourceWidth,
+        sourceHeight,
+        sourceAspect,
+        targetAspect,
+        drawX,
+        drawY,
+        drawWidth,
+        drawHeight,
+        fitMode,
+      } = drawRect;
 
       if (IS_DEV) {
-        console.log('[capture] output', {
-          layoutId: layout.id,
-          captureScale: CAPTURE_SCALE,
-          outputWidth: canvas.width,
-          outputHeight: canvas.height,
-          mime: CAPTURE_MIME,
-          videoWidth: vw,
-          videoHeight: vh,
-          framing: { zoom, offsetX, offsetY },
+        console.log('[capture-crop]', {
+          sourceWidth,
+          sourceHeight,
+          sourceAspect,
+          targetWidth: outputWidth,
+          targetHeight: outputHeight,
+          targetAspect,
+          cropX: sourceX,
+          cropY: sourceY,
+          cropWidth: sourceWidth,
+          cropHeight: sourceHeight,
+          drawX,
+          drawY,
+          drawWidth,
+          drawHeight,
+          zoom: Number(layout?.cameraFraming?.zoom) || 1,
+          offsetX: Number(layout?.cameraFraming?.offsetX) || 0,
+          offsetY: Number(layout?.cameraFraming?.offsetY) || 0,
+          fullSourceHeightVisible: drawRect.fullSourceHeightVisible,
         });
+        console.log('[capture] framing mode', fitMode);
       }
 
-      // Mirror horizontally so the saved capture matches the preview
-      // (which has `transform: scaleX(-1)` applied via CSS).
-      ctx.translate(outputWidth, 0);
-      ctx.scale(-1, 1);
-      ctx.drawImage(video, sx, sy, sw, sh, 0, 0, outputWidth, outputHeight);
-      // Reset transform before any further draws.
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.fillStyle = '#0a0a0a';
+      ctx.fillRect(0, 0, outputWidth, outputHeight);
+      if (captureBeautificationCss) ctx.filter = captureBeautificationCss;
+      if (IS_DEV) {
+        console.log('[mirror] capture output', {
+          mirrorApplied: MIRROR_CAMERA_OUTPUT,
+          sourceWidth,
+          sourceHeight,
+          targetWidth: outputWidth,
+          targetHeight: outputHeight,
+        });
+      }
+      if (MIRROR_CAMERA_OUTPUT) {
+        ctx.save();
+        ctx.translate(outputWidth, 0);
+        ctx.scale(-1, 1);
+      }
+      ctx.drawImage(
+        video,
+        sourceX,
+        sourceY,
+        sourceWidth,
+        sourceHeight,
+        drawX,
+        drawY,
+        drawWidth,
+        drawHeight,
+      );
+      if (MIRROR_CAMERA_OUTPUT) {
+        ctx.restore();
+      }
+      ctx.filter = 'none';
     } else {
       // fallback placeholder when no camera signal
       ctx.fillStyle = '#f4f4f4';
@@ -302,7 +429,29 @@ export default function CameraScreen({
 
     const dataUrl = CAPTURE_MIME === 'image/jpeg'
       ? canvas.toDataURL(CAPTURE_MIME, CAPTURE_JPEG_QUALITY)
-      : canvas.toDataURL(CAPTURE_MIME);
+      : await canvasToPngDataUrl(canvas);
+    console.log('[CAPTURE DATA URL CREATED]', inspectDataUrl(dataUrl));
+    if (IS_DEV) {
+      console.log('[capture-resolution] captured photo', {
+        shotIndex: nextIndex,
+        width: outputWidth,
+        height: outputHeight,
+        aspectRatio: outputWidth / outputHeight,
+        bytesOrLength: dataUrl.length,
+        sourceType: CAPTURE_MIME,
+      });
+    }
+    console.log('[CAPTURE CANVAS AUDIT]', {
+      canvasWidth: canvas.width,
+      canvasHeight: canvas.height,
+      videoWidth: video?.videoWidth || null,
+      videoHeight: video?.videoHeight || null,
+      dataUrlLength: dataUrl.length,
+    });
+    const canDecode = await testImageLoad(dataUrl, 'CAPTURE BLOB DATA URL');
+    if (!canDecode) {
+      throw new Error('Captured data URL failed to decode immediately after capture');
+    }
     canvas.width = 0;
     canvas.height = 0;
     await stopShotClip(nextIndex);
@@ -311,12 +460,35 @@ export default function CameraScreen({
     // function was defined on an earlier render.
     const newShots = [...shotsRef.current];
     newShots[nextIndex] = dataUrl;
+    console.log('[PHOTO AUDIT capture] new shot', {
+      type: typeof dataUrl,
+      isString: typeof dataUrl === 'string',
+      prefix: typeof dataUrl === 'string' ? dataUrl.slice(0, 100) : null,
+      keys: dataUrl && typeof dataUrl === 'object' ? Object.keys(dataUrl) : null,
+    });
+    console.log('[DATA URL AUDIT capture]', inspectDataUrl(dataUrl));
     shotsRef.current = newShots;
     setShots(newShots);
     const newIndex = nextIndex + 1;
     setShotIndex(newIndex);
 
-    if (newIndex >= totalShots) {
+    if (isRetakingShot) {
+      const queuePosition = currentRetakePositionRef.current;
+      setCaptureLabel(`✓ Photo ${nextIndex + 1} retaken!`);
+      if (queuePosition < safeRetakeQueue.length - 1) {
+        const nextPosition = queuePosition + 1;
+        const nextRetakeIndex = safeRetakeQueue[nextPosition];
+        currentRetakePositionRef.current = nextPosition;
+        setCurrentRetakePosition(nextPosition);
+        setShotIndex(nextRetakeIndex);
+        nextShotTimerRef.current = setTimeout(() => {
+          nextShotTimerRef.current = null;
+          shootNext(nextRetakeIndex);
+        }, 700);
+      } else {
+        finishSession(newShots);
+      }
+    } else if (newIndex >= totalShots) {
       setCaptureLabel('✓ All shots taken!');
       finishSession(newShots);
     } else {
@@ -329,6 +501,13 @@ export default function CameraScreen({
 
   async function shootNext(idx = shotIndex) {
     if (idx >= totalShots) return;
+    if (isRetakingShot) {
+      console.log('[retake] capturing replacement', {
+        photoIndex: idx,
+        queuePosition: currentRetakePositionRef.current + 1,
+        totalSelected: safeRetakeQueue.length,
+      });
+    }
     if (recordVideo && !shotVideoRecorderRef.current) {
       try {
         const { startShotClipRecording } = await import('../../lib/sessionVideoRecorder');
@@ -337,6 +516,7 @@ export default function CameraScreen({
           video: videoRef.current,
           shotIndex: idx,
           durationTargetMs: countdown * 1000,
+          photoFilter: beautificationPreviewCss,
         });
       } catch (error) {
         console.warn('[video] shot clip recording start failed:', error);
@@ -365,14 +545,57 @@ export default function CameraScreen({
     setCounting(true);
     setCaptureLabel(null);
     shotVideoClipsRef.current = [];
-    shootNext(shotIndex);
+    currentRetakePositionRef.current = 0;
+    setCurrentRetakePosition(0);
+    shootNext(isRetakingShot ? activeRetakeShotIndex : shotIndex);
   }
 
   const hasCapturedShots = shots.some(Boolean);
-  const showStartOverlay = active && hasSignal && !counting && !showCountdown && shotIndex === 0 && !hasCapturedShots;
+  const showStartOverlay = active && hasSignal && !counting && !showCountdown && (
+    isRetakingShot || (shotIndex === 0 && !hasCapturedShots)
+  );
   const showCameraRecovery = Boolean(cameraError);
   const showNoSignalPlaceholder = active && !hasSignal && !cameraError;
+  const filterLocked = counting || showCountdown || shotIndex > 0 || hasCapturedShots;
   const cameraRecoveryMessage = cameraError || 'Camera preview will appear here';
+  const retakeProgressLabel = isRetakingShot
+    ? `${currentRetakePosition + 1} of ${safeRetakeQueue.length} retake${safeRetakeQueue.length === 1 ? '' : 's'}`
+    : null;
+  const cameraInstruction = showStartOverlay
+    ? (isRetakingShot ? `Retaking Photo ${activeRetakeShotIndex + 1}` : 'Look at the camera, then tap Start')
+    : showCountdown
+      ? (isRetakingShot ? `Retaking Photo ${shotIndex + 1} — Look at the camera` : 'Look at the camera')
+      : counting
+        ? (isRetakingShot ? `Retaking Photo ${shotIndex + 1} — Look at the camera` : `Photo ${Math.min(shotIndex + 1, totalShots)} of ${totalShots}`)
+        : 'Get ready for your photos';
+
+  function auditCapturedPreview(event, index) {
+    if (!IS_DEV) return;
+
+    const image = event.currentTarget;
+    const preview = image.parentElement;
+    const previewRect = preview?.getBoundingClientRect();
+    const imageAspect = image.naturalWidth / image.naturalHeight;
+    const previewAspect = previewRect?.width && previewRect?.height
+      ? previewRect.width / previewRect.height
+      : null;
+    const objectFit = getComputedStyle(image).objectFit;
+
+    console.log('[captured-preview]', {
+      imageWidth: image.naturalWidth,
+      imageHeight: image.naturalHeight,
+      imageAspect,
+      displayContainerWidth: previewRect?.width || null,
+      displayContainerHeight: previewRect?.height || null,
+      displayContainerAspect: previewAspect,
+      objectFit,
+      sourceUsed: 'full captured data URL',
+      layoutId: layout.id,
+      shotIndex: index,
+      preservesAspectRatio: objectFit === 'cover' || objectFit === 'contain'
+        || (previewAspect !== null && Math.abs(imageAspect - previewAspect) < 0.001),
+    });
+  }
 
   return (
     <div
@@ -382,11 +605,53 @@ export default function CameraScreen({
     >
       {/* Top bar */}
       <div className="cam-topbar">
-        <div className="cam-live"><div className="live-dot" />Camera Live</div>
+        <div className="cam-live">
+          <div className="live-dot" />
+          <span>{cameraInstruction}</span>
+          {retakeProgressLabel && <small>{retakeProgressLabel}</small>}
+        </div>
       </div>
 
       {/* Full preview area */}
       <div className={`cam-main ${isPortraitCamera ? 'cam-main--portrait' : 'cam-main--landscape'}`}>
+        <aside className={`camera-filter-panel ${filterLocked ? 'is-locked' : ''}`}>
+          <div className="camera-filter-heading">
+            <strong>Choose Filter</strong>
+            <span>{filterLocked ? 'Filter locked while taking photos' : 'Pick a photo look before we start'}</span>
+          </div>
+          <div
+            className="camera-filter-grid"
+            role="group"
+            aria-label="Choose Filter"
+            style={{ '--filter-count': FILTERS.length }}
+          >
+            {FILTERS.map((filter) => {
+              const isSelected = selectedFilter === filter.id;
+              return (
+                <button
+                  key={filter.id}
+                  type="button"
+                  className={`camera-filter-option ${isSelected ? 'is-selected' : ''}`}
+                  onClick={() => onSelectFilter?.(filter.id)}
+                  disabled={filterLocked}
+                  aria-pressed={isSelected}
+                >
+                  <span
+                    className="camera-filter-swatch"
+                    style={{ background: filter.bg, filter: filter.css || 'none' }}
+                    aria-hidden="true"
+                  />
+                  <span className="camera-filter-copy">
+                    <span className="camera-filter-name">{filter.name}</span>
+                    <span className="camera-filter-desc">{filter.desc}</span>
+                  </span>
+                  <span className="camera-filter-check" aria-hidden="true">✓</span>
+                </button>
+              );
+            })}
+          </div>
+        </aside>
+
         <div ref={previewAreaRef} className="camera-preview-area">
           <div
             className="cam-viewport camera-preview-frame"
@@ -405,6 +670,7 @@ export default function CameraScreen({
               autoPlay
               playsInline
               muted
+              style={livePhotoFilter ? { filter: livePhotoFilter } : undefined}
             />
             {showCameraRecovery && (
               <div className="cam-no-signal" id="cam-placeholder">
@@ -434,7 +700,7 @@ export default function CameraScreen({
                 className="camera-start-overlay"
                 onClick={startSession}
               >
-                Click here to start
+                {isRetakingShot ? `Retake Photo ${activeRetakeShotIndex + 1}` : 'Start Photos'}
               </button>
             )}
             {captureLabel && <div className="camera-capture-status">{captureLabel}</div>}
@@ -454,28 +720,40 @@ export default function CameraScreen({
               </div>
             </div>
           </div>
-          <div
-            className="camera-bottom-strip camera-side-strip"
-            id="thumb-row"
-            style={{
-              '--shot-ratio': shotRatio,
-              '--shot-count': totalShots,
-            }}
-          >
-            {Array.from({ length: totalShots }).map((_, i) => (
+        </div>
+
+        <div
+          className="camera-bottom-strip camera-side-strip"
+          id="thumb-row"
+          style={{
+            '--shot-ratio': shotRatio,
+            '--shot-count': totalShots,
+          }}
+        >
+          {Array.from({ length: totalShots }).map((_, i) => {
+            const imageSrc = getShotImageSource(shots[i]);
+            return (
               <div key={i} className="camera-bottom-thumb-cell camera-side-thumb-cell">
                 <div
                   id={`th-${i}`}
-                  className={`thumb-slot ${shots[i] ? 'is-filled' : 'is-empty'} ${i === shotIndex && shotIndex < totalShots ? 'is-current' : ''}`}
+                  className={`thumb-slot ${shots[i] ? 'is-filled' : 'is-empty'} ${i === shotIndex && shotIndex < totalShots ? 'is-current' : ''} ${isRetakingShot && safeRetakeQueue.includes(i) ? 'is-retake-target' : ''}`}
                 >
-                  {shots[i]
-                    ? <img src={shots[i]} alt={`Shot ${i + 1}`} />
-                    : <span>{i + 1}</span>
+                  {imageSrc
+                    ? (
+                      <img
+                        src={imageSrc}
+                        alt={`Shot ${i + 1}`}
+                        decoding="async"
+                        style={selectedFilterCss ? { filter: selectedFilterCss } : undefined}
+                        onLoad={(event) => auditCapturedPreview(event, i)}
+                      />
+                    )
+                    : <span>{shots[i] ? 'Missing' : i + 1}</span>
                   }
                 </div>
               </div>
-            ))}
-          </div>
+            );
+          })}
         </div>
       </div>
     </div>

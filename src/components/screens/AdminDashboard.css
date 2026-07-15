@@ -233,6 +233,28 @@
 .dash-kpi-revenue {
   font-size: 28px; font-weight: 850; letter-spacing: 0; line-height: 1.1;
 }
+.dash-kpi-breakdown {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 800;
+  color: rgba(0,0,0,.58);
+}
+.dash-kpi.primary .dash-kpi-breakdown {
+  color: rgba(255,255,255,.62);
+}
+.dash-kpi-breakdown span {
+  min-height: 22px;
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(0,0,0,.055);
+}
+.dash-kpi.primary .dash-kpi-breakdown span {
+  background: rgba(255,255,255,.12);
+}
 .dash-kpi-split {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -272,6 +294,9 @@
   display: flex; align-items: baseline; justify-content: space-between;
   gap: 16px;
 }
+.dash-section-reset .dash-section-head {
+  align-items: center;
+}
 .dash-section-title {
   font-size: 15px; font-weight: 800; letter-spacing: 0;
 }
@@ -283,6 +308,59 @@
 .dash-section-sub {
   font-size: 11px; letter-spacing: 1.2px; text-transform: uppercase;
   color: rgba(0,0,0,.55);
+}
+
+.dash-metric-grid,
+.dash-keychain-stat-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+}
+.dash-metric-tile {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #e6e6e6;
+  border-radius: 12px;
+  background: #f8f8f8;
+}
+.dash-metric-tile.total {
+  background: #111111;
+  border-color: #111111;
+  color: #ffffff;
+}
+.dash-metric-tile.keychain {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
+.dash-metric-tile span {
+  display: block;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: rgba(0,0,0,.52);
+}
+.dash-metric-tile.total span {
+  color: rgba(255,255,255,.68);
+}
+.dash-metric-tile strong {
+  display: block;
+  margin-top: 5px;
+  font-size: 20px;
+  line-height: 1.1;
+  font-weight: 900;
+  overflow-wrap: anywhere;
+}
+.dash-metric-tile small {
+  display: block;
+  margin-top: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: rgba(0,0,0,.58);
+}
+.dash-metric-tile.total small {
+  color: rgba(255,255,255,.62);
 }
 
 /* ── Chart ─────────────────────────────── */
@@ -388,6 +466,46 @@
   font-variant-numeric: tabular-nums;
 }
 .dash-table .row-failed td { color: rgba(0,0,0,.55); }
+
+.dash-table-scroll {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.dash-table-scroll .dash-table {
+  min-width: 760px;
+}
+.dash-keychain-session,
+.dash-session-keychain {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.dash-keychain-session strong,
+.dash-session-keychain strong {
+  font-size: 12px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+.dash-keychain-session span,
+.dash-session-keychain small,
+.dash-keychain-file {
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: rgba(0,0,0,.58);
+  overflow-wrap: anywhere;
+}
+.dash-keychain-file {
+  margin-top: 4px;
+  max-width: 220px;
+}
+.dash-pill.keychain {
+  color: #1e3a8a;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+}
 
 .dash-sort-btn {
   border: 0;
@@ -568,4 +686,45 @@
   .dash-bar-tooltip {
     width: 220px;
   }
+}
+
+/* Dashboard remains information-dense, but controls and primary labels are tap-safe. */
+.dash-title {
+  font-size: 28px;
+}
+
+.dash-live,
+.dash-summary-item span,
+.dash-status-pill {
+  font-size: 12px;
+}
+
+.dash-sub,
+.dash-summary-item strong,
+.dash-session-meta,
+.dash-empty {
+  font-size: 14px;
+}
+
+.dash-deck,
+.dash-filter-select,
+.dash-session-filters input,
+.dash-session-filters select {
+  font-size: 16px;
+}
+
+.dash-filter-select,
+.dash-session-filters input,
+.dash-session-filters select,
+.dash-compact-btn {
+  min-height: var(--admin-control-min-height);
+}
+
+.dash-error {
+  font-size: 15px;
+}
+
+.dash-error button {
+  min-height: 40px;
+  padding: 9px 14px;
 }

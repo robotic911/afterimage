@@ -55,7 +55,7 @@ export const LAYOUTS = [
     // Intended design size: 560 × 366.7 from Figma.
     // Canvas capture dimensions are integer pixels, so use the nearest height.
     camera:  { width: 560, height: 367 },
-    cameraFraming: { zoom: 1, offsetX: 0, offsetY: 0 },
+    cameraFraming: { fitMode: 'height-locked', zoom: 1, offsetX: 0, offsetY: 0 },
     shots:   4,
     slots: [
       { x: 19,  y: 29,   w: 562, h: 371, shotIndex: 0 }, { x: 619, y: 29,   w: 562, h: 371, shotIndex: 0 },
@@ -76,7 +76,7 @@ export const LAYOUTS = [
     arrangeFrameSrc: frame2,
     canvas:  { w: 1200, h: 1800, width: 1200, height: 1800 },
     camera:  { width: 560, height: 405 },
-    cameraFraming: { zoom: 1, offsetX: 0, offsetY: 0 },
+    cameraFraming: { fitMode: 'height-locked', zoom: 1, offsetX: 0, offsetY: 0 },
     shots:   3,
     slots: [
       { x: 17,  y: 269,  w: 563, h: 410, shotIndex: 0 }, { x: 617, y: 269,  w: 563, h: 410, shotIndex: 0 },
@@ -96,7 +96,7 @@ export const LAYOUTS = [
     arrangeFrameSrc: frame3,
     canvas:  { w: 1200, h: 1800, width: 1200, height: 1800 },
     camera:  { width: 560, height: 670 },
-    cameraFraming: { zoom: 1, offsetX: 0, offsetY: -0.04 },
+    cameraFraming: { fitMode: 'height-locked', zoom: 1, offsetX: 0, offsetY: 0 },
     shots:   4,
     slots: [
       { x: 19,  y: 38,  w: 563, h: 674, shotIndex: 0 }, { x: 618, y: 38,  w: 563, h: 674, shotIndex: 1 },
@@ -117,7 +117,7 @@ export const LAYOUTS = [
     arrangeFrameSrc: frame5,
     canvas:  { w: 1200, h: 1800, width: 1200, height: 1800 },
     camera:  { width: 570, height: 670 },
-    cameraFraming: { zoom: 1, offsetX: 0, offsetY: -0.04 },
+    cameraFraming: { fitMode: 'height-locked', zoom: 1, offsetX: 0, offsetY: 0 },
      shots:   4,
     slots: [
       { x: 19,  y: 218, w: 572, h: 674, shotIndex: 0 },{ x: 609, y: 218, w: 572, h: 674, shotIndex: 1 },

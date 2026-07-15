@@ -46,12 +46,12 @@ export default function EndScreen({ active, onReturn }) {
           </svg>
         </div>
         <div className="end-headline">Thank<br />You<span>!</span></div>
-        <div className="end-sub">Your photos are printing. Come back and snap again anytime.</div>
+        <div className="end-sub">Exit on your right and wait for the photos to be printed.</div>
         <div className="end-progress-wrap">
           <div className="end-progress-bar" id="end-bar" style={{ width: `${pct}%` }} />
         </div>
         <div className="end-countdown-txt" id="end-txt">
-          Returning in {remaining} second{remaining !== 1 ? 's' : ''}...
+          Returning home in {remaining} second{remaining !== 1 ? 's' : ''}.
         </div>
       </div>
     </div>

@@ -2,13 +2,13 @@ import { useEffect, useMemo } from 'react';
 import './SelectionScreen.css';
 import PageHeader from '../PageHeader';
 import LayoutPreview from '../LayoutPreview';
-import { FILTERS } from '../../constants/filters';
 import {
   dedupeVisibleCustomerTemplates,
   isTemplateVisibleToCustomer,
 } from '../../lib/templateVisibility';
 import { versionTemplateAssetSrc } from '../../lib/templateAssetUrl';
 import { preloadImageCached } from '../../lib/imageCache';
+import { resolveTemplateRenderAssets } from '../../lib/templateRenderAssets';
 
 export default function SelectionScreen({
   active,
@@ -16,8 +16,7 @@ export default function SelectionScreen({
   shots = [],
   templates = [],
   settings = { mode: 'daily', activeEventId: null },
-  selectedFilter = 'none',
-  onSelectFilter,
+  selectedFilterCss = '',
   selectedTmpl,
   onSelect,
   onBack,
@@ -85,14 +84,23 @@ export default function SelectionScreen({
     selectedTemplate?.layoutId === layoutId
     ? selectedTemplate
     : null;
-  const selectedFilterMeta = FILTERS.find(f => f.id === selectedFilter) || FILTERS[0];
-
+  const templateAssets = useMemo(
+    () => resolveTemplateRenderAssets(selectedTemplateForLayout),
+    [selectedTemplateForLayout],
+  );
+  const selectedPreviewBackgroundSrc = templateAssets.backgroundSrc
+    ? versionTemplateAssetSrc(templateAssets.backgroundSrc, selectedTemplateForLayout)
+    : null;
+  const selectedOverlaySrc = templateAssets.overlaySrc
+    ? versionTemplateAssetSrc(templateAssets.overlaySrc, selectedTemplateForLayout)
+    : null;
   useEffect(() => {
     if (!import.meta.env.DEV || !selectedTemplateForLayout) return;
     console.log('[background] selected template fields', {
       id: selectedTemplateForLayout.id,
       name: selectedTemplateForLayout.name,
       previewSrc: selectedTemplateForLayout.previewSrc || null,
+      backgroundSrc: selectedTemplateForLayout.backgroundSrc || null,
       overlaySrc: selectedTemplateForLayout.overlaySrc || null,
       cardUses: selectedTemplateForLayout.previewSrc || null,
       mainPreviewUses: selectedTemplateForLayout.overlaySrc || null,
@@ -101,20 +109,42 @@ export default function SelectionScreen({
 
   useEffect(() => {
     if (!active || !selectedTemplateForLayout) return;
-    const overlaySrc = versionTemplateAssetSrc(
-      selectedTemplateForLayout.overlaySrc || selectedTemplateForLayout.src,
-      selectedTemplateForLayout,
-    );
-    preloadImageCached(overlaySrc).catch(() => {});
-  }, [active, selectedTemplateForLayout]);
+    console.log('[SELECTION TEMPLATE ASSETS]', {
+      selectedTmpl,
+      templateId: selectedTemplateForLayout?.id || null,
+      templateName: selectedTemplateForLayout?.name || null,
+      assets: templateAssets,
+    });
+    console.log('[SELECTION PREVIEW RENDER]', {
+      templateId: selectedTemplateForLayout?.id || null,
+      templateName: selectedTemplateForLayout?.name || null,
+      backgroundSrc: templateAssets.backgroundSrc,
+      overlaySrc: templateAssets.overlaySrc,
+      displaySrc: templateAssets.displaySrc,
+      shotCount: shots.length,
+    });
+    console.log('[BACKGROUND PREVIEW] render', {
+      selectedBackgroundId: selectedTemplateForLayout?.id || null,
+      selectedBackgroundName: selectedTemplateForLayout?.name || null,
+      previewBackgroundProp: selectedPreviewBackgroundSrc,
+      overlaySrc: selectedOverlaySrc,
+      displaySrc: templateAssets.displaySrc,
+      templateAssets,
+      layoutId: layout?.id || null,
+      shotsLength: shots?.length || 0,
+    });
+    if (selectedOverlaySrc) {
+      preloadImageCached(selectedOverlaySrc).catch(() => {});
+    }
+  }, [active, layout?.id, shots?.length, selectedOverlaySrc, selectedPreviewBackgroundSrc, selectedTemplateForLayout, selectedTmpl, templateAssets]);
 
   return (
     <div className={`screen ${active ? 'active' : ''}`} id="s-selection" data-screen-label="06 Background">
       <PageHeader
-        step="Step 5 of 6"
-        title="Select Background"
-        subtitle="Pick the frame, overlay or background for your photos"
-        pills={['done', 'done', 'done', 'done', 'active', '']}
+        step="Step 6 of 7"
+        title="Choose Your Background"
+        subtitle="Tap a design to preview it with your photos."
+        pills={['done', 'done', 'done', 'done', 'done', 'active', '']}
       />
 
       <div className="sel-body">
@@ -124,118 +154,96 @@ export default function SelectionScreen({
           <LayoutPreview
             layout={layout}
             shots={shots}
+            background={selectedTemplateForLayout}
+            backgroundSrc={selectedPreviewBackgroundSrc}
             frameSrc={null}
             frameAlt=""
-            templateSrc={versionTemplateAssetSrc(selectedTemplateForLayout?.overlaySrc, selectedTemplateForLayout)}
+            templateSrc={selectedOverlaySrc}
             templateAlt={selectedTemplateForLayout?.name}
             className="sel-preview-wrap"
             cellClassName="sel-preview-cell"
             frameClassName="sel-preview-frame-image"
             overlayClassName="sel-preview-template"
-            photoFilter={selectedFilterMeta.css}
+            photoFilter={selectedFilterCss}
           />
         </div>
 
         <div className="sel-options-panel">
           <div className="sel-options-box">
-            
-
-            <div className="sel-filters-section">
-              <div className="sel-filters-header">
+            <section className="sel-backgrounds-section">
+              <div className="sel-card-header">
                 <div>
-                  <div className="sel-card-kicker">Filters</div>
-                  <div className="sel-filters-title">Choose a filter</div>
+                  <div className="sel-card-kicker">Backgrounds</div>
+                  <div className="sel-card-title">Choose a Background</div>
+                  <div className="sel-section-helper">
+                    Tap one design to preview it
+                  </div>
                 </div>
+                <div className="sel-card-count">{visible.length} options</div>
               </div>
 
-              <div className="sel-filter-grid">
-                {FILTERS.map(filter => (
-                  <button
-                    key={filter.id}
-                    type="button"
-                    className={`sel-filter-card ${selectedFilter === filter.id ? 'active' : ''}`}
-                    onClick={() => onSelectFilter?.(filter.id)}
-                  >
-                    <span
-                      className="sel-filter-swatch"
-                      style={{
-                        background: filter.bg,
-                        filter: filter.css || 'none',
+              {settings.mode === 'event' && !settings.activeEventId && (
+                <div className="sel-empty">
+                  No active event selected. Please ask the admin to select an event.
+                </div>
+              )}
+
+              {visible.length === 0 && !(settings.mode === 'event' && !settings.activeEventId) && (
+                <div className="sel-empty">
+                  {settings.mode === 'event' && settings.activeEventId
+                    ? 'No event templates available for this layout. Please ask the admin to set one up.'
+                    : 'No templates available. Please ask the attendant to set one up.'}
+                </div>
+              )}
+
+              <div className="sel-grid">
+                {visible.map(t => {
+                  const isSelected = selectedTemplateForLayout?.id === t.id;
+
+                  return (
+                    <button
+                      key={t.id}
+                      id={`tmpl-${t.id}`}
+                      type="button"
+                      className={`tmpl-card ${isSelected ? 'selected' : ''}`}
+                      onClick={() => {
+                        if (import.meta.env.DEV) {
+                          console.log('[BACKGROUND SELECT] clicked', {
+                            id: t?.id,
+                            name: t?.name,
+                            value: t,
+                          });
+                        }
+                        onSelect(t.id);
                       }}
+                      onMouseEnter={() => {
+                        preloadImageCached(versionTemplateAssetSrc(t.overlaySrc || t.src, t)).catch(() => {});
+                      }}
+                      onFocus={() => {
+                        preloadImageCached(versionTemplateAssetSrc(t.overlaySrc || t.src, t)).catch(() => {});
+                      }}
+                      aria-pressed={isSelected}
                     >
-                      <span className="sel-filter-swatch-shine" />
-                    </span>
-                    <span className="sel-filter-copy">
-                      <span className="sel-filter-name">{filter.name}</span>
-                      <span className="sel-filter-desc">{filter.desc}</span>
-                    </span>
-                    <span className="sel-filter-check" aria-hidden="true">✓</span>
-                  </button>
-                ))}
+                      <span className="tmpl-img-wrap">
+                        {t.previewSrc ? (
+                          <img
+                            src={versionTemplateAssetSrc(t.previewSrc, t)}
+                            alt=""
+                            aria-hidden="true"
+                            loading="lazy"
+                            decoding="async"
+                          />
+                        ) : (
+                          <span className="tmpl-preview-empty">{t.name.slice(0, 1)}</span>
+                        )}
+                      </span>
+                      <span className="tmpl-card-name">{t.name}</span>
+                      <span className="tmpl-badge" aria-hidden="true">✓</span>
+                    </button>
+                  );
+                })}
               </div>
-            </div>
-
-            <div className="sel-card-header">
-              <div>
-                <div className="sel-card-kicker">Backgrounds</div>
-                <div className="sel-card-title">Choose a background</div>
-                {/* {settings.mode === 'event' && activeEvent && (
-                  <div className="sel-card-mode-note">
-                    {activeEvent.name}
-                  </div>
-                )} */}
-              </div>
-              <div className="sel-card-count">{visible.length} options</div>
-            </div>
-            
-            {settings.mode === 'event' && !settings.activeEventId && (
-              <div className="sel-empty">
-                No active event selected. Please ask the admin to select an event.
-              </div>
-            )}
-
-            {visible.length === 0 && !(settings.mode === 'event' && !settings.activeEventId) && (
-              <div className="sel-empty">
-                {settings.mode === 'event' && settings.activeEventId
-                  ? 'No event templates available for this layout. Please ask the admin to set one up.'
-                  : 'No templates available. Please ask the attendant to set one up.'}
-              </div>
-            )}
-
-            <div className="sel-grid">
-              {visible.map(t => (
-                <button
-                  key={t.id}
-                  id={`tmpl-${t.id}`}
-                  type="button"
-                  className={`tmpl-card ${selectedTemplateForLayout?.id === t.id ? 'selected' : ''}`}
-                  onClick={() => onSelect(t.id)}
-                  onMouseEnter={() => {
-                    preloadImageCached(versionTemplateAssetSrc(t.overlaySrc || t.src, t)).catch(() => {});
-                  }}
-                  onFocus={() => {
-                    preloadImageCached(versionTemplateAssetSrc(t.overlaySrc || t.src, t)).catch(() => {});
-                  }}
-                >                    
-                  <div className="tmpl-name-center">{t.name}</div>
-                  <div className="tmpl-img-wrap">
-                    {t.previewSrc ? (
-                      <img
-                        src={versionTemplateAssetSrc(t.previewSrc, t)}
-                        alt={t.name}
-                        loading="lazy"
-                        decoding="async"
-                      />
-                    ) : (
-                      <div className="tmpl-preview-empty">{t.name.slice(0, 1)}</div>
-                    )}
-
-                    <div className="tmpl-overlay" />
-                    <div className="tmpl-badge">✓ Selected</div>
-                  </div>
-                </button>
-              ))}
-            </div>
+            </section>
           </div>
         </div>
       </div>
@@ -248,7 +256,7 @@ export default function SelectionScreen({
           disabled={!selectedTemplateForLayout}
           onClick={onNext}
         >
-          Continue →
+          Review & Print →
         </button>
       </div>
     </div>

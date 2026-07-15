@@ -14,7 +14,18 @@
 .layout-preview-grid {
   position: absolute;
   inset: 0;
-  z-index: 1;
+  z-index: 2;
+}
+
+.layout-preview-background {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  pointer-events: none;
+  display: block;
 }
 
 .layout-preview-cell {
@@ -30,10 +41,23 @@
   display: block;
 }
 
+.layout-preview-missing-photo {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 8px;
+  background: #eeeeee;
+  color: #8a1f1f;
+  font-size: 12px;
+  font-weight: 800;
+  text-align: center;
+}
+
 .layout-preview-frame-image {
   position: absolute;
   inset: 0;
-  z-index: 2;
+  z-index: 1;
   width: 100%;
   height: 100%;
   object-fit: fill;

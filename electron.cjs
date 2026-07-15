@@ -5,8 +5,17 @@ const fsp = fs.promises;
 const crypto = require('crypto');
 const { pathToFileURL } = require('url');
 const { spawn } = require('child_process');
+const {
+  getKeychainPrice,
+  isValidKeychainCopies,
+} = require('./keychainPricing.cjs');
 
 const APP_ID = 'com.kennethpatino.kukuphotobooth';
+const SOFTCOPY_SAVE_CHANNEL = 'softcopy-local:save-session-media';
+const KEYCHAIN_SAVE_CHANNEL = 'keychain:save-4x6-to-downloads';
+let localSoftcopyIpcRegistered = false;
+
+console.log('[DIAG main] electron.cjs loaded with downloads test handler');
 
 if (process.platform === 'win32') {
   app.setAppUserModelId(APP_ID);
@@ -60,6 +69,10 @@ const DEFAULT_LAYOUT_SETTINGS = LAYOUT_IDS.reduce((settings, layoutId) => ({
   ...settings,
   [layoutId]: { enabled: true },
 }), {});
+const DEFAULT_BEAUTIFICATION_SETTINGS = Object.freeze({
+  enabled: true,
+  intensity: 35,
+});
 const COLOR_THEME_IDS = new Set(['editorialMono', 'champagneNoir', 'roseVelvet', 'oceanMist', 'forestFilm']);
 let templateIndexCache = null;
 
@@ -208,6 +221,17 @@ function normalizeSoftcopySettings(input = {}) {
     photoEnabled: settings.photoEnabled ?? DEFAULT_SOFTCOPY_SETTINGS.photoEnabled,
     gifEnabled: settings.gifEnabled ?? DEFAULT_SOFTCOPY_SETTINGS.gifEnabled,
     videoEnabled: settings.videoEnabled ?? DEFAULT_SOFTCOPY_SETTINGS.videoEnabled,
+  };
+}
+
+function normalizeBeautificationSettings(input = {}) {
+  const settings = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  const parsedIntensity = Number(settings.intensity);
+  return {
+    enabled: settings.enabled !== false,
+    intensity: Number.isFinite(parsedIntensity)
+      ? Math.min(100, Math.max(0, Math.round(parsedIntensity)))
+      : DEFAULT_BEAUTIFICATION_SETTINGS.intensity,
   };
 }
 
@@ -670,6 +694,12 @@ function createTodayMonitorWindow() {
   const monitorHeight = 620;
   const nextX = parentBounds.x + parentBounds.width + 16;
   const nextY = parentBounds.y + 24;
+  const todayMonitorPreloadPath = path.join(__dirname, 'preload.cjs');
+  console.log('[today-monitor window] preload config', {
+    preload: todayMonitorPreloadPath,
+    contextIsolation: true,
+    nodeIntegration: false,
+  });
   todayMonitorWindow = new BrowserWindow({
     width: monitorWidth,
     height: monitorHeight,
@@ -679,7 +709,7 @@ function createTodayMonitorWindow() {
     resizable: true,
     alwaysOnTop: false,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.cjs'),
+      preload: todayMonitorPreloadPath,
       contextIsolation: true,
       nodeIntegration: false,
     },
@@ -792,7 +822,7 @@ const LAYOUT_DIMENSIONS = {
 };
 
 const MIN_COUNTDOWN_SECONDS = 1;
-const MAX_COUNTDOWN_SECONDS = 10;
+const MAX_COUNTDOWN_SECONDS = 20;
 const DEFAULT_COUNTDOWN_SECONDS = 3;
 
 function normalizeCountdownSeconds(value, fallback = DEFAULT_COUNTDOWN_SECONDS) {
@@ -821,12 +851,15 @@ async function ensureSettingsFile() {
     mode: 'daily',
     activeEventId: null,
     printEnabled: true,
+    printCopiesEnabled: false,
+    selectedPrinterName: null,
     printerProfileId: DEFAULT_PRINTER_PROFILE_ID,
     safeMarginOverride: DEFAULT_SAFE_MARGIN_OVERRIDE,
     softcopySettings: DEFAULT_SOFTCOPY_SETTINGS,
     layoutSettings: DEFAULT_LAYOUT_SETTINGS,
     bundledTemplateOverrides: {},
     countdownSeconds: DEFAULT_COUNTDOWN_SECONDS,
+    beautificationSettings: DEFAULT_BEAUTIFICATION_SETTINGS,
     testModeEnabled: false,
   }, null, 2));
 }
@@ -886,6 +919,10 @@ async function readSettings() {
       ? parsed.activeEventId.trim()
       : null,
     printEnabled: parsed?.printEnabled !== false,
+    printCopiesEnabled: parsed?.printCopiesEnabled === true,
+    selectedPrinterName: typeof parsed?.selectedPrinterName === 'string' && parsed.selectedPrinterName.trim()
+      ? parsed.selectedPrinterName.trim()
+      : null,
     testModeEnabled: parsed?.testModeEnabled === true,
     printerProfileId,
     safeMarginOverride: normalizeSafeMarginOverride(
@@ -896,6 +933,7 @@ async function readSettings() {
     layoutSettings: normalizeLayoutSettings(parsed?.layoutSettings),
     bundledTemplateOverrides: normalizeBundledTemplateOverrides(parsed?.bundledTemplateOverrides),
     countdownSeconds: normalizeCountdownSeconds(parsed?.countdownSeconds),
+    beautificationSettings: normalizeBeautificationSettings(parsed?.beautificationSettings),
   };
 }
 
@@ -933,6 +971,10 @@ async function writeSettings(settings) {
       ? settings.activeEventId.trim()
       : null,
     printEnabled: settings?.printEnabled !== false,
+    printCopiesEnabled: settings?.printCopiesEnabled === true,
+    selectedPrinterName: typeof settings?.selectedPrinterName === 'string' && settings.selectedPrinterName.trim()
+      ? settings.selectedPrinterName.trim()
+      : null,
     testModeEnabled: settings?.testModeEnabled === true,
     printerProfileId: settings?.printerProfileId === 'dnp_4x6' ? 'dnp_4x6' : DEFAULT_PRINTER_PROFILE_ID,
     safeMarginOverride: normalizeSafeMarginOverride(
@@ -943,6 +985,7 @@ async function writeSettings(settings) {
     layoutSettings: normalizeLayoutSettings(settings?.layoutSettings),
     bundledTemplateOverrides: normalizeBundledTemplateOverrides(settings?.bundledTemplateOverrides),
     countdownSeconds: normalizeCountdownSeconds(settings?.countdownSeconds),
+    beautificationSettings: normalizeBeautificationSettings(settings?.beautificationSettings),
   };
   await fsp.writeFile(settingsFile, JSON.stringify(normalized, null, 2));
   console.log('[settings] saved', { group: 'appSettings', settings: normalized });
@@ -1830,12 +1873,15 @@ ipcMain.handle('settings:get', async () => {
         mode: 'daily',
         activeEventId: null,
         printEnabled: true,
+        printCopiesEnabled: false,
+        selectedPrinterName: null,
         testModeEnabled: false,
         printerProfileId: DEFAULT_PRINTER_PROFILE_ID,
         safeMarginOverride: DEFAULT_SAFE_MARGIN_OVERRIDE,
         softcopySettings: DEFAULT_SOFTCOPY_SETTINGS,
         layoutSettings: DEFAULT_LAYOUT_SETTINGS,
         countdownSeconds: DEFAULT_COUNTDOWN_SECONDS,
+        beautificationSettings: DEFAULT_BEAUTIFICATION_SETTINGS,
       },
     };
   }
@@ -1853,6 +1899,14 @@ ipcMain.handle('settings:update', async (_ev, patch = {}) => {
         ? (typeof patch.activeEventId === 'string' && patch.activeEventId.trim() ? patch.activeEventId.trim() : null)
         : current.activeEventId,
       printEnabled: typeof patch?.printEnabled === 'boolean' ? patch.printEnabled : current.printEnabled,
+      printCopiesEnabled: typeof patch?.printCopiesEnabled === 'boolean'
+        ? patch.printCopiesEnabled
+        : current.printCopiesEnabled === true,
+      selectedPrinterName: Object.prototype.hasOwnProperty.call(patch, 'selectedPrinterName')
+        ? (typeof patch.selectedPrinterName === 'string' && patch.selectedPrinterName.trim()
+            ? patch.selectedPrinterName.trim()
+            : null)
+        : current.selectedPrinterName,
       testModeEnabled: typeof patch?.testModeEnabled === 'boolean' ? patch.testModeEnabled : current.testModeEnabled === true,
       printerProfileId,
       safeMarginOverride: Object.prototype.hasOwnProperty.call(patch, 'safeMarginOverride')
@@ -1870,6 +1924,9 @@ ipcMain.handle('settings:update', async (_ev, patch = {}) => {
       countdownSeconds: Object.prototype.hasOwnProperty.call(patch, 'countdownSeconds')
         ? normalizeCountdownSeconds(patch.countdownSeconds)
         : normalizeCountdownSeconds(current.countdownSeconds),
+      beautificationSettings: Object.prototype.hasOwnProperty.call(patch, 'beautificationSettings')
+        ? normalizeBeautificationSettings(patch.beautificationSettings)
+        : normalizeBeautificationSettings(current.beautificationSettings),
     };
 
     if (next.mode === 'event' && next.activeEventId) {
@@ -1880,6 +1937,9 @@ ipcMain.handle('settings:update', async (_ev, patch = {}) => {
     }
 
     await writeSettings(next);
+    if (Object.prototype.hasOwnProperty.call(patch, 'selectedPrinterName')) {
+      console.log('[printers] selected printer saved', next.selectedPrinterName);
+    }
     broadcastToAllWindows('settings:changed', next);
     return { ok: true, settings: next };
   } catch (err) {
@@ -2024,7 +2084,84 @@ function toLocalDateYmd(dateIso) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+function getSessionLocalDate(session) {
+  if (!session || typeof session !== 'object') return null;
+  if (typeof session.dateLocal === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(session.dateLocal)) {
+    return session.dateLocal;
+  }
+  if (typeof session.timestamp === 'string') {
+    const date = new Date(session.timestamp);
+    if (!Number.isNaN(date.getTime())) {
+      return toLocalDateYmd(date.toISOString());
+    }
+  }
+  return null;
+}
+
+function broadcastToRenderers(channel, payload) {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) {
+      try {
+        win.webContents.send(channel, payload);
+      } catch {
+        /* renderer gone */
+      }
+    }
+  }
+}
+
 const SESSION_PRINT_STATUSES = new Set(['completed', 'failed', 'cancelled', 'partial']);
+function normalizeKeychainCopies(value) {
+  const count = Number(value);
+  if (isValidKeychainCopies(count)) return count;
+  return null;
+}
+
+function getKeychainSaleAmount(copies) {
+  return getKeychainPrice(copies);
+}
+
+function newKeychainSaleId() {
+  return `keychain_sale_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
+}
+
+function sanitizeKeychainSale(input = {}) {
+  if (input.printStatus && input.printStatus !== 'completed') return null;
+  const copies = normalizeKeychainCopies(input.copies);
+  if (!copies) return null;
+  const explicitAmount = Number(input.amount);
+  const amount = Number.isFinite(explicitAmount) && explicitAmount > 0
+    ? Math.max(0, explicitAmount)
+    : getKeychainSaleAmount(copies);
+  return {
+    id: typeof input.id === 'string' && input.id ? input.id.slice(0, 96) : newKeychainSaleId(),
+    createdAt: typeof input.createdAt === 'string' ? input.createdAt.slice(0, 64) : new Date().toISOString(),
+    copies,
+    amount,
+    keychainPath: typeof input.keychainPath === 'string' ? input.keychainPath.slice(0, 256) : null,
+    keychainFilename: typeof input.keychainFilename === 'string' ? input.keychainFilename.slice(0, 180) : null,
+    printStatus: 'completed',
+  };
+}
+
+function getKeychainSales(session = {}) {
+  if (!Array.isArray(session.keychainSales)) return [];
+  return session.keychainSales
+    .map(sanitizeKeychainSale)
+    .filter(Boolean);
+}
+
+function summarizeKeychainSales(sales = []) {
+  return sales.reduce((summary, sale) => ({
+    unitsSold: summary.unitsSold + sale.copies,
+    revenue: +(summary.revenue + sale.amount).toFixed(2),
+    sheetsPrinted: summary.sheetsPrinted + 1,
+  }), {
+    unitsSold: 0,
+    revenue: 0,
+    sheetsPrinted: 0,
+  });
+}
 
 function sanitizeSession(input = {}) {
   const now = new Date();
@@ -2041,6 +2178,20 @@ function sanitizeSession(input = {}) {
   const totalAmount = Number.isFinite(+input.totalAmount)
     ? Math.max(0, +input.totalAmount)
     : +(unitPrice * copies).toFixed(2);
+  const extraPrintCount = Number.isFinite(+input.extraPrintCount)
+    ? Math.max(0, Math.floor(+input.extraPrintCount))
+    : 0;
+  const originalCopies = Number.isFinite(+input.originalCopies)
+    ? Math.max(0, Math.floor(+input.originalCopies))
+    : copies;
+  const totalPrintCopies = Number.isFinite(+input.totalPrintCopies)
+    ? Math.max(0, Math.floor(+input.totalPrintCopies))
+    : originalCopies + extraPrintCount;
+  const extraPrintRevenue = Number.isFinite(+input.extraPrintRevenue)
+    ? Math.max(0, +input.extraPrintRevenue)
+    : +(unitPrice * extraPrintCount).toFixed(2);
+  const keychainSales = getKeychainSales(input);
+  const keychainSummary = summarizeKeychainSales(keychainSales);
   console.log('[sessions] preserving softcopyVideoPath', Boolean(input.softcopyVideoPath));
 
   return {
@@ -2061,6 +2212,11 @@ function sanitizeSession(input = {}) {
     printCopiesCompleted,
     unitPrice,
     totalAmount,
+    originalCopies,
+    extraPrintCount,
+    totalPrintCopies,
+    extraPrintRevenue,
+    lastExtraPrintAt: typeof input.lastExtraPrintAt === 'string' ? input.lastExtraPrintAt.slice(0, 64) : null,
     retriesUsed:   Number.isFinite(+input.retriesUsed) ? Math.max(0, Math.floor(+input.retriesUsed)) : 0,
     durationMs:    Number.isFinite(+input.durationMs)  ? Math.max(0, Math.floor(+input.durationMs))  : null,
     status:        printStatus,
@@ -2071,6 +2227,19 @@ function sanitizeSession(input = {}) {
     softcopyVideoPath: typeof input.softcopyVideoPath === 'string' ? input.softcopyVideoPath.slice(0, 256) : null,
     softcopyExpiresAt: typeof input.softcopyExpiresAt === 'string' ? input.softcopyExpiresAt.slice(0, 64) : null,
     softcopyStatus: typeof input.softcopyStatus === 'string' ? input.softcopyStatus.slice(0, 32) : null,
+    finalPrintPath: typeof input.finalPrintPath === 'string' ? input.finalPrintPath.slice(0, 256) : null,
+    printImagePath: typeof input.printImagePath === 'string' ? input.printImagePath.slice(0, 256) : null,
+    keychainPath: typeof input.keychainPath === 'string' ? input.keychainPath.slice(0, 256) : null,
+    keychainFilename: typeof input.keychainFilename === 'string' ? input.keychainFilename.slice(0, 180) : null,
+    keychainGeneratedAt: typeof input.keychainGeneratedAt === 'string' ? input.keychainGeneratedAt.slice(0, 64) : null,
+    keychainSales,
+    keychainUnitsSold: keychainSummary.unitsSold,
+    keychainRevenue: keychainSummary.revenue,
+    keychainSheetsPrinted: keychainSummary.sheetsPrinted,
+    keychainTransactions: keychainSummary.sheetsPrinted,
+    keychainPrintCount: keychainSummary.sheetsPrinted || (Number.isFinite(+input.keychainPrintCount) ? Math.max(0, Math.floor(+input.keychainPrintCount)) : 0),
+    lastKeychainPrintedAt: typeof input.lastKeychainPrintedAt === 'string' ? input.lastKeychainPrintedAt.slice(0, 64) : null,
+    keychainLastError: typeof input.keychainLastError === 'string' ? input.keychainLastError.slice(0, 256) : null,
   };
 }
 
@@ -2145,6 +2314,187 @@ async function readAllSessions() {
   return out;
 }
 
+async function writeAllSessions(records = []) {
+  if (!Array.isArray(records) || records.length === 0) {
+    if (fs.existsSync(sessionsFile)) await fsp.unlink(sessionsFile);
+    return;
+  }
+  const nextContents = `${records.map((record) => JSON.stringify(record)).join('\n')}\n`;
+  await fsp.writeFile(sessionsFile, nextContents, 'utf8');
+}
+
+function getIntegerField(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(0, Math.floor(number)) : fallback;
+}
+
+function getMoneyField(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(0, number) : fallback;
+}
+
+function resolveSessionUnitPrice(session = {}) {
+  const explicit = Number(session.unitPrice);
+  if (Number.isFinite(explicit) && explicit > 0) return explicit;
+
+  const totalAmount = Number(session.totalAmount);
+  const totalCopies = getIntegerField(session.totalPrintCopies ?? session.copies ?? session.printCopiesCompleted, 0);
+  if (Number.isFinite(totalAmount) && totalAmount > 0 && totalCopies > 0) {
+    return +(totalAmount / totalCopies).toFixed(2);
+  }
+
+  return 0;
+}
+
+function applySuccessfulExtraPrint(session = {}) {
+  const nowIso = new Date().toISOString();
+  const previousExtraPrintCount = getIntegerField(session.extraPrintCount, 0);
+  const previousTotalPrintCopies = getIntegerField(
+    session.totalPrintCopies ?? session.copies ?? session.printCopiesCompleted,
+    0,
+  );
+  const originalCopies = getIntegerField(
+    session.originalCopies,
+    Math.max(0, previousTotalPrintCopies - previousExtraPrintCount),
+  );
+  const unitPrice = resolveSessionUnitPrice(session);
+  const nextExtraPrintCount = previousExtraPrintCount + 1;
+  const nextTotalPrintCopies = originalCopies + nextExtraPrintCount;
+  const nextExtraPrintRevenue = +(getMoneyField(session.extraPrintRevenue, 0) + unitPrice).toFixed(2);
+  const nextTotalAmount = +(getMoneyField(session.totalAmount, 0) + unitPrice).toFixed(2);
+
+  return {
+    ...session,
+    copies: nextTotalPrintCopies,
+    printCopiesCompleted: nextTotalPrintCopies,
+    totalAmount: nextTotalAmount,
+    unitPrice,
+    originalCopies,
+    extraPrintCount: nextExtraPrintCount,
+    totalPrintCopies: nextTotalPrintCopies,
+    extraPrintRevenue: nextExtraPrintRevenue,
+    lastExtraPrintAt: nowIso,
+  };
+}
+
+function buildSessionKeychainFilename(session = {}, keychainCopies = 3, timestamp = Date.now()) {
+  const copies = normalizeKeychainCopies(keychainCopies) || 3;
+  const safeSessionId = sanitizeSoftcopySegment(session.id || session.softcopySessionToken, 'session')
+    .slice(0, 64) || 'session';
+  return `Afterimage-keychain-4x6-${copies}copies-${softcopyTimestamp(timestamp || Date.now())}-session-${safeSessionId}.png`;
+}
+
+function resolveStoredKeychainPath(session = {}, keychainCopies = null) {
+  const downloadsDir = app.getPath('downloads');
+  const copies = normalizeKeychainCopies(keychainCopies);
+  const matchingSales = copies
+    ? getKeychainSales(session).filter((sale) => sale.copies === copies)
+    : getKeychainSales(session);
+  const legacyCandidates = [
+    session.keychainPath,
+    session.keychainFilename,
+  ].filter((value) => {
+    if (typeof value !== 'string' || !value.trim()) return false;
+    if (!copies) return true;
+    return path.basename(value).includes(`${copies}copies`);
+  });
+  const candidates = [
+    ...matchingSales
+      .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+      .flatMap((sale) => [sale.keychainPath, sale.keychainFilename]),
+    ...legacyCandidates,
+  ].filter((value) => typeof value === 'string' && value.trim());
+
+  for (const candidate of candidates) {
+    const resolved = path.isAbsolute(candidate)
+      ? candidate
+      : path.join(downloadsDir, path.basename(candidate));
+    if (fs.existsSync(resolved)) {
+      const verification = verifyWrittenFile(resolved);
+      if (verification.exists && verification.sizeBytes > 0) {
+        return {
+          path: resolved,
+          filename: path.basename(resolved),
+          sizeBytes: verification.sizeBytes,
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
+function applyKeychainGenerated(session = {}, {
+  keychainPath,
+  keychainFilename,
+  keychainGeneratedAt,
+  keychainWidth = null,
+  keychainHeight = null,
+  keychainPlacementCount = null,
+} = {}) {
+  return {
+    ...session,
+    keychainPath,
+    keychainFilename,
+    keychainGeneratedAt: keychainGeneratedAt || session.keychainGeneratedAt || new Date().toISOString(),
+    keychainWidth: Number.isFinite(Number(keychainWidth)) ? Number(keychainWidth) : (session.keychainWidth || null),
+    keychainHeight: Number.isFinite(Number(keychainHeight)) ? Number(keychainHeight) : (session.keychainHeight || null),
+    keychainPlacementCount: Number.isFinite(Number(keychainPlacementCount))
+      ? Math.max(0, Math.floor(Number(keychainPlacementCount)))
+      : (session.keychainPlacementCount || null),
+    keychainLastError: null,
+  };
+}
+
+function applySuccessfulKeychainPrint(session = {}, keychainInfo = {}) {
+  const nowIso = new Date().toISOString();
+  const copies = normalizeKeychainCopies(keychainInfo.keychainCopies) || 3;
+  const amount = getKeychainSaleAmount(copies);
+  const sale = sanitizeKeychainSale({
+    id: keychainInfo.saleId || newKeychainSaleId(),
+    createdAt: nowIso,
+    copies,
+    amount,
+    keychainPath: keychainInfo.keychainPath,
+    keychainFilename: keychainInfo.keychainFilename,
+    printStatus: 'completed',
+  });
+  const keychainSales = [
+    ...getKeychainSales(session),
+    sale,
+  ].filter(Boolean);
+  const summary = summarizeKeychainSales(keychainSales);
+  return {
+    ...applyKeychainGenerated(session, keychainInfo),
+    keychainSales,
+    keychainUnitsSold: summary.unitsSold,
+    keychainRevenue: summary.revenue,
+    keychainSheetsPrinted: summary.sheetsPrinted,
+    keychainTransactions: summary.sheetsPrinted,
+    keychainPrintCount: summary.sheetsPrinted,
+    lastKeychainPrintedAt: nowIso,
+    keychainLastError: null,
+  };
+}
+
+function applyFailedKeychainPrint(session = {}, message = '') {
+  return {
+    ...session,
+    keychainLastError: String(message || 'Keychain print failed').slice(0, 256),
+  };
+}
+
+async function updateSessionRecord(sessionId, updater) {
+  const records = await readAllSessions();
+  const index = records.findIndex((record) => record && record.id === sessionId);
+  if (index < 0) return null;
+
+  const updated = updater(records[index]);
+  records[index] = updated;
+  await writeAllSessions(records);
+  return updated;
+}
+
 ipcMain.handle('sessions:log', async (_ev, payload = {}) => {
   try {
     const record = sanitizeSession(payload);
@@ -2206,7 +2556,18 @@ ipcMain.handle('sessions:stats', async (_ev, { eventId = null, mode = null, sess
     const thirtyAgo = daysAgo(29);  // inclusive 30-day window
 
     // Aggregate totals across all-time + windows
-    const agg = () => ({ sessions: 0, copies: 0, revenue: 0, failed: 0 });
+    const agg = () => ({
+      sessions: 0,
+      copies: 0,
+      revenue: 0,
+      stripRevenue: 0,
+      keychainRevenue: 0,
+      totalRevenue: 0,
+      keychainUnits: 0,
+      keychainSheets: 0,
+      keychainTransactions: 0,
+      failed: 0,
+    });
     const buckets = {
       today:    agg(),
       week:     agg(),
@@ -2219,21 +2580,44 @@ ipcMain.handle('sessions:stats', async (_ev, { eventId = null, mode = null, sess
     const byDay = {};
     for (let i = 29; i >= 0; i--) {
       const key = daysAgo(i);
-      byDay[key] = { date: key, sessions: 0, copies: 0, revenue: 0 };
+      byDay[key] = {
+        date: key,
+        sessions: 0,
+        copies: 0,
+        revenue: 0,
+        stripRevenue: 0,
+        keychainRevenue: 0,
+        totalRevenue: 0,
+        keychainUnits: 0,
+        keychainSheets: 0,
+        keychainTransactions: 0,
+      };
     }
 
     // By-template breakdown (revenue + copies, all-time only)
     const byTemplate = {};
+    const keychainSales = [];
 
     for (const s of all) {
       if (!s || !s.dateLocal) continue;
       const d = s.dateLocal;
       const failed = s.status === 'failed';
+      const sessionKeychainSales = !failed ? getKeychainSales(s) : [];
+      const sessionKeychainSummary = summarizeKeychainSales(sessionKeychainSales);
+      const stripRevenue = !failed ? getMoneyField(s.totalAmount, 0) : 0;
+      const keychainRevenue = !failed ? sessionKeychainSummary.revenue : 0;
+      const totalRevenue = +(stripRevenue + keychainRevenue).toFixed(2);
       const add = (b) => {
         b.sessions += 1;
         if (!failed) {
-          b.copies  += s.copies || 0;
-          b.revenue += s.totalAmount || 0;
+          b.copies  += getIntegerField(s.totalPrintCopies ?? s.copies, 0);
+          b.stripRevenue += stripRevenue;
+          b.keychainRevenue += keychainRevenue;
+          b.keychainUnits += sessionKeychainSummary.unitsSold;
+          b.keychainSheets += sessionKeychainSummary.sheetsPrinted;
+          b.keychainTransactions += sessionKeychainSummary.sheetsPrinted;
+          b.revenue += totalRevenue;
+          b.totalRevenue += totalRevenue;
         } else {
           b.failed  += 1;
         }
@@ -2245,22 +2629,59 @@ ipcMain.handle('sessions:stats', async (_ev, { eventId = null, mode = null, sess
 
       if (byDay[d] && !failed) {
         byDay[d].sessions += 1;
-        byDay[d].copies   += s.copies || 0;
-        byDay[d].revenue  += s.totalAmount || 0;
+        byDay[d].copies   += getIntegerField(s.totalPrintCopies ?? s.copies, 0);
+        byDay[d].stripRevenue += stripRevenue;
+        byDay[d].keychainRevenue += keychainRevenue;
+        byDay[d].keychainUnits += sessionKeychainSummary.unitsSold;
+        byDay[d].keychainSheets += sessionKeychainSummary.sheetsPrinted;
+        byDay[d].keychainTransactions += sessionKeychainSummary.sheetsPrinted;
+        byDay[d].revenue += totalRevenue;
+        byDay[d].totalRevenue += totalRevenue;
       }
 
       if (s.templateId && !failed) {
         const t = byTemplate[s.templateId] || {
           templateId: s.templateId,
           templateName: s.templateName || s.templateId,
-          sessions: 0, copies: 0, revenue: 0,
+          sessions: 0,
+          copies: 0,
+          revenue: 0,
+          stripRevenue: 0,
+          keychainRevenue: 0,
+          totalRevenue: 0,
+          keychainUnits: 0,
+          keychainSheets: 0,
         };
         t.sessions += 1;
-        t.copies   += s.copies || 0;
-        t.revenue  += s.totalAmount || 0;
+        t.copies   += getIntegerField(s.totalPrintCopies ?? s.copies, 0);
+        t.stripRevenue += stripRevenue;
+        t.keychainRevenue += keychainRevenue;
+        t.keychainUnits += sessionKeychainSummary.unitsSold;
+        t.keychainSheets += sessionKeychainSummary.sheetsPrinted;
+        t.revenue += stripRevenue;
+        t.totalRevenue += totalRevenue;
         byTemplate[s.templateId] = t;
       }
+
+      if (!failed) {
+        for (const sale of sessionKeychainSales) {
+          keychainSales.push({
+            ...sale,
+            sessionId: s.id,
+            templateId: s.templateId || null,
+            templateName: s.templateName || s.templateId || 'Unknown Template',
+            layoutId: s.layoutId || null,
+            layoutName: s.layoutName || s.layoutId || 'Unknown Layout',
+            sessionTimestamp: s.timestamp || null,
+            eventId: s.eventId || null,
+            eventName: s.eventName || null,
+            mode: s.mode || 'daily',
+          });
+        }
+      }
     }
+    const allKeychainSummary = summarizeKeychainSales(keychainSales);
+    keychainSales.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
 
     return {
       ok: true,
@@ -2268,6 +2689,13 @@ ipcMain.handle('sessions:stats', async (_ev, { eventId = null, mode = null, sess
       byDay: Object.values(byDay),              // chronological, oldest → newest
       byTemplate: Object.values(byTemplate)
         .sort((a, b) => b.revenue - a.revenue), // ranked by revenue desc
+      keychains: {
+        unitsSold: allKeychainSummary.unitsSold,
+        revenue: allKeychainSummary.revenue,
+        sheetsPrinted: allKeychainSummary.sheetsPrinted,
+        transactions: allKeychainSummary.sheetsPrinted,
+        recentSales: keychainSales.slice(0, 12),
+      },
       generatedAt: new Date().toISOString(),
     };
   } catch (err) {
@@ -2281,16 +2709,442 @@ ipcMain.handle('sessions:clear', async () => {
   try {
     if (fs.existsSync(sessionsFile)) await fsp.unlink(sessionsFile);
     // Tell every renderer so an open dashboard re-pulls its (now empty) state.
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) {
-        try { win.webContents.send('sessions:cleared'); } catch { /* renderer gone */ }
-      }
-    }
+    broadcastToRenderers('sessions:cleared');
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err.message };
   }
 });
+
+ipcMain.handle('today-monitor:reset-today-records', async () => {
+  try {
+    console.log('[today-monitor reset main] handler called');
+    const today = toLocalDateYmd();
+    const allSessions = await readAllSessions();
+    const remainingSessions = allSessions.filter((session) => getSessionLocalDate(session) !== today);
+    const removedCount = allSessions.length - remainingSessions.length;
+
+    await writeAllSessions(remainingSessions);
+
+    const payload = {
+      ok: true,
+      today,
+      removedCount,
+      remainingCount: remainingSessions.length,
+    };
+    broadcastToRenderers('today-monitor:records-reset', payload);
+    return payload;
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.removeHandler('today-monitor:print-extra-session-copy');
+ipcMain.handle('today-monitor:print-extra-session-copy', async (event, payload = {}) => {
+  try {
+    console.log('[main ipc] print extra handler called', payload);
+    console.log('[extra print main] today-monitor:print-extra-session-copy called', payload);
+    console.log('[today-monitor print-extra main] handler called', {
+      sessionId: payload?.sessionId || null,
+      copies: payload?.copies,
+    });
+
+    const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId.trim() : '';
+    if (!sessionId) {
+      return { ok: false, error: 'Missing sessionId' };
+    }
+
+    const sessionCopies = clampPrintCopies(payload.copies ?? 1);
+    if (sessionCopies !== 1) {
+      console.log('[today-monitor print-extra main] forcing single copy', { requestedCopies: sessionCopies });
+    }
+
+    const allSessions = await readAllSessions();
+    const session = allSessions.find((record) => record && record.id === sessionId) || null;
+    console.log('[extra print main] session lookup result', {
+      sessionId,
+      session,
+      keys: session ? Object.keys(session) : null,
+    });
+    if (!session) {
+      return { ok: false, error: 'Session not found' };
+    }
+    if (session.status !== 'completed') {
+      return { ok: false, error: 'Session is not completed' };
+    }
+
+    const settings = await readSettings();
+    if (settings.printEnabled === false) {
+      return { ok: false, error: 'Printing is disabled by admin' };
+    }
+
+    const printImage = await resolveReprintImagePath(session);
+    console.log('[extra print path audit]', {
+      sessionId,
+      expectedImagePath: printImage?.expectedImagePath || null,
+      isAbsolute: path.isAbsolute(printImage?.expectedImagePath || ''),
+      resolvedPath: printImage?.resolvedPath || null,
+      exists: printImage?.resolvedPath ? fs.existsSync(printImage.resolvedPath) : false,
+      userDataDir: app.getPath('userData'),
+      downloadsDir: app.getPath('downloads'),
+      source: printImage?.source || null,
+      metadataPath: printImage?.metadataPath || null,
+    });
+    if (!printImage?.resolvedPath) {
+      return { ok: false, error: 'Extra print unavailable for this session. No saved print image was found.' };
+    }
+    if (!fs.existsSync(printImage.resolvedPath)) {
+      return { ok: false, error: `Reprint image file does not exist: ${printImage.resolvedPath}` };
+    }
+    const stats = fs.statSync(printImage.resolvedPath);
+    if (!stats || stats.size <= 0) {
+      return { ok: false, error: `Reprint image file is empty: ${printImage.resolvedPath}` };
+    }
+
+    const target = await resolveTargetPrinter(event.sender);
+    const printerName = target.printer.name;
+    const dataUrl = filePathToDataUrl(printImage.resolvedPath);
+    const job = {
+      id: `reprint_${sessionId}_${Date.now()}`,
+      sessionId,
+      finalCopies: 1,
+    };
+
+    const result = await submitSinglePrintCopy({
+      dataUrl,
+      silent: true,
+      job,
+      copyIndex: 1,
+      printerName,
+    });
+
+    const normalized = normalizePrintResult({
+      status: result.success ? 'completed' : 'failed',
+      copiesRequested: 1,
+      copiesPrinted: result.success ? 1 : 0,
+      error: result.success ? null : (result.failureReason || 'print failed'),
+      jobId: job.id,
+      printerName,
+    });
+
+    console.log('[today-monitor print-extra main] result', {
+      sessionId,
+      printerName,
+      ok: normalized.ok,
+      status: normalized.status,
+      copiesPrinted: normalized.copiesPrinted,
+      error: normalized.error,
+    });
+
+    let updatedSession = null;
+    if (normalized.ok) {
+      updatedSession = await updateSessionRecord(sessionId, applySuccessfulExtraPrint);
+      console.log('[today-monitor print-extra main] session metrics updated', {
+        sessionId,
+        extraPrintCount: updatedSession?.extraPrintCount,
+        totalPrintCopies: updatedSession?.totalPrintCopies,
+        extraPrintRevenue: updatedSession?.extraPrintRevenue,
+        totalAmount: updatedSession?.totalAmount,
+        lastExtraPrintAt: updatedSession?.lastExtraPrintAt,
+      });
+      if (updatedSession) {
+        broadcastToRenderers('sessions:updated', updatedSession);
+        broadcastToRenderers('today-monitor:sessions-updated', updatedSession);
+      }
+    }
+
+    return {
+      ...normalized,
+      sessionId,
+      printerName,
+      sourcePath: printImage.resolvedPath,
+      updatedSession,
+    };
+  } catch (err) {
+    console.error('[today-monitor print-extra main] failed', err);
+    return { ok: false, error: err?.message || String(err) };
+  }
+});
+console.log('[main ipc] registered today-monitor:print-extra-session-copy');
+
+ipcMain.removeHandler('today-monitor:generate-and-print-keychain');
+ipcMain.handle('today-monitor:generate-and-print-keychain', async (event, payload = {}) => {
+  try {
+    const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId.trim() : '';
+    const keychainCopies = normalizeKeychainCopies(payload.keychainCopies);
+    const keychainAmount = keychainCopies ? getKeychainSaleAmount(keychainCopies) : 0;
+    console.log('[main ipc] keychain handler called', payload);
+    console.log('[keychain main] today-monitor:generate-and-print-keychain called', payload);
+    console.log('[today-monitor keychain main] handler called', {
+      sessionId,
+      hasGeneratedPng: Boolean(payload.arrayBuffer || payload.data || payload.dataUrl),
+      filename: payload.filename || null,
+      keychainCopies,
+      keychainAmount,
+    });
+
+    if (!sessionId) {
+      return { ok: false, error: 'Missing sessionId' };
+    }
+    if (!keychainCopies) {
+      return { ok: false, error: 'Invalid keychain copy count. Choose 2 or 3 strip copies.' };
+    }
+
+    const allSessions = await readAllSessions();
+    const session = allSessions.find((record) => record && record.id === sessionId) || null;
+    console.log('[KEYCHAIN SALES AUDIT] session before', {
+      sessionId,
+      session,
+      keys: session ? Object.keys(session) : null,
+    });
+    if (!session) {
+      return { ok: false, error: 'Session not found' };
+    }
+    if (session.status !== 'completed') {
+      return { ok: false, error: 'Session is not completed' };
+    }
+
+    const settings = await readSettings();
+    if (settings.printEnabled === false) {
+      return { ok: false, error: 'Printing is disabled by admin' };
+    }
+
+    const filename = typeof payload.filename === 'string' && payload.filename.toLowerCase().endsWith('.png')
+      ? path.basename(payload.filename)
+      : buildSessionKeychainFilename(session, keychainCopies, payload.generatedAt || Date.now());
+    const downloadsDir = app.getPath('downloads');
+    const targetPath = path.join(downloadsDir, filename);
+    const existingKeychain = resolveStoredKeychainPath(session, keychainCopies);
+
+    const printExistingKeychain = async (keychainFile, reusedExisting = true) => {
+      const target = await resolveTargetPrinter(event.sender);
+      const printerName = target.printer.name;
+      const dataUrl = filePathToDataUrl(keychainFile.path);
+      const job = {
+        id: `keychain_${sessionId}_${Date.now()}`,
+        sessionId,
+        templateName: session.templateName || null,
+        layoutName: session.layoutName || null,
+        finalCopies: 1,
+        keychainCopies,
+      };
+
+      const result = await submitSinglePrintCopy({
+        dataUrl,
+        silent: true,
+        job,
+        copyIndex: 1,
+        printerName,
+      });
+
+      const normalized = normalizePrintResult({
+        status: result.success ? 'completed' : 'failed',
+        copiesRequested: 1,
+        copiesPrinted: result.success ? 1 : 0,
+        error: result.success ? null : (result.failureReason || 'keychain print failed'),
+        jobId: job.id,
+        printerName,
+      });
+
+      if (!normalized.ok) {
+        const failedSession = await updateSessionRecord(sessionId, (record) => applyFailedKeychainPrint(record, normalized.error));
+        if (failedSession) {
+          broadcastToRenderers('sessions:updated', failedSession);
+          broadcastToRenderers('today-monitor:sessions-updated', failedSession);
+        }
+        return {
+          ...normalized,
+          sessionId,
+          printerName,
+          keychainPath: keychainFile.path,
+          filename: keychainFile.filename,
+          reusedExisting,
+          updatedSession: failedSession,
+        };
+      }
+
+      console.log('[KEYCHAIN SALES] recording sale', {
+        sessionId,
+        keychainCopies,
+        amount: keychainAmount,
+        keychainPath: keychainFile.path,
+      });
+      console.log('[KEYCHAIN SALES AUDIT] sale result', {
+        keychainCopies,
+        amount: keychainAmount,
+        keychainPath: keychainFile.path,
+        printStatus: 'completed',
+      });
+      const updatedSession = await updateSessionRecord(sessionId, (record) => applySuccessfulKeychainPrint(record, {
+        keychainPath: keychainFile.path,
+        keychainFilename: keychainFile.filename,
+        keychainGeneratedAt: record.keychainGeneratedAt || payload.generatedAt || new Date().toISOString(),
+        keychainWidth: payload.width,
+        keychainHeight: payload.height,
+        keychainPlacementCount: payload.placementCount,
+        keychainCopies,
+      }));
+      if (!updatedSession) {
+        return {
+          ok: false,
+          error: 'Keychain printed, but the session sale record could not be updated.',
+          sessionId,
+          printerName,
+          keychainPath: keychainFile.path,
+          filename: keychainFile.filename,
+          keychainCopies,
+          keychainAmount,
+          reusedExisting,
+        };
+      }
+      if (updatedSession) {
+        broadcastToRenderers('sessions:updated', updatedSession);
+        broadcastToRenderers('today-monitor:sessions-updated', updatedSession);
+      }
+      console.log('[KEYCHAIN SALES AUDIT] session after', {
+        sessionId,
+        updatedSession,
+        keychainSales: updatedSession?.keychainSales,
+        keychainUnitsSold: updatedSession?.keychainUnitsSold,
+        keychainRevenue: updatedSession?.keychainRevenue,
+        keychainSheetsPrinted: updatedSession?.keychainSheetsPrinted,
+      });
+      console.log('[KEYCHAIN SALES] updated session totals', {
+        sessionId,
+        keychainUnitsSold: updatedSession.keychainUnitsSold,
+        keychainRevenue: updatedSession.keychainRevenue,
+        keychainSheetsPrinted: updatedSession.keychainSheetsPrinted,
+      });
+
+      console.log('[today-monitor keychain main] printed', {
+        sessionId,
+        printerName,
+        keychainPath: keychainFile.path,
+        reusedExisting,
+        keychainCopies,
+        keychainAmount,
+        keychainPrintCount: updatedSession?.keychainPrintCount || null,
+        keychainUnitsSold: updatedSession?.keychainUnitsSold || null,
+        keychainRevenue: updatedSession?.keychainRevenue || null,
+        keychainSheetsPrinted: updatedSession?.keychainSheetsPrinted || null,
+      });
+
+      return {
+        ...normalized,
+        sessionId,
+        printerName,
+        keychainPath: keychainFile.path,
+        filename: keychainFile.filename,
+        keychainCopies,
+        keychainAmount,
+        reusedExisting,
+        updatedSession,
+      };
+    };
+
+    if (existingKeychain && !payload.forceRegenerate) {
+      console.log('[today-monitor keychain main] reusing existing keychain', {
+        sessionId,
+        keychainPath: existingKeychain.path,
+        filename: existingKeychain.filename,
+        keychainCopies,
+      });
+      return printExistingKeychain(existingKeychain, true);
+    }
+
+    const generatedBuffer = normalizeRendererBinaryPayload(payload);
+    if (!generatedBuffer?.length) {
+      if (!session.layoutId) {
+        return { ok: false, error: 'Session has no layout id for keychain generation.' };
+      }
+      const printImage = await resolveReprintImagePath(session);
+      console.log('[today-monitor keychain main] source lookup', {
+        sessionId,
+        source: printImage?.source || null,
+        sourcePath: printImage?.resolvedPath || null,
+        filename,
+      });
+      if (!printImage?.resolvedPath) {
+        return { ok: false, error: 'Keychain unavailable for this session. No saved final photo was found.' };
+      }
+      return {
+        ok: true,
+        needsGeneration: true,
+        sessionId,
+        filename,
+        keychainCopies,
+        keychainAmount,
+        layoutId: session.layoutId || null,
+        layoutName: session.layoutName || null,
+        templateId: session.templateId || null,
+        templateName: session.templateName || null,
+        selectedFilterCss: session.selectedFilterCss || '',
+        sourcePath: printImage.resolvedPath,
+        sourceDataUrl: filePathToDataUrl(printImage.resolvedPath),
+      };
+    }
+
+    const mimeType = String(payload.mimeType || 'image/png').toLowerCase().split(';')[0];
+    if (mimeType !== 'image/png') {
+      return { ok: false, error: `Invalid keychain MIME type: ${mimeType}` };
+    }
+
+    await fsp.mkdir(downloadsDir, { recursive: true });
+    let keychainFile = null;
+    if (fs.existsSync(targetPath)) {
+      const verification = verifyWrittenFile(targetPath);
+      if (!verification.exists || verification.sizeBytes <= 0) {
+        return { ok: false, error: `Existing keychain file is invalid: ${targetPath}` };
+      }
+      keychainFile = {
+        path: targetPath,
+        filename,
+        sizeBytes: verification.sizeBytes,
+      };
+      console.log('[today-monitor keychain main] target exists; reusing generated file', {
+        sessionId,
+        targetPath,
+        sizeBytes: verification.sizeBytes,
+      });
+    } else {
+      console.log('[LOCAL SAVE AUDIT] saving media file', {
+        type: 'keychain4x6',
+        filename,
+        targetPath,
+        source: 'today-monitor:generate-and-print-keychain',
+        reason: 'operator-triggered keychain local save',
+      });
+      console.log('[LOCAL SAVE AUDIT PNG]', {
+        filename,
+        isKeychain: true,
+        isNormalPhoto: false,
+        caller: 'electron today-monitor:generate-and-print-keychain',
+      });
+      await fsp.writeFile(targetPath, generatedBuffer, { flag: 'wx' });
+      const verification = verifyWrittenFile(targetPath);
+      if (!verification.exists || verification.sizeBytes <= 0) {
+        return { ok: false, error: `Keychain file verification failed for ${targetPath}` };
+      }
+      keychainFile = {
+        path: targetPath,
+        filename,
+        sizeBytes: verification.sizeBytes,
+      };
+      console.log('[today-monitor keychain main] saved keychain', {
+        sessionId,
+        filename,
+        targetPath,
+        sizeBytes: verification.sizeBytes,
+      });
+    }
+
+    return printExistingKeychain(keychainFile, false);
+  } catch (err) {
+    console.error('[today-monitor keychain main] failed', err);
+    return { ok: false, error: err?.message || String(err) };
+  }
+});
+console.log('[main ipc] registered today-monitor:generate-and-print-keychain');
 
 ipcMain.handle('session:reset', async () => {
   try {
@@ -2332,6 +3186,138 @@ const printQueue = [];
 const pendingPrintJobs = new Map();
 let activePrintJobId = null;
 
+function normalizePrinterStatus(status) {
+  if (status == null || status === '') {
+    return { label: 'Unknown', available: true, reason: null };
+  }
+  if (typeof status === 'number') {
+    const unavailableMask = 1 | 2 | 4 | 8 | 16 | 32 | 64 | 128 | 512 | 1024 | 2048 | 4096 | 8192;
+    return {
+      label: status === 0 ? 'Idle' : `Status ${status}`,
+      available: status === 0 || (status & unavailableMask) === 0,
+      reason: status === 0 || (status & unavailableMask) === 0 ? null : 'unavailable status',
+    };
+  }
+
+  const label = String(status).trim() || 'Unknown';
+  const lower = label.toLowerCase();
+  const avoid = ['offline', 'stopped', 'error', 'paused', 'not available', 'unavailable'];
+  const unavailable = avoid.some((term) => lower.includes(term));
+  return {
+    label,
+    available: !unavailable,
+    reason: unavailable ? label : null,
+  };
+}
+
+function isSelphyPrinter(printer = {}) {
+  const label = `${printer.name || ''} ${printer.displayName || ''} ${printer.description || ''}`.toLowerCase();
+  return label.includes('canon selphy') || label.includes('selphy cp1500') || label.includes('cp1500') || label.includes('selphy');
+}
+
+function normalizePrinterInfo(printer = {}) {
+  const statusInfo = normalizePrinterStatus(printer.status);
+  return {
+    name: typeof printer.name === 'string' ? printer.name : '',
+    displayName: typeof printer.displayName === 'string' ? printer.displayName : null,
+    description: typeof printer.description === 'string' ? printer.description : null,
+    status: printer.status ?? null,
+    statusLabel: statusInfo.label,
+    isDefault: printer.isDefault === true,
+    options: printer.options && typeof printer.options === 'object' ? printer.options : null,
+    isSelphy: isSelphyPrinter(printer),
+    isAvailable: statusInfo.available,
+    unavailableReason: statusInfo.reason,
+  };
+}
+
+async function getDetectedPrinters(webContents) {
+  const printers = await webContents.getPrintersAsync();
+  console.log('[printers] detected', printers.map((printer) => ({
+    name: printer.name,
+    displayName: printer.displayName,
+    status: printer.status,
+    isDefault: printer.isDefault,
+  })));
+  return printers.map(normalizePrinterInfo).filter((printer) => printer.name);
+}
+
+async function getPrinterListForRenderer(webContents) {
+  const printers = await getDetectedPrinters(webContents);
+  const selphyPrinters = printers.filter((printer) => printer.isSelphy);
+  const defaultPrinter = printers.find((printer) => printer.isDefault) || null;
+  const defaultSelphyOffline = defaultPrinter?.isSelphy && defaultPrinter.isAvailable === false;
+  const onlineSelphyExists = selphyPrinters.some((printer) => printer.isAvailable);
+  const guidance = defaultSelphyOffline && onlineSelphyExists
+    ? 'Your default Canon SELPHY appears offline, but another SELPHY queue is online. Select an online printer before printing.'
+    : null;
+  return { printers, selphyPrinters, defaultPrinter, guidance };
+}
+
+async function persistSelectedPrinterName(selectedPrinterName) {
+  const current = await readSettings();
+  if (current.selectedPrinterName === selectedPrinterName) return current;
+  const next = { ...current, selectedPrinterName };
+  await writeSettings(next);
+  console.log('[printers] selected printer saved', selectedPrinterName);
+  broadcastToAllWindows('settings:changed', next);
+  return next;
+}
+
+async function resolveTargetPrinter(webContents) {
+  const settings = await readSettings();
+  const printerList = await getPrinterListForRenderer(webContents);
+  const { printers, selphyPrinters } = printerList;
+  const availableSelphyPrinters = selphyPrinters.filter((printer) => printer.isAvailable);
+  const selectedPrinterName = settings.selectedPrinterName || null;
+  const selectedPrinter = selectedPrinterName
+    ? printers.find((printer) => printer.name === selectedPrinterName)
+    : null;
+
+  console.log('[print] resolving printer', {
+    selectedPrinterName,
+    availablePrinterNames: printers.map((printer) => printer.name),
+    selphyPrinterNames: selphyPrinters.map((printer) => printer.name),
+  });
+
+  if (selphyPrinters.length > 1) {
+    console.log('[print] duplicate SELPHY queues found; using one', {
+      selectedPrinterName,
+      selphyPrinterNames: selphyPrinters.map((printer) => printer.name),
+    });
+  }
+
+  if (selectedPrinterName) {
+    if (!selectedPrinter) {
+      throw new Error('Selected printer is missing. Choose an online Canon SELPHY printer in Today Monitor or Admin Settings.');
+    }
+    if (selectedPrinter.isAvailable === false) {
+      throw new Error('Selected printer is offline. Choose an online Canon SELPHY printer in Today Monitor or Admin Settings.');
+    }
+    console.log('[print] target printer resolved', {
+      selectedPrinterName,
+      targetPrinterName: selectedPrinter.name,
+      isDefault: selectedPrinter.isDefault,
+      status: selectedPrinter.status,
+    });
+    return { printer: selectedPrinter, settings, printerList };
+  }
+
+  if (availableSelphyPrinters.length === 0) {
+    throw new Error('No online Canon SELPHY printer queue was found. Select or reconnect a Canon SELPHY printer in Admin Settings.');
+  }
+
+  const targetPrinter = availableSelphyPrinters[0];
+  const nextSettings = await persistSelectedPrinterName(targetPrinter.name);
+  console.log('[print] target printer resolved', {
+    selectedPrinterName: null,
+    targetPrinterName: targetPrinter.name,
+    isDefault: targetPrinter.isDefault,
+    status: targetPrinter.status,
+  });
+  return { printer: targetPrinter, settings: nextSettings, printerList };
+}
+
 function clampPrintCopies(value) {
   const numericValue = Number(value);
   if (!Number.isFinite(numericValue)) return DEFAULT_PRINT_COPIES;
@@ -2366,6 +3352,10 @@ function serializePrintJob(job) {
     templateName: job.templateName || null,
     layoutName: job.layoutName || null,
     copies: job.copies,
+    printerName: job.printerName || null,
+    requestedCopies: job.requestedCopies,
+    finalCopies: job.finalCopies,
+    completedCopies: job.completedCopies,
     currentCopy: job.currentCopy,
     status: job.status,
     cancelRequested: Boolean(job.cancelRequested),
@@ -2382,6 +3372,7 @@ function normalizePrintResult({
   copiesPrinted = 0,
   error = null,
   jobId = null,
+  printerName = null,
 } = {}) {
   const finalStatus = ['completed', 'failed', 'cancelled', 'partial'].includes(status) ? status : 'failed';
   const safeRequested = Math.max(0, Math.floor(Number(copiesRequested) || 0));
@@ -2398,7 +3389,98 @@ function normalizePrintResult({
     error: safeError,
     failureReason: finalStatus === 'failed' ? safeError : null,
     jobId,
+    printerName,
   };
+}
+
+function filePathToDataUrl(filePath) {
+  if (typeof filePath !== 'string' || !filePath.trim()) {
+    throw new Error('Missing session image path');
+  }
+  if (!fs.existsSync(filePath)) {
+    throw new Error(`Session image not found: ${filePath}`);
+  }
+  const stats = fs.statSync(filePath);
+  if (!stats || stats.size <= 0) {
+    throw new Error(`Session image is empty: ${filePath}`);
+  }
+
+  const image = nativeImage.createFromPath(filePath);
+  if (!image || image.isEmpty()) {
+    throw new Error(`Could not load session image: ${filePath}`);
+  }
+
+  const dataUrl = image.toDataURL();
+  if (!dataUrl || typeof dataUrl !== 'string') {
+    throw new Error('Could not encode session image for printing');
+  }
+  return dataUrl;
+}
+
+async function resolveReprintImagePath(session) {
+  const directCandidates = [
+    session?.finalPrintPath,
+    session?.printImagePath,
+    session?.localPhotoPath,
+    session?.photoPath,
+  ].filter((value) => typeof value === 'string' && value.trim());
+
+  for (const candidate of directCandidates) {
+    const resolvedCandidate = path.isAbsolute(candidate) ? candidate : path.join(app.getPath('downloads'), candidate);
+    if (fs.existsSync(resolvedCandidate)) {
+      return {
+        source: 'direct',
+        expectedImagePath: candidate,
+        resolvedPath: resolvedCandidate,
+      };
+    }
+  }
+
+  const sessionToken = typeof session?.softcopySessionToken === 'string' ? session.softcopySessionToken.trim() : '';
+  if (!sessionToken) {
+    return null;
+  }
+
+  const shortToken = sessionToken.replace(/-/g, '').slice(0, 8);
+  const downloadsDir = app.getPath('downloads');
+  const entries = await fsp.readdir(downloadsDir, { withFileTypes: true }).catch(() => []);
+  const metadataFiles = entries
+    .filter((entry) => (
+      entry.isFile()
+      && entry.name.startsWith('Afterimage-')
+      && /-(data|metadata)\.json$/i.test(entry.name)
+      && entry.name.includes(`-${shortToken}-`)
+    ))
+    .map((entry) => entry.name);
+
+  let bestMatch = null;
+  for (const metadataName of metadataFiles) {
+    const metadataPath = path.join(downloadsDir, metadataName);
+    try {
+      const metadata = JSON.parse(await fsp.readFile(metadataPath, 'utf8'));
+      if (metadata.sessionId && metadata.sessionId !== sessionToken && metadata.token !== sessionToken) {
+        continue;
+      }
+      const filePrefix = metadataName.replace(/-(data|metadata)\.json$/i, '');
+      const photoName = metadata.photoSaved === false ? null : `${filePrefix}-photo.png`;
+      const candidatePath = photoName ? path.join(downloadsDir, photoName) : null;
+      if (candidatePath && fs.existsSync(candidatePath)) {
+        const candidate = {
+          source: 'metadata',
+          expectedImagePath: candidatePath,
+          resolvedPath: candidatePath,
+          metadataPath,
+        };
+        if (!bestMatch) {
+          bestMatch = candidate;
+        }
+      }
+    } catch {
+      // ignore malformed metadata and continue scanning
+    }
+  }
+
+  return bestMatch;
 }
 
 function getSerializedPrintQueue() {
@@ -2430,13 +3512,17 @@ function updatePrintJob(job, patch = {}) {
   broadcastPrintQueueChanged();
 }
 
-function createPrintJob(payload = {}, copyCount) {
+function createPrintJob(payload = {}, requestedCopies, finalCopies) {
   const job = {
     id: newPrintJobId(),
     sessionId: safeQueueText(payload.sessionId, 128),
     templateName: safeQueueText(payload.templateName, 128),
     layoutName: safeQueueText(payload.layoutName, 128),
-    copies: copyCount,
+    copies: finalCopies,
+    printerName: null,
+    requestedCopies,
+    finalCopies,
+    completedCopies: 0,
     currentCopy: 0,
     status: 'queued',
     cancelRequested: false,
@@ -2449,6 +3535,112 @@ function createPrintJob(payload = {}, copyCount) {
   console.log('[print-queue] job queued', serializePrintJob(job));
   broadcastPrintQueueChanged();
   return job;
+}
+
+async function submitSinglePrintCopy({
+  dataUrl,
+  silent,
+  job,
+  copyIndex,
+  printerName,
+}) {
+  const printWin = new BrowserWindow({
+    show: false,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      offscreen: false,
+    },
+  });
+  const printDocumentTitle = `Afterimage ${job.id} Copy ${copyIndex} of ${job.finalCopies}`;
+  printWin.setTitle(printDocumentTitle);
+
+  const shell = `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>${printDocumentTitle}</title>
+<style>
+  @page { size: 4in 6in; margin: 0; }
+  html, body { margin: 0; padding: 0; width: 4in; height: 6in; background: #fff; }
+  img {
+    width: 4in;
+    height: 6in;
+    display: block;
+    image-rendering: -webkit-optimize-contrast;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+</style>
+</head>
+<body></body>
+</html>`;
+
+  try {
+    await printWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(shell));
+    const imageLoaded = await printWin.webContents.executeJavaScript(`
+      new Promise((resolve) => {
+        const img = document.createElement('img');
+        img.onload = () => resolve(true);
+        img.onerror = () => resolve(false);
+        img.src = ${JSON.stringify(dataUrl)};
+        document.body.appendChild(img);
+      });
+    `);
+    if (!imageLoaded) {
+      return { success: false, failureReason: 'print image failed to load' };
+    }
+    await wait(80);
+
+    const printOptions = {
+      silent: silent === true,
+      printBackground: true,
+      copies: 1,
+      pageSize: { width: 4 * MICRONS_PER_INCH, height: 6 * MICRONS_PER_INCH },
+      margins: { marginType: 'none' },
+      landscape: false,
+      scaleFactor: 100,
+    };
+    if (printerName) {
+      printOptions.deviceName = printerName;
+    }
+
+    if (!app.isPackaged) {
+      console.log('[print] submitting copy', {
+        jobId: job.id,
+        sessionId: job.sessionId,
+        printerName,
+        copyIndex,
+        finalCopies: job.finalCopies,
+      });
+    }
+
+    const result = await new Promise((resolve) => {
+      printWin.webContents.print(printOptions, (success, failureReason) => {
+        resolve({ success, failureReason: failureReason || null });
+      });
+    });
+
+    if (!app.isPackaged) {
+      console.log('[print] copy result', {
+        jobId: job.id,
+        printerName,
+        copyIndex,
+        finalCopies: job.finalCopies,
+        success: result.success,
+        failureReason: result.failureReason,
+      });
+    }
+    if (result.success) {
+      // Give Chromium time to hand the single-copy document to the OS spooler
+      // before its dedicated print window is destroyed.
+      await wait(250);
+    }
+    return result;
+  } finally {
+    if (!printWin.isDestroyed()) printWin.close();
+  }
 }
 
 function settlePendingPrintJob(jobId, result) {
@@ -2470,166 +3662,144 @@ function failPendingPrintJob(jobId, err) {
 
 async function runPrintJob(job, pending) {
   activePrintJobId = job.id;
-  updatePrintJob(job, {
-    status: 'printing',
-    startedAt: new Date().toISOString(),
-    error: null,
-  });
-  console.log('[print-queue] job started', { id: job.id });
 
   const { dataUrl, silent, sender } = pending;
-  const printWin = new BrowserWindow({
-    show: false,
-    webPreferences: {
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      offscreen: false,
-    },
-  });
-
-  const shell = `<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<style>
-  @page { size: 4in 6in; margin: 0; }
-  html, body { margin: 0; padding: 0; width: 4in; height: 6in; background: #fff; }
-  img {
-    width: 4in;
-    height: 6in;
-    display: block;
-    image-rendering: -webkit-optimize-contrast;
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
-  }
-</style>
-</head>
-<body></body>
-</html>`;
-
+  let completedCopies = 0;
   try {
-    await printWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(shell));
-    await printWin.webContents.executeJavaScript(`
-      new Promise((resolve) => {
-        const img = document.createElement('img');
-        img.onload = () => resolve(true);
-        img.onerror = () => resolve(false);
-        img.src = ${JSON.stringify(dataUrl)};
-        document.body.appendChild(img);
-      });
-    `);
-    await new Promise(r => setTimeout(r, 80));
-
+    const target = await resolveTargetPrinter(sender);
+    const printerName = target.printer.name;
+    updatePrintJob(job, {
+      status: 'printing',
+      startedAt: new Date().toISOString(),
+      printerName,
+      error: null,
+    });
+    console.log('[print-queue] job started', { id: job.id, printerName });
     const dataUrlFormat = typeof dataUrl === 'string'
       ? (dataUrl.split(';')[0] || '').replace('data:', '')
       : 'unknown';
-    const printOptions = {
-      silent: silent === true,
-      printBackground: true,
-      copies: 1,
-      pageSize: { width: 4 * MICRONS_PER_INCH, height: 6 * MICRONS_PER_INCH },
-      margins: { marginType: 'none' },
-      landscape: false,
-      scaleFactor: 100,
-    };
     console.log('[print] starting print job', {
       format: dataUrlFormat,
       sizeKb: Math.round(dataUrl.length / 1024),
-      copies: job.copies,
-      printerName: printOptions.deviceName || null,
-      scaleFactor: printOptions.scaleFactor,
+      requestedCopies: job.requestedCopies,
+      finalCopies: job.finalCopies,
+      printerName,
       queueJobId: job.id,
     });
 
-    let completedCopies = 0;
-    for (let copyIndex = 0; copyIndex < job.copies; copyIndex += 1) {
+    for (let copyIndex = 0; copyIndex < job.finalCopies; copyIndex += 1) {
       if (job.cancelRequested) {
         const status = completedCopies > 0 ? 'partial' : 'cancelled';
         updatePrintJob(job, {
           status,
+          completedCopies,
           completedAt: new Date().toISOString(),
           error: completedCopies > 0 ? 'Stopped remaining copies.' : null,
         });
         console.log('[print-queue] job cancelled', { id: job.id });
         return normalizePrintResult({
           status,
-          copiesRequested: job.copies,
+          copiesRequested: job.finalCopies,
           copiesPrinted: completedCopies,
           error: completedCopies > 0 ? 'Stopped remaining copies.' : null,
           jobId: job.id,
+          printerName,
         });
       }
 
       const currentCopy = copyIndex + 1;
       updatePrintJob(job, { currentCopy });
-      console.log('[print-queue] printing copy', { id: job.id, currentCopy, copies: job.copies });
+      console.log('[print-queue] printing copy', { id: job.id, currentCopy, copies: job.finalCopies });
       try {
-        sender?.send('print-strip-progress', { current: currentCopy, total: job.copies, jobId: job.id });
+        sender?.send('print-strip-progress', { current: currentCopy, total: job.finalCopies, jobId: job.id });
       } catch {
         // Renderer may already be gone; queue state remains authoritative.
       }
 
-      const result = await new Promise((resolve) => {
-        printWin.webContents.print(printOptions, (success, failureReason) => {
-          resolve({ success, failureReason: failureReason || null });
-        });
+      const result = await submitSinglePrintCopy({
+        dataUrl,
+        silent,
+        job,
+        copyIndex: currentCopy,
+        printerName,
       });
 
       if (!result.success) {
         const failureReason = result.failureReason || `copy ${currentCopy} failed`;
+        const status = completedCopies > 0 ? 'partial' : 'failed';
         updatePrintJob(job, {
-          status: 'failed',
+          status,
+          completedCopies,
           error: failureReason,
           completedAt: new Date().toISOString(),
         });
-        console.log('[print-queue] job failed', { id: job.id, error: failureReason });
+        console.log('[print-queue] job failed', { id: job.id, status, completedCopies, error: failureReason });
         return normalizePrintResult({
-          status: 'failed',
-          copiesRequested: job.copies,
+          status,
+          copiesRequested: job.finalCopies,
           copiesPrinted: completedCopies,
           error: failureReason,
           jobId: job.id,
+          printerName,
         });
       }
 
       completedCopies = currentCopy;
+      updatePrintJob(job, { completedCopies });
+      console.log('[print] print submitted to printer', {
+        jobId: job.id,
+        printerName,
+        copyIndex: currentCopy,
+        finalCopies: job.finalCopies,
+      });
 
-      if (copyIndex < job.copies - 1) {
-        await wait(350);
+      if (copyIndex < job.finalCopies - 1) {
+        await wait(500);
       }
     }
 
     updatePrintJob(job, {
       status: 'completed',
       completedAt: new Date().toISOString(),
-      currentCopy: job.copies,
+      currentCopy: job.finalCopies,
+      completedCopies,
       error: null,
     });
     console.log('[print-queue] job completed', { id: job.id });
     return normalizePrintResult({
       status: 'completed',
-      copiesRequested: job.copies,
-      copiesPrinted: job.copies,
+      copiesRequested: job.finalCopies,
+      copiesPrinted: completedCopies,
       jobId: job.id,
+      printerName,
     });
   } catch (err) {
     const failureReason = err?.message || String(err);
+    const status = completedCopies > 0 ? 'partial' : 'failed';
     updatePrintJob(job, {
-      status: 'failed',
+      status,
+      completedCopies,
       error: failureReason,
       completedAt: new Date().toISOString(),
     });
-    console.log('[print-queue] job failed', { id: job.id, error: failureReason });
+    console.log('[print-queue] job failed', { id: job.id, status, completedCopies, error: failureReason });
     return normalizePrintResult({
-      status: 'failed',
-      copiesRequested: job.copies,
-      copiesPrinted: Math.max(0, Math.min(job.currentCopy || 0, job.copies || 0)),
+      status,
+      copiesRequested: job.finalCopies,
+      copiesPrinted: completedCopies,
       error: failureReason,
       jobId: job.id,
     });
   } finally {
-    if (!printWin.isDestroyed()) printWin.close();
+    if (!app.isPackaged) {
+      console.log('[print-queue] final status', {
+        jobId: job.id,
+        requestedCopies: job.requestedCopies,
+        finalCopies: job.finalCopies,
+        completedCopies,
+        status: job.status,
+      });
+    }
     if (activePrintJobId === job.id) activePrintJobId = null;
     setImmediate(processNextPrintJob);
   }
@@ -2658,13 +3828,14 @@ function processNextPrintJob() {
   if (nextJob.cancelRequested) {
     updatePrintJob(nextJob, {
       status: 'cancelled',
+      completedCopies: 0,
       completedAt: new Date().toISOString(),
     });
     pendingPrintJobs.delete(nextJob.id);
     console.log('[print-queue] job cancelled', { id: nextJob.id });
     pending.resolve(normalizePrintResult({
       status: 'cancelled',
-      copiesRequested: nextJob.copies,
+      copiesRequested: nextJob.finalCopies,
       copiesPrinted: 0,
       jobId: nextJob.id,
     }));
@@ -2676,6 +3847,28 @@ function processNextPrintJob() {
     .then((result) => settlePendingPrintJob(nextJob.id, result))
     .catch((err) => failPendingPrintJob(nextJob.id, err));
 }
+
+ipcMain.handle('printers:list', async (event) => {
+  try {
+    const settings = await readSettings();
+    const printerList = await getPrinterListForRenderer(event.sender);
+    return {
+      ok: true,
+      selectedPrinterName: settings.selectedPrinterName || null,
+      ...printerList,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err?.message || String(err),
+      printers: [],
+      selphyPrinters: [],
+      selectedPrinterName: null,
+      defaultPrinter: null,
+      guidance: null,
+    };
+  }
+});
 
 ipcMain.handle('save-strip', async (_event, payload = {}) => {
   try {
@@ -2691,6 +3884,19 @@ ipcMain.handle('save-strip', async (_event, payload = {}) => {
     const cleanFilename = safePrintFilename(filename).replace(/\.(?!png$)[^.]+$/i, '');
     const finalFilename = /\.png$/i.test(cleanFilename) ? cleanFilename : `${cleanFilename}.png`;
     const filePath = path.join(targetDir, finalFilename);
+    console.log('[LOCAL SAVE AUDIT] saving media file', {
+      type: 'photo',
+      filename: finalFilename,
+      targetPath: filePath,
+      source: 'printApi.saveStrip',
+      reason: 'legacy print PNG backup',
+    });
+    console.log('[LOCAL SAVE AUDIT PNG]', {
+      filename: finalFilename,
+      isKeychain: finalFilename.includes('keychain-4x6'),
+      isNormalPhoto: finalFilename.includes('photo') || finalFilename.includes('strip'),
+      caller: 'electron save-strip',
+    });
     await fsp.writeFile(filePath, pngBuffer);
     console.log('[print] autosaved PNG:', filePath);
     return { ok: true, path: filePath };
@@ -2700,13 +3906,699 @@ ipcMain.handle('save-strip', async (_event, payload = {}) => {
   }
 });
 
+const LOCAL_SOFTCOPY_FILE_TYPES = Object.freeze({
+  'photo.png': 'image/png',
+  'animation.gif': 'image/gif',
+  'video.mp4': 'video/mp4',
+  'video.webm': 'video/webm',
+  'video.mov': 'video/quicktime',
+  'keychain-4x6.png': 'image/png',
+});
+
+const LOCAL_SOFTCOPY_KINDS = Object.freeze({
+  photo: {
+    mimeTypes: ['image/png'],
+    allowedNames: ['photo.png'],
+  },
+  gif: {
+    mimeTypes: ['image/gif'],
+    allowedNames: ['animation.gif'],
+  },
+  video: {
+    mimeTypes: ['video/mp4', 'video/webm', 'video/quicktime'],
+    allowedNames: ['video.mp4', 'video.webm', 'video.mov'],
+  },
+  keychain4x6: {
+    mimeTypes: ['image/png'],
+    preserveName: true,
+  },
+});
+
+function sanitizeSoftcopySegment(value, fallback = '') {
+  const normalized = String(value || '')
+    .trim()
+    .replace(/[^A-Za-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 128);
+  return normalized || fallback;
+}
+
+function softcopyTimestamp(value) {
+  const parsed = new Date(value || Date.now());
+  const date = Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+  const pad = number => String(number).padStart(2, '0');
+  return [
+    date.getFullYear(),
+    pad(date.getMonth() + 1),
+    pad(date.getDate()),
+    '-',
+    pad(date.getHours()),
+    pad(date.getMinutes()),
+    pad(date.getSeconds()),
+  ].join('');
+}
+
+function buildSoftcopyFilePrefix(payload = {}) {
+  const safeSessionId = sanitizeSoftcopySegment(payload.sessionId, 'session');
+  const shortSessionId = safeSessionId.replace(/-/g, '').slice(0, 8) || 'session';
+  const createdAt = payload.metadata?.createdAt || payload.createdAt;
+  return `Afterimage-${softcopyTimestamp(createdAt)}-${shortSessionId}`;
+}
+
+function normalizeSoftcopyFilePrefix(value) {
+  const prefix = String(value || '');
+  return /^Afterimage-\d{8}-\d{6}-[A-Za-z0-9_-]{1,16}(?:-\d+)?$/.test(prefix)
+    ? prefix
+    : null;
+}
+
+function safeLocalMediaFilename(value, fallback = '') {
+  const name = path.basename(String(value || '').trim())
+    .replace(/[^A-Za-z0-9_.-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 180);
+  return name || fallback;
+}
+
+function normalizeLocalSoftcopyFile(file = {}) {
+  const rawKind = String(file?.kind || '').trim();
+  const kind = Object.prototype.hasOwnProperty.call(LOCAL_SOFTCOPY_KINDS, rawKind)
+    ? rawKind
+    : '';
+  const name = safeLocalMediaFilename(file?.name, '');
+  const mimeType = String(file?.mimeType || '').toLowerCase().split(';')[0];
+  const kindSpec = kind ? LOCAL_SOFTCOPY_KINDS[kind] : null;
+  const expectedMimeType = kindSpec
+    ? (kindSpec.mimeTypes.includes(mimeType) ? mimeType : null)
+    : LOCAL_SOFTCOPY_FILE_TYPES[name];
+
+  if (!expectedMimeType || mimeType !== expectedMimeType) {
+    return {
+      ok: false,
+      kind,
+      name: name || 'unnamed',
+      error: 'invalid local softcopy file',
+    };
+  }
+
+  if (kindSpec?.allowedNames && !kindSpec.allowedNames.includes(name)) {
+    return {
+      ok: false,
+      kind,
+      name: name || 'unnamed',
+      error: 'invalid local softcopy filename',
+    };
+  }
+
+  if (kind === 'keychain4x6') {
+    const fallbackName = `${buildSoftcopyFilePrefix({ sessionId: 'session', createdAt: Date.now() })}-keychain-4x6.png`;
+    const keychainName = safeLocalMediaFilename(name, fallbackName);
+    if (!/keychain-4x6\.png$/i.test(keychainName)) {
+      return {
+        ok: false,
+        kind,
+        name: keychainName,
+        error: 'invalid keychain filename',
+      };
+    }
+    return {
+      ok: true,
+      kind,
+      name: keychainName,
+      mimeType,
+      preserveName: true,
+    };
+  }
+
+  return {
+    ok: true,
+    kind: kind || null,
+    name,
+    mimeType,
+    preserveName: false,
+  };
+}
+
+async function pathExists(filePath) {
+  try {
+    await fsp.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function findAvailableSoftcopyPrefix(downloadsDir, basePrefix, fileNames) {
+  for (let suffix = 0; suffix < 10000; suffix += 1) {
+    const prefix = suffix === 0 ? basePrefix : `${basePrefix}-${suffix}`;
+    const targetNames = [...fileNames, 'data.json', 'metadata.json'].map(name => `${prefix}-${name}`);
+    const collisions = await Promise.all(
+      targetNames.map(name => pathExists(path.join(downloadsDir, name))),
+    );
+    if (!collisions.some(Boolean)) return prefix;
+  }
+  throw new Error('Could not allocate unique softcopy filenames in Downloads.');
+}
+
+function normalizeRendererBinary(data) {
+  if (Buffer.isBuffer(data)) return data;
+  if (data instanceof ArrayBuffer) return Buffer.from(data);
+  if (ArrayBuffer.isView(data)) {
+    return Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+  }
+  return null;
+}
+
+function normalizeRendererBinaryPayload(payload = {}) {
+  const direct = normalizeRendererBinary(payload.data || payload.arrayBuffer);
+  if (direct?.length) return direct;
+  const dataUrl = typeof payload.dataUrl === 'string' ? payload.dataUrl : '';
+  if (dataUrl.startsWith('data:')) {
+    const base64 = dataUrl.split(',')[1] || '';
+    return base64 ? Buffer.from(base64, 'base64') : null;
+  }
+  return null;
+}
+
+function verifyWrittenFile(filePath) {
+  const exists = fs.existsSync(filePath);
+  const sizeBytes = exists ? fs.statSync(filePath).size : 0;
+  return { exists, sizeBytes };
+}
+
+async function handleWriteDownloadsTextFile() {
+  console.log('[DIAG main] diag:write-downloads-text-file handler called');
+  const downloadsDir = app.getPath('downloads');
+  const timestamp = new Date()
+    .toISOString()
+    .replace(/[-:]/g, '')
+    .replace(/\..+/, '')
+    .replace('T', '-');
+
+  const filename = `Afterimage-DIAG-${timestamp}.txt`;
+  const targetPath = path.join(downloadsDir, filename);
+
+  const content = [
+    'AFTERIMAGE DOWNLOADS WRITE TEST',
+    `createdAt=${new Date().toISOString()}`,
+    `downloadsDir=${downloadsDir}`,
+    `platform=${process.platform}`,
+    `cwd=${process.cwd()}`,
+  ].join('\n');
+
+  await fs.promises.writeFile(targetPath, content, 'utf8');
+
+  const exists = fs.existsSync(targetPath);
+  const sizeBytes = exists ? fs.statSync(targetPath).size : 0;
+
+  console.log('[DIAG STEP 1] downloads write test', {
+    downloadsDir,
+    targetPath,
+    exists,
+    sizeBytes,
+  });
+
+  return {
+    ok: exists && sizeBytes > 0,
+    downloadsDir,
+    targetPath,
+    exists,
+    sizeBytes,
+  };
+}
+
+async function handleWriteDownloadsPngFile(_event, payload = {}) {
+  console.log('[DIAG STEP 2 main] diag:write-downloads-png-file handler called');
+  const downloadsDir = app.getPath('downloads');
+  const timestamp = new Date()
+    .toISOString()
+    .replace(/[-:]/g, '')
+    .replace(/\..+/, '')
+    .replace('T', '-');
+
+  const defaultFilename = `Afterimage-DIAG-PNG-${timestamp}.png`;
+  const requestedFilename = safeLocalMediaFilename(payload?.filename, defaultFilename);
+  const filename = requestedFilename.includes('keychain-4x6') || requestedFilename.startsWith('Afterimage-DIAG-PNG-')
+    ? requestedFilename
+    : defaultFilename;
+  const targetPath = path.join(downloadsDir, filename);
+
+  const arrayBuffer = payload?.arrayBuffer;
+  if (!arrayBuffer) {
+    throw new Error('Missing PNG arrayBuffer');
+  }
+
+  const buffer = Buffer.from(arrayBuffer);
+
+  console.log('[LOCAL SAVE AUDIT] saving media file', {
+    type: filename.includes('keychain-4x6') ? 'keychain4x6' : 'png',
+    filename,
+    targetPath,
+    source: 'diag:write-downloads-png-file',
+    reason: filename.includes('keychain-4x6') ? 'keychain auto-save/test save' : 'diagnostic PNG save',
+  });
+  console.log('[LOCAL SAVE AUDIT PNG]', {
+    filename,
+    isKeychain: filename.includes('keychain-4x6'),
+    isNormalPhoto: filename.includes('photo') || filename.includes('strip'),
+    caller: 'electron diag:write-downloads-png-file',
+  });
+  await fs.promises.writeFile(targetPath, buffer);
+
+  const exists = fs.existsSync(targetPath);
+  const sizeBytes = exists ? fs.statSync(targetPath).size : 0;
+
+  console.log('[DIAG STEP 2] png write test', {
+    downloadsDir,
+    targetPath,
+    bufferSize: buffer.length,
+    exists,
+    sizeBytes,
+  });
+
+  return {
+    ok: exists && sizeBytes > 0,
+    filename,
+    downloadsDir,
+    targetPath,
+    exists,
+    sizeBytes,
+  };
+}
+
+function makeKeychainDownloadsFilename(payload = {}) {
+  const sessionId = sanitizeSoftcopySegment(payload.sessionId, 'session')
+    .replace(/-/g, '')
+    .slice(0, 8) || 'session';
+  const fallbackName = `Afterimage-${softcopyTimestamp(payload.createdAt || Date.now())}-${sessionId}-keychain-4x6.png`;
+  const requestedName = safeLocalMediaFilename(payload.filename || payload.name, fallbackName);
+  if (/^Afterimage-\d{8}-\d{6}-[A-Za-z0-9_-]{1,16}-keychain-4x6\.png$/i.test(requestedName)) {
+    return requestedName;
+  }
+  return fallbackName;
+}
+
+async function handleSaveKeychain4x6(_event, payload = {}) {
+  const downloadsDir = app.getPath('downloads');
+  const safeName = makeKeychainDownloadsFilename(payload);
+  const targetPath = path.join(downloadsDir, safeName);
+  try {
+    const mimeType = String(payload.mimeType || '').toLowerCase().split(';')[0];
+    if (mimeType && mimeType !== 'image/png') {
+      throw new Error(`Invalid keychain MIME type: ${mimeType}`);
+    }
+    const buffer = normalizeRendererBinaryPayload(payload);
+    if (!buffer?.length) {
+      throw new Error('Missing keychain PNG data.');
+    }
+
+    console.log('[keychain-save electron] downloads path', {
+      downloadsDir,
+    });
+    await fsp.mkdir(downloadsDir, { recursive: true });
+    console.log('[keychain-save electron] writing', {
+      filename: safeName,
+      targetPath,
+      bufferSize: buffer.length,
+    });
+    console.log('[LOCAL SAVE AUDIT] saving media file', {
+      type: 'keychain4x6',
+      filename: safeName,
+      targetPath,
+      source: 'keychain:save-4x6-to-downloads',
+      reason: 'keychain local-only save',
+    });
+    console.log('[LOCAL SAVE AUDIT PNG]', {
+      filename: safeName,
+      isKeychain: true,
+      isNormalPhoto: false,
+      caller: 'electron keychain:save-4x6-to-downloads',
+    });
+    await fsp.writeFile(targetPath, buffer);
+    const verification = verifyWrittenFile(targetPath);
+    console.log('[keychain-save electron] verification', {
+      targetPath,
+      exists: verification.exists,
+      sizeBytes: verification.sizeBytes,
+    });
+    if (!verification.exists || verification.sizeBytes <= 0) {
+      throw new Error(`Keychain file verification failed for ${targetPath}`);
+    }
+    return {
+      ok: true,
+      filename: safeName,
+      path: targetPath,
+      downloadsDir,
+      exists: verification.exists,
+      sizeBytes: verification.sizeBytes,
+    };
+  } catch (error) {
+    console.error('[keychain-save ERROR]', error);
+    return {
+      ok: false,
+      filename: safeName,
+      path: targetPath,
+      downloadsDir,
+      exists: false,
+      sizeBytes: 0,
+      error: error?.message || String(error),
+    };
+  }
+}
+
+async function handleSaveSessionMedia(_event, payload = {}) {
+  const safeSessionId = sanitizeSoftcopySegment(payload.sessionId, `session-${Date.now()}`);
+  const downloadsDir = app.getPath('downloads');
+  const savedFiles = [];
+  const fileErrors = [];
+  try {
+    console.log('[DIAG electron 1] save-session-media received', {
+      sessionId: payload?.sessionId,
+      fileCount: payload?.files?.length,
+      files: payload?.files?.map(f => ({
+        kind: f.kind,
+        name: f.name,
+        mimeType: f.mimeType,
+        hasData: Boolean(f.data || f.arrayBuffer || f.dataUrl),
+      })),
+    });
+    console.log('[DIAG electron 2] downloads path', {
+      downloadsDir: app.getPath('downloads'),
+    });
+    console.log('[softcopy-local] Electron downloads path resolved', {
+      downloadsDir,
+    });
+    await fsp.mkdir(downloadsDir, { recursive: true });
+    const files = Array.isArray(payload.files) ? payload.files : [];
+    const normalizedFiles = files.map(file => ({
+      original: file,
+      spec: normalizeLocalSoftcopyFile(file),
+    }));
+    const requestedNames = normalizedFiles
+      .map(({ spec }) => spec.ok && !spec.preserveName ? spec.name : null)
+      .filter(Boolean);
+    const requestedPrefix = normalizeSoftcopyFilePrefix(payload.filePrefix);
+    const filePrefix = payload.metadataOnly === true && requestedPrefix
+      ? requestedPrefix
+      : await findAvailableSoftcopyPrefix(
+        downloadsDir,
+        buildSoftcopyFilePrefix(payload),
+        requestedNames,
+      );
+
+    if (!app.isPackaged) {
+      console.log('[softcopy-local] saving to downloads', {
+        sessionId: safeSessionId,
+        downloadsDir,
+        fileCount: files.length,
+      });
+    }
+
+    const metadata = payload.metadata && typeof payload.metadata === 'object'
+      && !Array.isArray(payload.metadata)
+      ? payload.metadata
+      : {};
+    const metadataName = `${filePrefix}-data.json`;
+    const metadataPath = path.join(downloadsDir, metadataName);
+    const metadataFileNames = Array.isArray(metadata.localFiles)
+      ? metadata.localFiles
+        .map(file => typeof file === 'string' ? file : file?.name)
+        .filter(Boolean)
+      : [];
+    const validRecords = [];
+
+    for (const { original: file, spec } of normalizedFiles) {
+      const buffer = normalizeRendererBinary(file?.data);
+      if (!spec.ok || !buffer?.length) {
+        fileErrors.push({
+          kind: spec.kind || null,
+          name: spec.name || 'unnamed',
+          error: spec.error || 'invalid local softcopy file',
+        });
+        continue;
+      }
+      const savedName = spec.preserveName ? spec.name : `${filePrefix}-${spec.name}`;
+      validRecords.push({
+        file,
+        spec,
+        buffer,
+        savedName,
+        filePath: path.join(downloadsDir, savedName),
+      });
+    }
+
+    const plannedLocalFiles = validRecords.map(record => record.savedName);
+    const getLocalFilesForMetadata = () => Array.from(new Set([
+      ...metadataFileNames,
+      ...plannedLocalFiles,
+      ...savedFiles.map(file => file.name),
+    ]));
+    const getSavedKeychainFile = () => savedFiles
+      .find(file => file.kind === 'keychain4x6' || file.name.includes('keychain-4x6'));
+    const buildMetadataContents = () => {
+      const localFiles = getLocalFilesForMetadata();
+      const savedKeychainFile = getSavedKeychainFile();
+      return JSON.stringify({
+        ...metadata,
+        sessionId: safeSessionId,
+        savedAt: new Date().toISOString(),
+        photoSaved: localFiles.some(name => name.endsWith('-photo.png')),
+        gifSaved: localFiles.some(name => name.endsWith('-animation.gif')),
+        videoSaved: localFiles.some(name => /-video\.(mp4|webm|mov)$/.test(name)),
+        keychain4x6Generated: metadata.keychain4x6Generated === true,
+        keychain4x6Saved: metadata.keychain4x6Saved === true || Boolean(savedKeychainFile),
+        keychain4x6Filename: savedKeychainFile?.name || localFiles.find(name => name.endsWith('-keychain-4x6.png')) || metadata.keychain4x6Filename || null,
+        keychain4x6SavedPath: savedKeychainFile?.path || metadata.keychain4x6SavedPath || null,
+        keychain4x6Exists: savedKeychainFile ? savedKeychainFile.exists === true : metadata.keychain4x6Exists === true,
+        keychain4x6SizeBytes: savedKeychainFile && Number.isFinite(Number(savedKeychainFile.sizeBytes))
+          ? Number(savedKeychainFile.sizeBytes)
+          : (Number.isFinite(Number(metadata.keychain4x6SizeBytes)) ? Number(metadata.keychain4x6SizeBytes) : 0),
+        keychain4x6CanvasWidth: Number.isFinite(Number(metadata.keychain4x6CanvasWidth)) ? Number(metadata.keychain4x6CanvasWidth) : null,
+        keychain4x6CanvasHeight: Number.isFinite(Number(metadata.keychain4x6CanvasHeight)) ? Number(metadata.keychain4x6CanvasHeight) : null,
+        keychain4x6PlacementCount: Number.isFinite(Number(metadata.keychain4x6PlacementCount)) ? Number(metadata.keychain4x6PlacementCount) : 0,
+        keychain4x6LocalOnly: true,
+        keychain4x6Uploaded: false,
+        keychain4x6Error: metadata.keychain4x6Error || null,
+        localFiles,
+        localFileErrors: [
+          ...(Array.isArray(metadata.localFileErrors) ? metadata.localFileErrors : []),
+          ...fileErrors,
+        ],
+      }, null, 2);
+    };
+    const writeMetadataFile = async () => {
+      await fsp.writeFile(
+        metadataPath,
+        buildMetadataContents(),
+        payload.metadataOnly === true ? undefined : { flag: 'wx' },
+      );
+      const verification = verifyWrittenFile(metadataPath);
+      const logPayload = {
+        filename: metadataName,
+        targetPath: metadataPath,
+      };
+      if (payload.metadataOnly === true) {
+        console.log('[LOCAL SAVE ORDER] json updated', logPayload);
+      } else {
+        console.log('[LOCAL SAVE ORDER] 2 json saved', logPayload);
+      }
+      if (!verification.exists || verification.sizeBytes <= 0) {
+        throw new Error(`Local metadata verification failed for ${metadataName}`);
+      }
+    };
+    const writeMediaRecord = async (record, orderNumber, orderType) => {
+      if (!record) return;
+      const { file, spec, buffer, savedName, filePath } = record;
+      try {
+        console.log('[LOCAL SAVE AUDIT] saving media file', {
+          type: spec.kind || file.kind || null,
+          filename: savedName,
+          targetPath: filePath,
+          source: 'softcopy-local:save-session-media',
+          reason: spec.kind === 'photo' ? 'canonical final photo softcopy' : 'enabled local softcopy media',
+        });
+        if (spec.mimeType === 'image/png' || /\.png$/i.test(savedName)) {
+          console.log('[LOCAL SAVE AUDIT PNG]', {
+            filename: savedName,
+            isKeychain: savedName.includes('keychain-4x6'),
+            isNormalPhoto: savedName.includes('photo') || savedName.includes('strip'),
+            caller: 'electron softcopy-local:save-session-media',
+          });
+        }
+        console.log('[DIAG electron 3] writing file', {
+          kind: file.kind,
+          originalName: file.name,
+          safeName: savedName,
+          targetPath: filePath,
+          dataType: typeof file.data,
+          hasArrayBuffer: Boolean(file.arrayBuffer),
+          hasDataUrl: Boolean(file.dataUrl),
+        });
+        await fsp.writeFile(filePath, buffer, { flag: 'wx' });
+        const verification = verifyWrittenFile(filePath);
+        console.log('[DIAG electron 4] write verification', {
+          kind: file.kind,
+          name: savedName,
+          targetPath: filePath,
+          exists: verification.exists,
+          sizeBytes: verification.sizeBytes,
+        });
+        if (spec.kind === 'keychain4x6') {
+          console.log('[keychain] saved file verification', {
+            expectedPath: filePath,
+            exists: verification.exists,
+            sizeBytes: verification.sizeBytes,
+          });
+        }
+        if (!verification.exists || verification.sizeBytes <= 0) {
+          throw new Error(`Local file verification failed for ${savedName}`);
+        }
+        savedFiles.push({
+          kind: spec.kind || null,
+          name: savedName,
+          path: filePath,
+          sizeBytes: verification.sizeBytes,
+          exists: verification.exists,
+        });
+        if (orderNumber && orderType) {
+          console.log(`[LOCAL SAVE ORDER] ${orderNumber} ${orderType} saved`, {
+            filename: savedName,
+            targetPath: filePath,
+          });
+        }
+      } catch (error) {
+        fileErrors.push({
+          kind: spec.kind || null,
+          name: spec.name,
+          error: error?.message || String(error),
+        });
+        console.error('[DIAG local-save ERROR]', error);
+      }
+    };
+
+    console.log(payload.metadataOnly === true ? '[LOCAL SAVE ORDER] metadata update start' : '[LOCAL SAVE ORDER] start', {
+      sessionId: safeSessionId,
+      filePrefix,
+      metadataOnly: payload.metadataOnly === true,
+    });
+
+    if (payload.metadataOnly === true) {
+      await writeMetadataFile();
+    } else {
+      const findRecord = kind => validRecords.find(record => record.spec.kind === kind);
+      const orderedRecords = new Set();
+      const gifRecord = findRecord('gif');
+      const photoRecord = findRecord('photo');
+      const videoRecord = findRecord('video');
+
+      await writeMediaRecord(gifRecord, 1, 'gif');
+      if (gifRecord) orderedRecords.add(gifRecord);
+      await writeMetadataFile();
+      await writeMediaRecord(photoRecord, 3, 'png');
+      if (photoRecord) orderedRecords.add(photoRecord);
+      await writeMediaRecord(videoRecord, 4, 'video');
+      if (videoRecord) orderedRecords.add(videoRecord);
+
+      for (const record of validRecords) {
+        if (!orderedRecords.has(record)) {
+          await writeMediaRecord(record);
+        }
+      }
+    }
+
+    console.log(payload.metadataOnly === true ? '[LOCAL SAVE ORDER] metadata update complete' : '[LOCAL SAVE ORDER] normal softcopy complete', {
+      sessionId: safeSessionId,
+      filePrefix,
+    });
+
+    if (!app.isPackaged) {
+      console.log('[softcopy-local] saved files', {
+        sessionId: safeSessionId,
+        savedFiles,
+        fileErrors,
+      });
+    }
+    console.log('[softcopy-local] final saved file names', {
+      downloadsDir,
+      folderPath: downloadsDir,
+      savedFiles: savedFiles.map(file => ({
+        kind: file.kind || null,
+        name: file.name,
+        path: file.path,
+        sizeBytes: file.sizeBytes,
+        exists: file.exists === true,
+      })),
+    });
+    console.log('[DIAG electron 5] savedFiles result', {
+      downloadsDir,
+      savedFiles,
+    });
+    return {
+      ok: savedFiles.length > 0 || payload.metadataOnly === true,
+      partial: savedFiles.length > 0 && fileErrors.length > 0,
+      sessionId: safeSessionId,
+      folderPath: downloadsDir,
+      filePrefix,
+      savedFiles,
+      fileErrors,
+      metadataPath,
+      error: fileErrors.length ? 'One or more local softcopy files could not be saved.' : null,
+    };
+	  } catch (error) {
+    console.error('[DIAG local-save ERROR]', error);
+	    if (!app.isPackaged) {
+      console.log('[softcopy-local] save failed', {
+        sessionId: safeSessionId,
+        error: error?.message || String(error),
+      });
+    }
+    return {
+      ok: false,
+      sessionId: safeSessionId,
+      folderPath: downloadsDir,
+      savedFiles,
+      error: error?.message || String(error),
+    };
+  }
+}
+
+function registerLocalSoftcopyIpc() {
+  if (localSoftcopyIpcRegistered) return;
+
+  ipcMain.removeHandler(SOFTCOPY_SAVE_CHANNEL);
+  ipcMain.handle(SOFTCOPY_SAVE_CHANNEL, handleSaveSessionMedia);
+  ipcMain.removeHandler(KEYCHAIN_SAVE_CHANNEL);
+  ipcMain.handle(KEYCHAIN_SAVE_CHANNEL, handleSaveKeychain4x6);
+  localSoftcopyIpcRegistered = true;
+
+  if (!app.isPackaged) {
+    console.log('[softcopy-local] handler registered');
+    console.log('[keychain-save] handler registered');
+  }
+}
+
+registerLocalSoftcopyIpc();
+
+ipcMain.removeHandler('diag:write-downloads-text-file');
+ipcMain.handle('diag:write-downloads-text-file', handleWriteDownloadsTextFile);
+console.log('[DIAG main] diag:write-downloads-text-file handler registered', {
+  preloadPath: path.join(__dirname, 'preload.cjs'),
+});
+ipcMain.removeHandler('diag:write-downloads-png-file');
+ipcMain.handle('diag:write-downloads-png-file', handleWriteDownloadsPngFile);
+console.log('[DIAG main] diag:write-downloads-png-file handler registered', {
+  preloadPath: path.join(__dirname, 'preload.cjs'),
+});
+
 ipcMain.handle('print-strip', async (event, payload = {}) => {
   const {
     dataUrl,
     copies = 1,
     silent = true,
   } = payload;
-  const copyCount = clampPrintCopies(copies);
+  const requestedCopyCount = clampPrintCopies(copies);
+  let copyCount = requestedCopyCount;
+  let printCopiesEnabled = false;
   if (!dataUrl || typeof dataUrl !== 'string') {
     return normalizePrintResult({ status: 'failed', error: 'missing dataUrl' });
   }
@@ -2714,13 +4606,30 @@ ipcMain.handle('print-strip', async (event, payload = {}) => {
   try {
     const settings = await readSettings();
     if (settings.printEnabled === false) {
-      return normalizePrintResult({ status: 'failed', copiesRequested: copyCount, error: 'printing disabled by admin' });
+      return normalizePrintResult({ status: 'failed', copiesRequested: requestedCopyCount, error: 'printing disabled by admin' });
+    }
+    printCopiesEnabled = settings.printCopiesEnabled === true;
+    copyCount = printCopiesEnabled ? requestedCopyCount : 1;
+    if (!app.isPackaged) {
+      console.log('[print] resolved copies', {
+        requestedCopies: requestedCopyCount,
+        printCopiesEnabled,
+        finalCopies: copyCount,
+      });
     }
   } catch (err) {
-    return normalizePrintResult({ status: 'failed', copiesRequested: copyCount, error: err?.message || 'failed to read settings' });
+    return normalizePrintResult({ status: 'failed', copiesRequested: requestedCopyCount, error: err?.message || 'failed to read settings' });
   }
 
-  const job = createPrintJob(payload, copyCount);
+  if (!app.isPackaged) {
+    console.log('[print-copies] config resolved', {
+      printCopiesEnabled,
+      requestedCopies: requestedCopyCount,
+      maxCopies: MAX_PRINT_COPIES,
+      finalCopies: copyCount,
+    });
+  }
+  const job = createPrintJob(payload, requestedCopyCount, copyCount);
   return new Promise((resolve) => {
     pendingPrintJobs.set(job.id, {
       dataUrl,
@@ -2748,6 +4657,7 @@ ipcMain.handle('print-queue:cancel', async (_event, { id } = {}) => {
     if (job.status === 'queued') {
       updatePrintJob(job, {
         status: 'cancelled',
+        completedCopies: 0,
         completedAt: new Date().toISOString(),
       });
       const pending = pendingPrintJobs.get(job.id);
@@ -2755,7 +4665,7 @@ ipcMain.handle('print-queue:cancel', async (_event, { id } = {}) => {
         pendingPrintJobs.delete(job.id);
         pending.resolve(normalizePrintResult({
           status: 'cancelled',
-          copiesRequested: job.copies,
+          copiesRequested: job.finalCopies,
           copiesPrinted: 0,
           jobId: job.id,
         }));

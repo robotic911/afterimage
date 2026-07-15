@@ -55,6 +55,7 @@
     },
     "files": [
       "electron.cjs",
+      "keychainPricing.cjs",
       "preload.cjs",
       "dist/**/*",
       "default-templates/**/*",

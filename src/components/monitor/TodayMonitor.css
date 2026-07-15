@@ -52,20 +52,39 @@ body.window-monitor #stage {
 .monitor-layout {
   flex: 1;
   min-height: 0;
+  min-width: 0;
+  width: 100%;
   display: grid;
-  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+  grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
+  align-items: start;
   gap: 12px;
 }
 
 .monitor-panel {
   min-height: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
 .monitor-panel-right {
+  align-self: stretch;
   overflow: hidden;
+}
+
+.monitor-card,
+.monitor-list-wrap {
+  min-width: 0;
+  max-width: 100%;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+}
+
+.monitor-section-head {
+  align-items: flex-start;
 }
 
 .today-monitor .monitor-header {
@@ -95,6 +114,8 @@ body.window-monitor #stage {
 .monitor-header-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 10px;
 }
 
@@ -150,14 +171,111 @@ body.window-monitor #stage {
 .monitor-stat,
 .monitor-error,
 .monitor-empty,
-.monitor-row {
+.monitor-row,
+.monitor-printers,
+.monitor-printer-row {
   background: #ffffff;
   border: 1px solid #dedede;
-  border-radius: 12px;
+  border-radius: 8px;
 }
 
 .monitor-mode-item {
   padding: 9px 12px;
+}
+
+.monitor-printers,
+.monitor-printer-queue {
+  padding: 0;
+}
+
+.monitor-printer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  max-height: 170px;
+  overflow: auto;
+}
+
+.monitor-printer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px;
+  background: #fafafa;
+}
+
+.monitor-printer-row.selected {
+  border-color: #86efac;
+  background: #f0fdf4;
+}
+
+.monitor-printer-row.offline {
+  border-color: #fbbf24;
+}
+
+.monitor-printer-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.monitor-printer-main strong,
+.monitor-printer-main span {
+  overflow-wrap: anywhere;
+}
+
+.monitor-printer-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.monitor-printer-warning {
+  margin-top: 0;
+  padding: 8px 9px;
+  border: 1px solid #fbbf24;
+  border-radius: 8px;
+  background: #fffbeb;
+  color: #78350f;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.monitor-printer-current {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.monitor-printer-current > div {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid #dedede;
+  border-radius: 8px;
+  background: #f8f8f8;
+}
+
+.monitor-printer-current span {
+  display: block;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: rgba(0, 0, 0, 0.52);
+}
+
+.monitor-printer-current strong {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
 }
 
 .monitor-mode-item span,
@@ -210,10 +328,73 @@ body.window-monitor #stage {
   cursor: pointer;
 }
 
+.monitor-overview,
+.monitor-keychains,
+.monitor-controls,
+.monitor-printer-queue {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.monitor-overview {
+  order: 1;
+  grid-column: 1;
+}
+
+.monitor-error {
+  order: 2;
+  grid-column: 1;
+}
+
+.monitor-keychains {
+  order: 3;
+  grid-column: 1;
+}
+
+.monitor-list-wrap {
+  order: 4;
+  grid-column: 2;
+  grid-row: 1 / span 20;
+}
+
+.monitor-controls {
+  order: 5;
+  grid-column: 1;
+}
+
+.monitor-printer-queue {
+  order: 6;
+  grid-column: 1;
+}
+
+.monitor-overview-context {
+  min-width: 120px;
+  text-align: right;
+}
+
+.monitor-overview-context span {
+  display: block;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: rgba(0, 0, 0, 0.5);
+}
+
+.monitor-overview-context strong {
+  display: block;
+  margin-top: 3px;
+  font-size: 11px;
+  line-height: 1.25;
+  color: #000;
+  overflow-wrap: anywhere;
+}
+
 .monitor-summary {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .monitor-stat,
@@ -223,34 +404,190 @@ body.window-monitor #stage {
   gap: 10px;
 }
 
+.monitor-stat-total {
+  grid-column: span 2;
+  background: #111;
+  border-color: #111;
+  color: #fff;
+}
+
+.monitor-stat-total span {
+  color: rgba(255, 255, 255, 0.68);
+}
+
+.monitor-overview-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.monitor-overview-meta span {
+  min-height: 22px;
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border: 1px solid #e0e0e0;
+  border-radius: 999px;
+  background: #f7f7f7;
+  color: rgba(0, 0, 0, 0.62);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.monitor-keychain-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.monitor-keychain-stat {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid #dedede;
+  border-radius: 8px;
+  background: #f8f8f8;
+}
+
+.monitor-keychain-stat span,
+.monitor-keychain-recent-title {
+  display: block;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: rgba(0, 0, 0, 0.56);
+}
+
+.monitor-keychain-stat strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 14px;
+  line-height: 1.1;
+}
+
+.monitor-keychain-recent {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.monitor-keychain-sale,
+.monitor-keychain-empty {
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid #dedede;
+  border-radius: 8px;
+  background: #fafafa;
+  font-size: 11px;
+}
+
+.monitor-keychain-sale {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.monitor-keychain-sale span {
+  color: rgba(0, 0, 0, 0.58);
+  font-weight: 700;
+}
+
+.monitor-keychain-sale strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #1e3a8a;
+}
+
+.monitor-keychain-sale em {
+  color: #1e3a8a;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.monitor-keychain-empty {
+  color: rgba(0, 0, 0, 0.56);
+  font-weight: 700;
+}
+
 .monitor-controls-head {
   display: flex;
-  align-items: baseline;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+}
+
+.monitor-controls-head > div,
+.monitor-list-head > div {
+  min-width: 0;
 }
 
 .monitor-operation-strip {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  margin-top: -2px;
 }
 
 .monitor-controls-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(158px, 1fr));
   gap: 8px;
+  min-width: 0;
 }
 
 .monitor-toggle {
   border: 1px solid #dedede;
-  border-radius: 12px;
-  background: #ffffff;
+  border-radius: 8px;
+  background: #fafafa;
   color: #000;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 9px 10px;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 8px;
+  min-width: 0;
+  width: 100%;
+  padding: 8px;
+}
+
+.monitor-toggle--copies {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.monitor-toggle-copy {
+  min-width: 0;
+  width: 100%;
+}
+
+.monitor-toggle-copy strong,
+.monitor-toggle-copy small {
+  display: block;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.monitor-toggle-copy strong {
+  margin-top: 2px;
+  font-size: 11px;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.monitor-toggle-copy small {
+  margin-top: 3px;
+  color: rgba(0, 0, 0, 0.58);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.monitor-toggle--copies button {
+  align-self: stretch;
 }
 
 .monitor-toggle span,
@@ -260,11 +597,16 @@ body.window-monitor #stage {
   letter-spacing: 1px;
   text-transform: uppercase;
   color: rgba(0, 0, 0, 0.48);
+  line-height: 1.2;
+  overflow-wrap: anywhere;
 }
 
 .monitor-toggle button {
-  min-height: 28px;
-  padding: 4px 10px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 26px;
+  padding: 4px 9px;
   border-radius: 999px;
   border: 1px solid #d5d5d5;
   background: #fff;
@@ -272,10 +614,14 @@ body.window-monitor #stage {
   font-size: 12px;
   font-weight: 800;
   cursor: pointer;
-  align-self: flex-start;
+  align-self: stretch;
+  line-height: 1.15;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .monitor-queue-action {
+  max-width: 100%;
   min-height: 28px;
   padding: 5px 10px;
   border: 1px solid #d5d5d5;
@@ -285,7 +631,10 @@ body.window-monitor #stage {
   font-size: 11px;
   font-weight: 800;
   cursor: pointer;
-  white-space: nowrap;
+  line-height: 1.2;
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .monitor-queue-action:hover:not(:disabled) {
@@ -295,6 +644,11 @@ body.window-monitor #stage {
 .monitor-queue-action.warning {
   border-color: #f2c98f;
   background: #fff8ed;
+}
+
+.monitor-queue-action.keychain {
+  border-color: #a7c7e7;
+  background: #eff6ff;
 }
 
 .monitor-queue-action:disabled {
@@ -328,11 +682,15 @@ body.window-monitor #stage {
 .monitor-countdown {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 9px 10px;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 8px;
+  min-width: 0;
+  width: 100%;
+  padding: 8px;
   border: 1px solid #dedede;
-  border-radius: 12px;
-  background: #ffffff;
+  border-radius: 8px;
+  background: #fafafa;
 }
 
 .monitor-countdown input:disabled {
@@ -342,7 +700,9 @@ body.window-monitor #stage {
 
 .monitor-countdown input {
   width: 100%;
-  min-height: 28px;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 26px;
   border: 1px solid #d5d5d5;
   border-radius: 8px;
   padding: 4px 8px;
@@ -350,14 +710,60 @@ body.window-monitor #stage {
   color: #000;
   font-size: 12px;
   font-weight: 800;
+  text-align: center;
+}
+
+.monitor-diag-downloads {
+  padding: 10px;
+  border: 1px dashed #a3a3a3;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.monitor-diag-result {
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid #dedede;
+  border-radius: 8px;
+  background: #fafafa;
+  color: #000;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.monitor-diag-result.ok {
+  border-color: #86efac;
+  background: #f0fdf4;
+}
+
+.monitor-diag-result.bad {
+  border-color: #fca5a5;
+  background: #fef2f2;
 }
 
 .monitor-stat {
   padding: 9px 10px;
+  background: #f8f8f8;
 }
 
 .monitor-stat strong {
   font-size: 15px;
+}
+
+.monitor-stat.monitor-stat-total {
+  background: #111;
+  border-color: #111;
+  color: #fff;
+}
+
+.monitor-stat.monitor-stat-total span {
+  color: rgba(255, 255, 255, 0.68);
+}
+
+.monitor-stat.monitor-stat-total strong {
+  font-size: 17px;
 }
 
 .monitor-print-queue {
@@ -366,21 +772,32 @@ body.window-monitor #stage {
   gap: 10px;
 }
 
+.monitor-queue-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #e7e7e7;
+}
+
 .monitor-print-job-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  max-height: min(240px, 34vh);
+  gap: 6px;
+  max-height: min(210px, 28vh);
   overflow: auto;
 }
 
 .monitor-print-job {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(110px, auto);
   gap: 8px;
-  padding: 9px 10px;
+  min-width: 0;
+  padding: 8px;
   border: 1px solid #dedede;
-  border-radius: 12px;
+  border-radius: 8px;
   background: #ffffff;
 }
 
@@ -451,6 +868,7 @@ body.window-monitor #stage {
   align-items: flex-end;
   justify-content: center;
   gap: 6px;
+  min-width: 0;
 }
 
 .monitor-list-wrap {
@@ -464,8 +882,9 @@ body.window-monitor #stage {
 
 .monitor-list-head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 12px;
 }
 
@@ -473,11 +892,13 @@ body.window-monitor #stage {
   font-size: 12px;
   font-weight: 900;
   letter-spacing: 0;
+  overflow-wrap: anywhere;
 }
 
 .monitor-list-sub {
   font-size: 11px;
   color: rgba(0, 0, 0, 0.5);
+  overflow-wrap: anywhere;
 }
 
 .monitor-list {
@@ -499,7 +920,7 @@ body.window-monitor #stage {
 }
 
 .monitor-row {
-  padding: 9px 10px;
+  padding: 10px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px 10px;
@@ -553,11 +974,70 @@ body.window-monitor #stage {
   color: rgba(0, 0, 0, 0.6);
 }
 
+.monitor-row-metrics em {
+  margin-top: 3px;
+  color: #7c2d12;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.monitor-row-keychain-line {
+  grid-column: 1 / -1;
+  padding: 6px 8px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1e3a8a;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
 .monitor-row-badges {
   grid-column: 1 / -1;
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
+}
+
+.monitor-row-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.monitor-row-action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+
+.monitor-row-action-buttons .monitor-queue-action {
+  flex: 1 1 138px;
+  min-width: min(138px, 100%);
+}
+
+.monitor-row-action-note {
+  max-width: 100%;
+  text-align: right;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: rgba(0, 0, 0, 0.58);
+  overflow-wrap: anywhere;
+}
+
+.monitor-row-action-note.ok {
+  color: #166534;
+}
+
+.monitor-row-action-note.bad {
+  color: #991b1b;
 }
 
 .monitor-badge {
@@ -585,6 +1065,18 @@ body.window-monitor #stage {
   border-color: #f8b4b4;
 }
 
+.monitor-badge-extra {
+  background: #fff7ed;
+  border-color: #fdba74;
+  color: #7c2d12;
+}
+
+.monitor-badge-keychain {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: #1e3a8a;
+}
+
 .monitor-badge.test {
   background: #fff7ed;
   border-color: #fdba74;
@@ -610,6 +1102,14 @@ body.window-monitor #stage {
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.22);
 }
 
+.monitor-modal--print-copy {
+  width: min(420px, 100%);
+}
+
+.monitor-modal--keychain {
+  width: min(430px, 100%);
+}
+
 .monitor-modal-title {
   font-size: 15px;
   font-weight: 900;
@@ -628,6 +1128,56 @@ body.window-monitor #stage {
   display: block;
   margin-top: 8px;
   color: rgba(0, 0, 0, 0.58);
+}
+
+.monitor-keychain-options {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.monitor-keychain-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid #dedede;
+  border-radius: 12px;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.monitor-keychain-option.is-selected {
+  border-color: #111827;
+  background: #f8fafc;
+}
+
+.monitor-keychain-option input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.monitor-keychain-option span {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex: 1;
+}
+
+.monitor-keychain-option strong,
+.monitor-keychain-option em {
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.monitor-keychain-option em {
+  color: #1e3a8a;
+  font-style: normal;
+  font-weight: 900;
 }
 
 .monitor-modal-actions {
@@ -668,7 +1218,8 @@ body.window-monitor #stage {
   .monitor-layout,
   .monitor-controls-grid,
   .monitor-mode,
-  .monitor-summary {
+  .monitor-summary,
+  .monitor-keychain-stats {
     grid-template-columns: 1fr;
   }
 
@@ -679,6 +1230,15 @@ body.window-monitor #stage {
   .monitor-row-metrics {
     align-items: flex-start;
     text-align: left;
+  }
+
+  .monitor-toggle--copies {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .monitor-toggle--copies button {
+    align-self: stretch;
   }
 }
 
@@ -691,8 +1251,12 @@ body.window-monitor #stage {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .monitor-keychain-stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .monitor-controls-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -721,5 +1285,220 @@ body.window-monitor #stage {
 
   .monitor-print-job-actions {
     align-items: stretch;
+  }
+
+  .monitor-keychain-stats {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Compact touchscreen sizing for the dedicated monitor window. */
+.today-monitor .monitor-title {
+  font-size: 20px;
+}
+
+.today-monitor .monitor-date,
+.monitor-updated strong,
+.monitor-mode-item strong,
+.monitor-stat strong,
+.monitor-row,
+.monitor-modal-text {
+  font-size: 13px;
+}
+
+.monitor-updated span,
+.monitor-mode-item span,
+.monitor-stat span,
+.monitor-toggle span,
+.monitor-countdown span {
+  font-size: 11px;
+}
+
+.monitor-refresh,
+.monitor-toggle button,
+.monitor-queue-action,
+.monitor-countdown input {
+  min-height: 40px;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+.monitor-modal-title {
+  font-size: 18px;
+}
+
+.monitor-modal-cancel,
+.monitor-modal-confirm {
+  min-height: 44px;
+  padding: 10px 16px;
+  font-size: 14px;
+}
+
+@media (max-height: 720px) {
+  .today-monitor,
+  .monitor-shell {
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .today-monitor .monitor-body,
+  .monitor-layout,
+  .monitor-panel {
+    gap: 8px;
+  }
+}
+
+@media (max-width: 1000px) {
+  .today-monitor,
+  .monitor-shell {
+    padding: 12px;
+  }
+
+  .monitor-layout {
+    flex: none;
+    grid-template-columns: 1fr;
+    min-height: auto;
+  }
+
+  .monitor-overview,
+  .monitor-error,
+  .monitor-keychains,
+  .monitor-list-wrap,
+  .monitor-controls,
+  .monitor-printer-queue {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .monitor-panel,
+  .monitor-panel-right,
+  .monitor-list-wrap {
+    min-height: auto;
+    overflow: visible;
+  }
+
+  .monitor-list {
+    max-height: none;
+    overflow: visible;
+  }
+
+  .monitor-mode {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .monitor-mode-item--softcopy {
+    grid-column: 1 / -1;
+  }
+
+  .monitor-controls-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .monitor-printer-row,
+  .monitor-print-job {
+    align-items: stretch;
+  }
+}
+
+@media (max-width: 760px) {
+  .today-monitor .monitor-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .monitor-header-actions,
+  .monitor-controls-head,
+  .monitor-list-head {
+    width: 100%;
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .monitor-updated,
+  .monitor-list-sub {
+    text-align: left;
+  }
+
+  .monitor-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .monitor-mode {
+    grid-template-columns: 1fr;
+  }
+
+  .monitor-controls-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .monitor-toggle--copies,
+  .monitor-printer-row,
+  .monitor-print-job {
+    flex-direction: column;
+  }
+
+  .monitor-toggle--copies button,
+  .monitor-refresh,
+  .monitor-queue-action {
+    width: 100%;
+  }
+
+  .monitor-row {
+    grid-template-columns: 1fr;
+  }
+
+  .monitor-row-metrics {
+    align-items: flex-start;
+    text-align: left;
+  }
+
+  .monitor-row-actions {
+    align-items: stretch;
+  }
+
+  .monitor-row-action-note {
+    text-align: left;
+  }
+
+  .monitor-overview-context {
+    text-align: left;
+  }
+
+  .monitor-print-job-actions {
+    align-items: stretch;
+  }
+}
+
+@media (max-width: 520px) {
+  .today-monitor,
+  .monitor-shell {
+    padding: 10px;
+  }
+
+  .monitor-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .monitor-keychain-stats,
+  .monitor-printer-current {
+    grid-template-columns: 1fr;
+  }
+
+  .monitor-controls-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .monitor-row-action-buttons .monitor-queue-action {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .monitor-modal-actions {
+    flex-direction: column;
+  }
+
+  .monitor-modal-cancel,
+  .monitor-modal-confirm {
+    width: 100%;
   }
 }

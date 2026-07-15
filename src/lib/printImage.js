@@ -1,8 +1,12 @@
 import { getPrintArea, getPrinterProfile } from '../constants/printers';
 import { PRINT_JPEG_QUALITY, PRINT_PHOTO_FILTER, TOP_DEAD_CUT_PX } from '../constants/printSettings';
 import { loadImageCached } from './imageCache';
+import { getShotImageSource } from './shotImageSource';
+import { resolveTemplateRenderAssets } from './templateRenderAssets';
 
 export { PRINT_JPEG_QUALITY, PRINT_PHOTO_FILTER };
+
+const IS_DEV = import.meta.env.DEV;
 
 // Compose the final print-ready strip on a canvas using the chosen
 // layout as the single source of truth. The same `layout.canvas` and
@@ -34,25 +38,43 @@ function drawCover(ctx, img, dx, dy, dw, dh) {
   ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
 }
 
+function resolveTemplateLayers(templateInput) {
+  if (!templateInput) {
+    return { backgroundSrc: null, overlaySrc: null };
+  }
+
+  if (typeof templateInput === 'string') {
+    return { backgroundSrc: null, overlaySrc: templateInput };
+  }
+
+  if (typeof templateInput === 'object') {
+    const assets = resolveTemplateRenderAssets(templateInput);
+    return {
+      backgroundSrc: assets.backgroundSrc,
+      overlaySrc: assets.overlaySrc || null,
+    };
+  }
+
+  return { backgroundSrc: null, overlaySrc: null };
+}
+
 /**
  * Render the final print canvas for a given layout.
  *
  * Layer order (bottom → top):
  *   1. white backdrop
- *   2. captured photos placed at each layout slot
- *   3. template PNG stretched over the whole canvas
+ *   2. background / theme art
+ *   3. captured photos clipped into the layout slots
+ *   4. optional overlay / frame art
  *
- * The template is drawn LAST so its transparent regions (the "holes"
- * cut into the design) reveal the photos beneath. This means template
- * designers can place decorative framing, overlays, or organic shapes
- * around the cut-outs without touching the photo slot math — the
- * layout's `slots` array is the single source of truth for photo
+ * The layout's `slots` array is the single source of truth for photo
  * position, and is shared with the live preview.
  */
-export async function composePrintCanvas(layout, templateSrc, shots, photoFilter = '') {
+export async function composePrintCanvas(layout, templateInput, shots, photoFilter = '') {
   const W = layout?.canvas?.w || layout?.canvas?.width || 1200;
   const H = layout?.canvas?.h || layout?.canvas?.height || 1800;
   const slots = layout?.slots || [];
+  const { backgroundSrc, overlaySrc } = resolveTemplateLayers(templateInput);
 
   const canvas = document.createElement('canvas');
   canvas.width = W;
@@ -63,32 +85,118 @@ export async function composePrintCanvas(layout, templateSrc, shots, photoFilter
 
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, W, H);
-  // Kick off both downloads in parallel — template and shots are
-  // independent, so awaiting them sequentially would needlessly double
-  // the compose latency on slow disks.
-  const [tmpl, loadedShots] = await Promise.all([
-    templateSrc ? loadImageCached(templateSrc) : Promise.resolve(null),
+  const shotSources = shots.map(getShotImageSource);
+  if (IS_DEV) {
+    console.log('[PNG COMPOSE AUDIT] input', {
+      layoutId: layout?.id || null,
+      shotCount: shots.length,
+      slotsCount: slots.length,
+      selectedFilterCss: photoFilter || '',
+      backgroundSrc: backgroundSrc ? String(backgroundSrc).slice(0, 100) : null,
+      overlaySrc: overlaySrc ? String(overlaySrc).slice(0, 100) : null,
+      shots: shots.map((shot, index) => {
+        const source = shotSources[index];
+        return {
+          index,
+          type: typeof shot,
+          hasSource: Boolean(source),
+          sourcePrefix: source ? String(source).slice(0, 100) : null,
+          isDataUrl: Boolean(source?.startsWith('data:image/')),
+          sourceLength: source?.length || 0,
+        };
+      }),
+    });
+    console.log('[PNG COMPOSE AUDIT] layout slots', {
+      layoutId: layout?.id || null,
+      slots: slots.map((slot, index) => ({
+        index,
+        shotIndex: Number.isInteger(slot?.shotIndex) ? slot.shotIndex : index,
+        x: slot?.x ?? null,
+        y: slot?.y ?? null,
+        width: slot?.w ?? slot?.width ?? null,
+        height: slot?.h ?? slot?.height ?? null,
+      })),
+    });
+    console.log('[PHOTO AUDIT final render]', {
+      shotsLength: shots.length,
+      normalizedSourceCount: shotSources.filter(Boolean).length,
+      sources: shotSources.map((source, shotIndex) => ({
+        shotIndex,
+        prefix: source ? String(source).slice(0, 100) : null,
+        isDataUrl: Boolean(source?.startsWith('data:image/')),
+        isBlobUrl: Boolean(source?.startsWith('blob:')),
+      })),
+    });
+    console.log('[final-render] normalized shot sources', {
+      inputCount: shots.length,
+      normalizedCount: shotSources.filter(Boolean).length,
+      sources: shotSources.map((source, shotIndex) => ({
+        shotIndex,
+        hasSource: Boolean(source),
+        sourcePrefix: source ? String(source).slice(0, 100) : null,
+      })),
+    });
+  }
+
+  const [backgroundImg, loadedShots, overlayImg] = await Promise.all([
+    backgroundSrc ? loadImageCached(backgroundSrc).catch(() => null) : Promise.resolve(null),
     Promise.all(
-      shots.map((s) => (s ? loadImageCached(s).catch(() => null) : Promise.resolve(null)))
+      shotSources.map((source, shotIndex) => (
+        source
+          ? loadImageCached(source).catch((error) => {
+              console.error('[final-render] photo failed to load', {
+                shotIndex,
+                sourcePrefix: String(source).slice(0, 100),
+                error: error?.message || String(error),
+              });
+              return null;
+            })
+          : Promise.resolve(null)
+      ))
     ),
+    overlaySrc ? loadImageCached(overlaySrc).catch(() => null) : Promise.resolve(null),
   ]);
+
+  if (IS_DEV) {
+    loadedShots.forEach((img, shotIndex) => {
+      if (!img) return;
+      console.log('[final-render] photo source audit', {
+        shotIndex,
+        sourceUsed: 'full captured data URL',
+        width: img.naturalWidth || img.width,
+        height: img.naturalHeight || img.height,
+      });
+    });
+  }
+
+  if (backgroundImg) {
+    ctx.drawImage(backgroundImg, 0, 0, W, H);
+  }
 
   // Each slot points to a shotIndex — the same shot may appear in
   // multiple slots (e.g. mirrored 2-column strip layouts duplicate
   // each photo into the left + right column).
   const printPhotoFilter = [photoFilter, PRINT_PHOTO_FILTER].filter(Boolean).join(' ');
-  for (const slot of slots) {
-    const img = loadedShots[slot.shotIndex];
-    if (!img) continue;
+  slots.forEach((slot, index) => {
+    const shotIndex = Number.isInteger(slot?.shotIndex) ? slot.shotIndex : index;
+    const img = loadedShots[shotIndex];
+    if (!img) return;
     ctx.save();
     if (printPhotoFilter) ctx.filter = printPhotoFilter;
-    drawCover(ctx, img, slot.x, slot.y, slot.w, slot.h);
+    ctx.beginPath();
+    const slotX = slot?.x ?? 0;
+    const slotY = slot?.y ?? 0;
+    const slotW = slot?.w ?? slot?.width ?? 0;
+    const slotH = slot?.h ?? slot?.height ?? 0;
+    ctx.rect(slotX, slotY, slotW, slotH);
+    ctx.clip();
+    drawCover(ctx, img, slotX, slotY, slotW, slotH);
     ctx.restore();
-  }
+  });
 
-  // Template goes on top — its alpha channel punches the windows
-  // through which the shots beneath are visible.
-  if (tmpl) ctx.drawImage(tmpl, 0, 0, W, H);
+  if (overlayImg) {
+    ctx.drawImage(overlayImg, 0, 0, W, H);
+  }
 
   return canvas;
 }

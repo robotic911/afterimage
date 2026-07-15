@@ -5,6 +5,7 @@ import {
   MAX_RECOMMENDED_GIF_BYTES,
   MAX_RECOMMENDED_GIF_MB,
 } from '../constants/softcopySettings';
+import { loadImageCached } from './imageCache';
 
 const IS_DEV = import.meta.env.DEV;
 
@@ -59,6 +60,28 @@ async function resolveGifDimensions(safeShots, options = {}) {
   return { width: 560, height: 367, source: 'fallback' };
 }
 
+async function applyFilterToFrames(shots, photoFilter) {
+  if (!photoFilter) return shots;
+
+  return Promise.all(shots.map(async (shot) => {
+    const image = await loadImageCached(shot);
+    const width = image.naturalWidth || image.width;
+    const height = image.naturalHeight || image.height;
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.filter = photoFilter;
+    ctx.drawImage(image, 0, 0, width, height);
+    const filteredFrame = canvas.toDataURL('image/png');
+    canvas.width = 0;
+    canvas.height = 0;
+    return filteredFrame;
+  }));
+}
+
 export async function generateSessionGif(shots, options = {}) {
   const safeShots = (shots || []).filter(Boolean);
 
@@ -73,8 +96,13 @@ export async function generateSessionGif(shots, options = {}) {
   const interval = Number(options.interval ?? GIF_FRAME_INTERVAL) || GIF_FRAME_INTERVAL;
   const quality = Number(options.quality ?? GIF_QUALITY) || GIF_QUALITY;
   const frames = safeShots.length;
+  const gifFrames = await applyFilterToFrames(safeShots, options.photoFilter || '');
 
   if (IS_DEV) {
+    console.log('[filter] final render filter', {
+      selectedFilter: options.selectedFilter || 'none',
+      outputType: 'gif',
+    });
     console.log('[gif] generation settings', {
       layoutId: options.layoutId || null,
       gifWidth,
@@ -92,7 +120,7 @@ export async function generateSessionGif(shots, options = {}) {
   return new Promise((resolve, reject) => {
     gifshot.createGIF(
       {
-        images: safeShots,
+        images: gifFrames,
         interval,
         gifWidth,
         gifHeight,

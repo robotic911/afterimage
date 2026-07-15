@@ -3,6 +3,7 @@ import './AdminDashboard.css';
 import { versionTemplateAssetSrc } from '../../lib/templateAssetUrl';
 import { LAYOUTS } from '../../constants/layouts';
 import { useStats } from '../../hooks/useStats';
+import { getSessionKeychainSummary } from '../../lib/salesMetrics';
 
 // Admin dashboard — revenue, copies and session counts with a 30-day
 // trend chart, per-template breakdown and a recent-sessions table.
@@ -45,6 +46,14 @@ const fmtLongDate = (iso) => {
 const fmtUpdatedAt = (iso) => {
   if (!iso) return 'No data yet';
   return `Last updated: ${fmtDateTime(iso)}`;
+};
+
+const getBucketStripRevenue = (bucket = {}) => Number(bucket.stripRevenue ?? bucket.revenue ?? 0) || 0;
+const getBucketKeychainRevenue = (bucket = {}) => Number(bucket.keychainRevenue ?? 0) || 0;
+const getBucketTotalRevenue = (bucket = {}) => {
+  const explicit = Number(bucket.totalRevenue ?? bucket.revenue);
+  if (Number.isFinite(explicit)) return explicit;
+  return getBucketStripRevenue(bucket) + getBucketKeychainRevenue(bucket);
 };
 
 const fmtDuration = (ms) => {
@@ -96,7 +105,10 @@ export default function AdminDashboard({
   const [recentSessionsPageSize, setRecentSessionsPageSize] = useState(10);
   const [showAllTemplates, setShowAllTemplates] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [confirmTodayReset, setConfirmTodayReset] = useState(false);
   const [statusMsg, setStatusMsg] = useState(null);
+  const [todayResetMsg, setTodayResetMsg] = useState(null);
+  const [todayResetting, setTodayResetting] = useState(false);
   const [templateSort, setTemplateSort] = useState('revenue');
   const [barTooltip, setBarTooltip] = useState(null);
   const [sessionFilters, setSessionFilters] = useState({
@@ -155,17 +167,30 @@ export default function AdminDashboard({
       pulseTimerRef.current = setTimeout(() => setJustUpdated(false), 1600);
     };
     const unsubLog   = window.adminApi.onSessionLogged?.(onLogged);
+    const unsubUpdate = window.adminApi.onSessionsUpdated?.(onLogged);
     const unsubClear = window.adminApi.onSessionsCleared?.(() => {
+      refresh();
+    });
+    const unsubTodayReset = window.adminApi.onTodayMonitorRecordsReset?.(() => {
       refresh();
     });
     return () => {
       unsubLog?.();
+      unsubUpdate?.();
       unsubClear?.();
+      unsubTodayReset?.();
       clearTimeout(pulseTimerRef.current);
     };
   }, [refresh]);
 
   const { today, week, month, allTime } = stats.totals;
+  const keychainStats = stats.keychains || {
+    unitsSold: 0,
+    revenue: 0,
+    sheetsPrinted: 0,
+    transactions: 0,
+    recentSales: [],
+  };
   const activeEvent = events.find((event) => event.id === settings.activeEventId) || null;
   const activeEvents = useMemo(
     () => events.filter((event) => event.enabled !== false),
@@ -194,8 +219,9 @@ export default function AdminDashboard({
     let maxRevenue = 0;
     let peak = null;
     for (const d of stats.byDay) {
-      if ((d.revenue || 0) > maxRevenue) {
-        maxRevenue = d.revenue || 0;
+      const dayRevenue = getBucketTotalRevenue(d);
+      if (dayRevenue > maxRevenue) {
+        maxRevenue = dayRevenue;
         peak = d;
       }
     }
@@ -313,6 +339,44 @@ export default function AdminDashboard({
     setTimeout(() => setStatusMsg(null), 2600);
   };
 
+  const doResetTodayMonitor = async () => {
+    setConfirmTodayReset(false);
+    if (todayResetting) return;
+    const resetTodayRecords =
+      window.todayMonitorApi?.resetTodayRecords
+      || window.adminApi?.resetTodayMonitorRecords;
+
+    console.log('[today-monitor reset UI] clicked', {
+      hasApi: Boolean(resetTodayRecords),
+    });
+
+    if (!resetTodayRecords) {
+      console.error('[Reset Today Monitor] API unavailable', {
+        hasTodayMonitorApi: Boolean(window.todayMonitorApi),
+        keys: window.todayMonitorApi ? Object.keys(window.todayMonitorApi) : [],
+        hasAdminApi: Boolean(window.adminApi),
+        adminKeys: window.adminApi ? Object.keys(window.adminApi) : [],
+      });
+      setTodayResetMsg('Reset API unavailable. Please restart the Electron app.');
+      return;
+    }
+
+    setTodayResetting(true);
+    try {
+      const res = await resetTodayRecords();
+      console.log('[today-monitor reset UI] result', res);
+      if (!res?.ok) {
+        throw new Error(res?.error || 'unknown error');
+      }
+      setTodayResetMsg('Today Monitor records reset.');
+    } catch (err) {
+      setTodayResetMsg(`Failed to reset Today Monitor records: ${err?.message || String(err)}`);
+    } finally {
+      setTodayResetting(false);
+      setTimeout(() => setTodayResetMsg(null), 2600);
+    }
+  };
+
   return (
     <div className="dash-root">
       <div className="dash-header">
@@ -385,12 +449,30 @@ export default function AdminDashboard({
         <SummaryItem label="Test Mode" value={settings.testModeEnabled === true ? 'Active' : 'Off'} tone={settings.testModeEnabled === true ? 'warning' : ''} />
       </section>
 
+      <section className="dash-section dash-section-reset">
+        <div className="dash-section-head">
+          <div>
+            <div className="dash-section-title">Today Monitor Reset</div>
+            <div className="dash-section-kicker">Clears today’s session records and counters only.</div>
+          </div>
+          <button
+            className="admin-btn danger"
+            onClick={() => setConfirmTodayReset(true)}
+            disabled={todayResetting}
+          >
+            {todayResetting ? 'Resetting...' : 'Reset Today Monitor'}
+          </button>
+        </div>
+      </section>
+
       {/* ── KPI cards ───────────────────────────── */}
       <div className="dash-kpi-grid">
         <KpiCard
           label="Today"
-          sub="Revenue / sessions / copies"
-          revenue={today.revenue}
+          sub="Total / sessions / copies"
+          revenue={getBucketTotalRevenue(today)}
+          stripRevenue={getBucketStripRevenue(today)}
+          keychainRevenue={getBucketKeychainRevenue(today)}
           copies={today.copies}
           sessions={today.sessions}
           accent="primary"
@@ -398,25 +480,48 @@ export default function AdminDashboard({
         <KpiCard
           label="Last 7 Days"
           sub="Rolling window"
-          revenue={week.revenue}
+          revenue={getBucketTotalRevenue(week)}
+          stripRevenue={getBucketStripRevenue(week)}
+          keychainRevenue={getBucketKeychainRevenue(week)}
           copies={week.copies}
           sessions={week.sessions}
         />
         <KpiCard
           label="Last 30 Days"
           sub="Rolling window"
-          revenue={month.revenue}
+          revenue={getBucketTotalRevenue(month)}
+          stripRevenue={getBucketStripRevenue(month)}
+          keychainRevenue={getBucketKeychainRevenue(month)}
           copies={month.copies}
           sessions={month.sessions}
         />
         <KpiCard
           label="All Time"
           sub={allTime.failed ? `${fmtInt(allTime.failed)} failed` : 'Lifetime total'}
-          revenue={allTime.revenue}
+          revenue={getBucketTotalRevenue(allTime)}
+          stripRevenue={getBucketStripRevenue(allTime)}
+          keychainRevenue={getBucketKeychainRevenue(allTime)}
           copies={allTime.copies}
           sessions={allTime.sessions}
         />
       </div>
+
+      <section className="dash-section dash-section-revenue">
+        <div className="dash-section-head">
+          <div>
+            <div className="dash-section-title">Revenue Breakdown</div>
+            <div className="dash-section-kicker">All matching sessions in the current dashboard filter.</div>
+          </div>
+        </div>
+        <div className="dash-metric-grid">
+          <MetricTile label="Strip Revenue" value={peso(getBucketStripRevenue(allTime))} sub="Normal photobooth strips" />
+          <MetricTile label="Keychain Revenue" value={peso(getBucketKeychainRevenue(allTime))} sub="Successful keychain prints only" tone="keychain" />
+          <MetricTile label="Total Revenue" value={peso(getBucketTotalRevenue(allTime))} sub="Strip + keychain" tone="total" />
+          <MetricTile label="Keychain Units" value={fmtInt(keychainStats.unitsSold)} sub="2-copy sale adds 2, 3-copy sale adds 3" tone="keychain" />
+          <MetricTile label="Sheets Printed" value={fmtInt(keychainStats.sheetsPrinted)} sub="Successful 4x6 keychain sheets" />
+          <MetricTile label="Transactions" value={fmtInt(keychainStats.transactions)} sub="Keychain sales recorded" />
+        </div>
+      </section>
 
       {/* ── 30-day revenue trend ───────────────── */}
       <section className="dash-section">
@@ -426,7 +531,7 @@ export default function AdminDashboard({
             <div className="dash-section-kicker">Last 30 days</div>
           </div>
           <div className="dash-section-sub">
-            {peakDay ? `Peak day: ${fmtLongDate(peakDay.date)} • ${peso(peakDay.revenue)}` : 'No peak yet'}
+            {peakDay ? `Peak day: ${fmtLongDate(peakDay.date)} • ${peso(getBucketTotalRevenue(peakDay))}` : 'No peak yet'}
           </div>
         </div>
 
@@ -434,7 +539,8 @@ export default function AdminDashboard({
           {stats.byDay.length === 0 || !hasRevenue
             ? <div className="dash-empty">No revenue yet.</div>
             : stats.byDay.map(day => {
-                const heightPct = Math.max(4, (day.revenue / maxDayRevenue) * 100);
+                const dayRevenue = getBucketTotalRevenue(day);
+                const heightPct = Math.max(4, (dayRevenue / maxDayRevenue) * 100);
                 return (
                   <div
                     key={day.date}
@@ -456,13 +562,77 @@ export default function AdminDashboard({
               style={{ left: `${barTooltip.x}px`, top: `${barTooltip.y}px` }}
             >
               <div className="dash-bar-tooltip-date">{fmtLongDate(barTooltip.day.date)}</div>
-              <div className="dash-bar-tooltip-revenue">{peso(barTooltip.day.revenue)}</div>
+              <div className="dash-bar-tooltip-revenue">{peso(getBucketTotalRevenue(barTooltip.day))}</div>
               <div className="dash-bar-tooltip-meta">
                 {fmtInt(barTooltip.day.sessions)} sessions • {fmtInt(barTooltip.day.copies)} copies
+                {' • '}
+                Strip {peso(getBucketStripRevenue(barTooltip.day))}
+                {' • '}
+                Keychain {peso(getBucketKeychainRevenue(barTooltip.day))}
               </div>
             </div>
           )}
         </div>
+      </section>
+
+      <section className="dash-section dash-section-keychains">
+        <div className="dash-section-head">
+          <div>
+            <div className="dash-section-title">Keychains</div>
+            <div className="dash-section-kicker">Separate keychain units, revenue, sheets, and transaction records.</div>
+          </div>
+          <div className="dash-section-sub">
+            {fmtInt(keychainStats.unitsSold)} units • {peso(keychainStats.revenue)}
+          </div>
+        </div>
+        <div className="dash-keychain-stat-row">
+          <MetricTile label="Units Sold" value={fmtInt(keychainStats.unitsSold)} sub="Sold keychain strip copies" tone="keychain" />
+          <MetricTile label="Revenue" value={peso(keychainStats.revenue)} sub="Stored sale amounts" tone="keychain" />
+          <MetricTile label="Sheets Printed" value={fmtInt(keychainStats.sheetsPrinted)} sub="Successful printed sheets" />
+          <MetricTile label="Transactions" value={fmtInt(keychainStats.transactions)} sub="Completed keychain sales" />
+        </div>
+        {Array.isArray(keychainStats.recentSales) && keychainStats.recentSales.length > 0 ? (
+          <div className="dash-table-scroll">
+            <table className="dash-table dash-keychain-table">
+              <thead>
+                <tr>
+                  <th>Date &amp; time</th>
+                  <th>Session / template</th>
+                  <th>Layout</th>
+                  <th className="num">Copies</th>
+                  <th className="num">Amount</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {keychainStats.recentSales.map((sale) => (
+                  <tr key={sale.id || `${sale.sessionId}-${sale.createdAt}-${sale.copies}`}>
+                    <td>{fmtDateTime(sale.createdAt || sale.sessionTimestamp)}</td>
+                    <td>
+                      <div className="dash-keychain-session">
+                        <strong>{sale.templateName || 'Unknown Template'}</strong>
+                        <span>{sale.sessionId || 'No session ID'}</span>
+                      </div>
+                    </td>
+                    <td>{sale.layoutName || '—'}</td>
+                    <td className="num">{fmtInt(sale.copies)}</td>
+                    <td className="num">{peso(sale.amount)}</td>
+                    <td>
+                      <span className="dash-pill good">Printed</span>
+                      {(sale.keychainFilename || sale.keychainPath) && (
+                        <div className="dash-keychain-file">
+                          {sale.keychainFilename || sale.keychainPath}
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="dash-empty">No keychain sales yet.</div>
+        )}
       </section>
 
       <section className="dash-dual-grid">
@@ -577,37 +747,52 @@ export default function AdminDashboard({
           {recentTotal === 0 ? (
             <div className="dash-empty">No recent sessions yet.</div>
           ) : (
-            <table className="dash-table">
-              <thead>
-                <tr>
-                  <th>Date &amp; time</th>
-                  <th>Template</th>
-                  <th className="num">Copies</th>
-                  <th className="num">Unit</th>
-                  <th className="num">Total</th>
-                  <th className="num">Duration</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visibleRecent.map(s => (
-                  <tr key={s.id} className={s.status === 'failed' ? 'row-failed' : ''}>
-                    <td>{fmtDateTime(s.timestamp)}</td>
-                    <td>{s.templateName || '—'}</td>
-                    <td className="num">{fmtInt(s.copies)}</td>
-                    <td className="num">{peso(s.unitPrice)}</td>
-                    <td className="num">{peso(s.totalAmount)}</td>
-                    <td className="num">{fmtDuration(s.durationMs)}</td>
-                    <td>
-                      <span className={`dash-pill ${getStatusPillClass(s.status)}`}>
-                        {getSessionStatusLabel(s.status)}
-                      </span>
-                      {s.testMode && <span className="dash-pill test">TEST</span>}
-                    </td>
+            <div className="dash-table-scroll">
+              <table className="dash-table">
+                <thead>
+                  <tr>
+                    <th>Date &amp; time</th>
+                    <th>Template</th>
+                    <th className="num">Copies</th>
+                    <th className="num">Unit</th>
+                    <th className="num">Total</th>
+                    <th>Keychain</th>
+                    <th className="num">Duration</th>
+                    <th>Status</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {visibleRecent.map((s) => {
+                    const keychainSummary = getSessionKeychainSummary(s);
+                    return (
+                      <tr key={s.id} className={s.status === 'failed' ? 'row-failed' : ''}>
+                        <td>{fmtDateTime(s.timestamp)}</td>
+                        <td>{s.templateName || '—'}</td>
+                        <td className="num">{fmtInt(s.copies)}</td>
+                        <td className="num">{peso(s.unitPrice)}</td>
+                        <td className="num">{peso(s.totalAmount)}</td>
+                        <td>
+                          {keychainSummary.transactions > 0 ? (
+                            <div className="dash-session-keychain">
+                              <span className="dash-pill keychain">KEYCHAIN</span>
+                              <strong>{fmtInt(keychainSummary.unitsSold)} copies • {peso(keychainSummary.revenue)}</strong>
+                              <small>{fmtInt(keychainSummary.sheetsPrinted)} sheet{keychainSummary.sheetsPrinted === 1 ? '' : 's'}</small>
+                            </div>
+                          ) : '—'}
+                        </td>
+                        <td className="num">{fmtDuration(s.durationMs)}</td>
+                        <td>
+                          <span className={`dash-pill ${getStatusPillClass(s.status)}`}>
+                            {getSessionStatusLabel(s.status)}
+                          </span>
+                          {s.testMode && <span className="dash-pill test">TEST</span>}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
           {recentTotal > 0 && (
             <div className="dash-pagination">
@@ -641,6 +826,7 @@ export default function AdminDashboard({
       </section>
 
       {statusMsg && <div className="admin-toast">{statusMsg}</div>}
+      {todayResetMsg && <div className="admin-toast">{todayResetMsg}</div>}
 
       {confirmClear && (
         <div className="admin-modal-backdrop" onClick={() => setConfirmClear(false)}>
@@ -657,16 +843,38 @@ export default function AdminDashboard({
           </div>
         </div>
       )}
+
+      {confirmTodayReset && (
+        <div className="admin-modal-backdrop" onClick={() => setConfirmTodayReset(false)}>
+          <div className="admin-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="admin-modal-title">Reset Today Monitor?</div>
+            <div className="admin-modal-body">
+              This will clear today&apos;s session records and Today Monitor counters. This will not
+              delete templates, settings, QR files, or saved media.
+            </div>
+            <div className="admin-modal-actions">
+              <button className="admin-btn ghost" onClick={() => setConfirmTodayReset(false)}>Cancel</button>
+              <button className="admin-btn danger" onClick={doResetTodayMonitor} disabled={todayResetting}>
+                {todayResetting ? 'Resetting...' : 'Reset Today Monitor'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function KpiCard({ label, sub, revenue, copies, sessions, accent }) {
+function KpiCard({ label, sub, revenue, stripRevenue = 0, keychainRevenue = 0, copies, sessions, accent }) {
   return (
     <div className={`dash-kpi ${accent === 'primary' ? 'primary' : ''}`}>
       <div className="dash-kpi-label">{label}</div>
-      <div className="dash-kpi-metric-label">Revenue</div>
+      <div className="dash-kpi-metric-label">Total Revenue</div>
       <div className="dash-kpi-revenue">{peso(revenue)}</div>
+      <div className="dash-kpi-breakdown">
+        <span>Strip {peso(stripRevenue)}</span>
+        <span>Keychain {peso(keychainRevenue)}</span>
+      </div>
       <div className="dash-kpi-split">
         <div>
           <div className="dash-kpi-num">{fmtInt(sessions)}</div>
@@ -679,6 +887,16 @@ function KpiCard({ label, sub, revenue, copies, sessions, accent }) {
       </div>
       <div className="dash-kpi-sub">{sub}</div>
     </div>
+  );
+}
+
+function MetricTile({ label, value, sub, tone = '' }) {
+  return (
+    <article className={`dash-metric-tile ${tone}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+      {sub && <small>{sub}</small>}
+    </article>
   );
 }
 

@@ -5,43 +5,93 @@
   background: var(--primary);
   align-items: center; justify-content: center;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .end-bg-radial {
   position: absolute; inset: 0;
-  background: radial-gradient(ellipse 900px 700px at 50% 40%, rgba(255,255,255,.06) 0%, transparent 65%);
+  background: radial-gradient(ellipse min(900px, 82vw) min(700px, 76vh) at 50% 40%, rgba(255,255,255,.07) 0%, transparent 68%);
   pointer-events: none;
 }
 
 .end-inner {
   position: relative; z-index: 2;
   display: flex; flex-direction: column; align-items: center;
-  text-align: center; gap: 20px;
+  text-align: center;
+  gap: clamp(18px, 2.4vh, 30px);
+  width: min(92vw, 1080px);
+  padding: clamp(28px, 4vh, 56px) clamp(24px, 4vw, 64px);
 }
 .end-tick {
-  width: 100px; height: 100px; border-radius: 50%;
+  width: clamp(116px, 9vw, 152px);
+  height: clamp(116px, 9vw, 152px);
+  border-radius: 50%;
   background: rgba(255,255,255,.1);
   border: 2px solid rgba(255,255,255,.2);
   display: flex; align-items: center; justify-content: center;
-  margin-bottom: 12px;
+  margin-bottom: clamp(8px, 1vh, 16px);
 }
-.end-tick svg { width: 48px; height: 48px; color: var(--secondary); }
+.end-tick svg {
+  width: clamp(56px, 4.6vw, 76px);
+  height: clamp(56px, 4.6vw, 76px);
+  color: var(--secondary);
+}
 .end-headline {
-  font-size: 88px; font-weight: 900; color: var(--secondary);
-  letter-spacing: -4px; line-height: 1;
+  font-size: clamp(72px, 8vw, 128px);
+  font-weight: 900;
+  color: var(--secondary);
+  letter-spacing: clamp(-5px, -.35vw, -2px);
+  line-height: .92;
 }
 .end-headline span { color: rgba(255,255,255,.3); font-weight: 300; font-style: italic; }
-.end-sub { font-size: 22px; color: rgba(255,255,255,.5); max-width: 560px; line-height: 1.6; }
+.end-sub {
+  font-size: clamp(28px, 3vw, 44px);
+  color: rgba(255,255,255,.72);
+  max-width: 900px;
+  line-height: 1.18;
+  font-weight: 750;
+}
 
 .end-progress-wrap {
-  width: 360px; background: rgba(255,255,255,.1);
-  border-radius: 100px; height: 5px; margin-top: 24px; overflow: hidden;
+  width: min(560px, 72vw);
+  background: rgba(255,255,255,.13);
+  border-radius: 100px;
+  height: clamp(8px, 1vh, 12px);
+  margin-top: clamp(14px, 2vh, 26px);
+  overflow: hidden;
 }
 .end-progress-bar {
   height: 100%; background: var(--secondary);
   border-radius: 100px; transition: width 1s linear;
 }
 .end-countdown-txt {
-  font-size: 14px; font-weight: 500; color: rgba(255,255,255,.35);
-  letter-spacing: 1px; margin-top: 10px;
+  font-size: clamp(20px, 1.8vw, 28px);
+  font-weight: 650;
+  color: rgba(255,255,255,.52);
+  line-height: 1.3;
+  letter-spacing: .4px;
+  margin-top: clamp(4px, .8vh, 10px);
+}
+
+@media (max-height: 780px) {
+  .end-inner {
+    gap: 16px;
+    padding-top: 20px;
+    padding-bottom: 20px;
+  }
+
+  .end-tick {
+    width: 104px;
+    height: 104px;
+    margin-bottom: 4px;
+  }
+
+  .end-tick svg {
+    width: 52px;
+    height: 52px;
+  }
+
+  .end-progress-wrap {
+    margin-top: 8px;
+  }
 }

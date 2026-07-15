@@ -1,9 +1,9 @@
 import './PolicyScreen.css';
 
 const RULES = [
-  { title: 'Stay within the frame', body: 'Make sure all participants are fully visible within the camera boundary before the countdown starts.' },
-  { title: 'One retry is allowed', body: 'You may retake your entire set once. After using your retry, the photos on screen are final.' },
-  { title: 'Photos are printed automatically', body: 'Once you confirm, printing starts immediately. Take a moment to review before submitting.' },
+  { title: 'Stay inside the frame', body: 'Make sure everyone is visible on the screen before the countdown starts.' },
+  { title: 'You have one retake', body: 'You can retake the full photo set once if needed.' },
+  { title: 'Review before printing', body: 'Check your photos and background carefully before pressing Print Photos.' },
 ];
 
 export default function PolicyScreen({ active, countdown, totalShots = 4, onBack, onNext }) {
@@ -12,7 +12,7 @@ export default function PolicyScreen({ active, countdown, totalShots = 4, onBack
       <div className="policy-body">
         <div className="policy-left">
           <div className="policy-left-title">
-            Read before <span>you snap.</span>
+            Before You <span>Start</span>
           </div>
 
           <div className="policy-stat-card">
@@ -54,9 +54,21 @@ export default function PolicyScreen({ active, countdown, totalShots = 4, onBack
             </div>
           </div>
 
+          <div className="policy-rules" aria-label="Photo session instructions">
+            {RULES.map((rule, index) => (
+              <div className="rule-card" key={rule.title}>
+                <div className="rule-num">{index + 1}</div>
+                <div className="rule-content">
+                  <h4>{rule.title}</h4>
+                  <p>{rule.body}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+
           <div className="policy-actions">
             <button className="btn-ghost" onClick={onBack}>← Back</button>
-            <button className="btn-primary" onClick={onNext}>I Understand, Let's Go →</button>
+            <button className="btn-primary" onClick={onNext}>Start Camera →</button>
           </div>
         </div>
       </div>

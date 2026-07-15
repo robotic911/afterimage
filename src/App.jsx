@@ -6,6 +6,7 @@ import LayoutScreen from './components/screens/LayoutScreen';
 import SelectionScreen from './components/screens/SelectionScreen';
 import PolicyScreen from './components/screens/PolicyScreen';
 import CameraScreen from './components/screens/CameraScreen';
+import ReviewPhotosScreen from './components/screens/ReviewPhotosScreen';
 import ArrangeScreen from './components/screens/ArrangeScreen';
 import PrintScreen from './components/screens/PrintScreen';
 import EndScreen from './components/screens/EndScreen';
@@ -24,6 +25,11 @@ import { loadShots, clearShots } from './lib/shotStorage';
 import { resolveSoftcopySettings } from './constants/softcopySettings';
 import { clampPrintCopies, DEFAULT_PRINT_COPIES } from './constants/printSettings';
 import { isTemplateVisibleToCustomer } from './lib/templateVisibility';
+import { describeShotForAudit, getShotImageSource, inspectDataUrl } from './lib/shotImageSource';
+import {
+  getBeautificationFilterCss,
+  normalizeBeautificationSettings,
+} from './constants/beautificationSettings';
 
 const AdminScreen = lazy(() => import('./components/screens/AdminScreen'));
 const IS_DEV = import.meta.env.DEV;
@@ -33,7 +39,7 @@ export default function App() {
   useStageScale(stageRef);
 
   // ── Navigation / session state ──
-  // Flow: landing → layout → policy → camera → arrange → background → print → end
+  // Flow: landing → layout → policy → camera → review → arrange → background → print → end
   // The LAYOUT picks the photo arrangement (how many shots, where they go).
   // The DESIGN (selectedTmpl) picks the decorative overlay/frame, AFTER
   // the photos have been taken — so the customer can match a look to the
@@ -47,6 +53,9 @@ export default function App() {
   // Rehydrate any in-progress shots from localStorage on first render
   const [shots, setShots] = useState(() => loadShots());
   const [arrangedShotIndexes, setArrangedShotIndexes] = useState([]);
+  const [retakeQueue, setRetakeQueue] = useState([]);
+  const [hasUsedRetakeChance, setHasUsedRetakeChance] = useState(false);
+  const [reviewNoticeKey, setReviewNoticeKey] = useState(0);
   const [copies, setCopies] = useState(DEFAULT_PRINT_COPIES);
   const [retries, setRetries] = useState(1);
   const [flashOn, setFlashOn] = useState(false);
@@ -81,10 +90,53 @@ export default function App() {
   // default layout if the id is null/unknown so downstream screens
   // always have something to render against.
   const layout = useMemo(() => findLayout(selectedLayout), [selectedLayout]);
-  const arrangedShots = useMemo(
-    () => arrangedShotIndexes.map(index => shots[index]).filter(Boolean),
-    [arrangedShotIndexes, shots],
-  );
+  const arrangedShots = useMemo(() => {
+    if (IS_DEV) {
+      console.log('[PHOTO AUDIT App] shots before arrange mapping', {
+        shotsLength: shots?.length,
+        arrangedShotIndexes,
+        shots: shots?.map((shot, index) => describeShotForAudit(shot, index)),
+      });
+      console.log('[DATA URL AUDIT App first shot]', inspectDataUrl(shots?.[0]));
+    }
+    const nextArrangedShots = arrangedShotIndexes
+      .map((index) => {
+        if (!shots[index]) {
+          console.warn('[PHOTO AUDIT App] invalid arranged shot index', {
+            index,
+            shotsLength: shots.length,
+          });
+        }
+        return shots[index];
+      })
+      .filter(Boolean);
+    if (IS_DEV) {
+      console.log('[PHOTO AUDIT App] arrangedShots', {
+        arrangedShotsLength: nextArrangedShots?.length,
+        arrangedShots: nextArrangedShots?.map((shot, index) => describeShotForAudit(shot, index)),
+      });
+      console.log('[APP KEYCHAIN/F Final arranged shots audit]', {
+        shotsLength: shots?.length || 0,
+        arrangedShotIndexes,
+        arrangedShotsLength: nextArrangedShots?.length || 0,
+        arrangedShots: nextArrangedShots?.map((shot, index) => {
+          const src = getShotImageSource(shot);
+          return {
+            index,
+            rawType: typeof shot,
+            rawPrefix: typeof shot === 'string' ? shot.slice(0, 120) : null,
+            rawKeys: shot && typeof shot === 'object' ? Object.keys(shot) : null,
+            hasSource: Boolean(src),
+            prefix: src ? src.slice(0, 120) : null,
+            isDataUrl: src?.startsWith('data:image/'),
+            length: src?.length,
+          };
+        }),
+      });
+      console.log('[DATA URL AUDIT App first arranged]', inspectDataUrl(nextArrangedShots?.[0]));
+    }
+    return nextArrangedShots;
+  }, [arrangedShotIndexes, shots]);
   const softcopySettings = useMemo(
     () => resolveSoftcopySettings(settings.softcopySettings),
     [settings.softcopySettings],
@@ -106,6 +158,19 @@ export default function App() {
     () => FILTERS.find(f => f.id === selectedFilter)?.css || '',
     [selectedFilter],
   );
+  const beautificationSettings = useMemo(
+    () => normalizeBeautificationSettings(settings.beautificationSettings),
+    [settings.beautificationSettings],
+  );
+  const beautificationPreviewCss = useMemo(
+    () => getBeautificationFilterCss(beautificationSettings),
+    [beautificationSettings],
+  );
+  const handleSelectFilter = useCallback((filterId) => {
+    const nextFilter = FILTERS.some(filter => filter.id === filterId) ? filterId : 'none';
+    setSelectedFilter(nextFilter);
+    if (IS_DEV) console.log('[filter] selected on camera screen', nextFilter);
+  }, []);
 
   // ── Tweaks ──
   const [primaryColor, setPrimaryColor] = useState(TWEAK_DEFAULTS.primaryColor);
@@ -140,6 +205,11 @@ export default function App() {
     if (IS_DEV) console.log('[camera] countdown seconds resolved', resolvedCountdown);
   }, [settings.countdownSeconds]);
 
+  useEffect(() => {
+    if (settings.printCopiesEnabled === true) return;
+    queueMicrotask(() => setCopies(DEFAULT_PRINT_COPIES));
+  }, [settings.printCopiesEnabled]);
+
   const goTo = useCallback(id => setCurScreen(id), []);
 
   // If the currently-selected design gets deleted or disabled from the
@@ -164,6 +234,9 @@ export default function App() {
         setSelectedTmpl(null);
         setShots([]);
         setArrangedShotIndexes([]);
+        setRetakeQueue([]);
+        setHasUsedRetakeChance(false);
+        setReviewNoticeKey(0);
         clearShots();
       });
     }
@@ -189,6 +262,9 @@ export default function App() {
     setSelectedFilter('none');
     setSoftcopy({ status: 'idle', qrUrl: null });
     setSessionVideo(null);
+    setRetakeQueue([]);
+    setHasUsedRetakeChance(false);
+    setReviewNoticeKey(0);
     // Picking a different layout invalidates any in-progress shots —
     // the new layout may need a different number of captures.
     setShots([]);
@@ -219,6 +295,9 @@ export default function App() {
     setSelectedFilter('none');
     setSoftcopy({ status: 'idle', qrUrl: null });
     setSessionVideo(null);
+    setRetakeQueue([]);
+    setHasUsedRetakeChance(false);
+    setReviewNoticeKey(0);
     setCopies(DEFAULT_PRINT_COPIES);
     setRetries(1);
     sessionStartRef.current = null;
@@ -233,18 +312,6 @@ export default function App() {
     return () => unsub?.();
   }, [resetCurrentSession]);
 
-  const handleRetry = () => {
-    if (retries <= 0) return;
-    setRetries(r => r - 1);
-    setShots([]);
-    setArrangedShotIndexes([]);
-    clearShots();
-    setSelectedFilter('none');
-    setSoftcopy({ status: 'idle', qrUrl: null });
-    setSessionVideo(null);
-    goTo('s-camera');
-  };
-
   const handleEndReturn = () => {
     resetCurrentSession();
   };
@@ -255,10 +322,70 @@ export default function App() {
   };
 
   const handleCameraDone = (newShots, videoResult = null) => {
+    if (retakeQueue.length > 0) {
+      if (newShots) {
+        for (const replacementIndex of retakeQueue) {
+          console.log('[retake] replacement complete', {
+            photoIndex: replacementIndex,
+            totalPhotos: newShots.length,
+          });
+        }
+      }
+      if (newShots) setShots(newShots);
+
+      if (videoResult?.shotVideoClips?.length) {
+        setSessionVideo((current) => {
+          const nextClips = [...(current?.shotVideoClips || [])];
+          for (const clip of videoResult.shotVideoClips) {
+            if (retakeQueue.includes(clip?.shotIndex)) {
+              nextClips[clip.shotIndex] = clip;
+            }
+          }
+          return { ...(current || {}), shotVideoClips: nextClips };
+        });
+      }
+
+      if (IS_DEV) console.log('[retake-flow] sequence complete; returning to review');
+      setRetakeQueue([]);
+      setReviewNoticeKey((key) => key + 1);
+      goTo('s-review');
+      return;
+    }
+
     if (newShots) setShots(newShots);
     setSessionVideo(videoResult);
     setArrangedShotIndexes([]);
-    goTo('s-arrange');
+    setReviewNoticeKey(0);
+    goTo('s-review');
+  };
+
+  const handleRetakeShots = (shotIndexes = []) => {
+    if (hasUsedRetakeChance) {
+      console.warn('[retake] blocked because retake chance already used');
+      return;
+    }
+    const nextQueue = Array.from(new Set(shotIndexes))
+      .filter((shotIndex) => Number.isInteger(shotIndex) && shotIndex >= 0 && shotIndex < shots.length && shots[shotIndex])
+      .sort((a, b) => a - b);
+    if (nextQueue.length === 0) return;
+    if (IS_DEV) console.log('[retake-flow] sequence started', {
+      retakeQueue: nextQueue,
+      layoutId: layout?.id || null,
+    });
+    setHasUsedRetakeChance(true);
+    setRetakeQueue(nextQueue);
+    setReviewNoticeKey(0);
+    setSoftcopy({ status: 'idle', qrUrl: null });
+    goTo('s-camera');
+  };
+
+  const handleCameraBack = () => {
+    if (retakeQueue.length > 0) {
+      setRetakeQueue([]);
+      goTo('s-review');
+      return;
+    }
+    goTo('s-policy');
   };
 
   // Admin flow
@@ -304,10 +431,30 @@ export default function App() {
           totalShots={layout.shots}
           shots={shots}
           setShots={setShots}
-          recordVideo={softcopySettings.qrEnabled && softcopySettings.videoEnabled}
+          selectedFilter={selectedFilter}
+          selectedFilterCss={selectedFilterCss}
+          onSelectFilter={handleSelectFilter}
+          beautificationSettings={beautificationSettings}
+          beautificationPreviewCss={beautificationPreviewCss}
+          recordVideo={softcopySettings.videoEnabled}
+          retakeQueue={retakeQueue}
           onFlash={handleFlash}
           onDone={handleCameraDone}
-          onBack={() => goTo('s-policy')}
+          onBack={handleCameraBack}
+        />
+
+        <ReviewPhotosScreen
+          active={curScreen === 's-review'}
+          layout={layout}
+          shots={shots}
+          selectedFilterCss={selectedFilterCss}
+          retakeCompletedKey={reviewNoticeKey}
+          hasUsedRetakeChance={hasUsedRetakeChance}
+          onRetakeShots={handleRetakeShots}
+          onContinue={() => {
+            setReviewNoticeKey(0);
+            goTo('s-arrange');
+          }}
         />
 
         <ArrangeScreen
@@ -315,9 +462,9 @@ export default function App() {
           layout={layout}
           shots={shots}
           arrangedShotIndexes={arrangedShotIndexes}
-          retries={retries}
+          selectedFilterCss={selectedFilterCss}
+          hasUsedRetakeChance={hasUsedRetakeChance}
           onChangeArrangement={setArrangedShotIndexes}
-          onRetry={handleRetry}
           onNext={() => goTo('s-design')}
         />
 
@@ -327,8 +474,7 @@ export default function App() {
           shots={arrangedShots}
           templates={templates}
           settings={settings}
-          selectedFilter={selectedFilter}
-          onSelectFilter={setSelectedFilter}
+          selectedFilterCss={selectedFilterCss}
           selectedTmpl={selectedTmpl}
           onSelect={handleSelectTemplate}
           onBack={() => goTo('s-arrange')}
@@ -342,8 +488,10 @@ export default function App() {
           settings={settings}
           events={events}
           selectedTmpl={selectedTmpl}
+          selectedFilter={selectedFilter}
           selectedFilterCss={selectedFilterCss}
           shots={arrangedShots}
+          arrangedShotIndexes={arrangedShotIndexes}
           sessionVideo={arrangedSessionVideo}
           copies={copies}
           retries={retries}

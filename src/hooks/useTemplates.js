@@ -19,6 +19,9 @@ import {
 
 function normalizeTemplate(template = {}, source = 'runtime') {
   const normalizedSrc = template.src || null;
+  const normalizedPreviewSrc = template.previewSrc || null;
+  const normalizedBackgroundSrc = template.backgroundSrc || null;
+  const normalizedOverlaySrc = template.overlaySrc || (source === 'bundled' ? normalizedSrc : null);
   return {
     ...template,
     enabled: template.enabled ?? true,
@@ -31,10 +34,15 @@ function normalizeTemplate(template = {}, source = 'runtime') {
     storageSource: template.storageSource || null,
     storageMode: template.storageMode || null,
     templateSourcePath: template.templateSourcePath || null,
+    filePath: template.filePath || null,
+    storagePath: template.storagePath || null,
+    thumbnailSrc: template.thumbnailSrc || null,
     src: normalizedSrc,
-    previewSrc: template.previewSrc || null,
-    overlaySrc: template.overlaySrc || normalizedSrc,
-    backgroundSrc: template.backgroundSrc || normalizedSrc,
+    previewSrc: normalizedPreviewSrc,
+    backgroundSrc: normalizedBackgroundSrc,
+    overlaySrc: normalizedOverlaySrc,
+    isBundled: source === 'bundled',
+    isRuntime: source === 'runtime',
   };
 }
 
@@ -96,6 +104,26 @@ export function useTemplates(settings = null) {
     if (!window.adminApi?.listTemplates) {
       const fallbackTemplates = mergeTemplates([], bundledTemplateOverrides);
       console.log('[templates] built-in templates loaded', { count: WEB_FALLBACK_TEMPLATES.length });
+      if (import.meta.env.DEV) {
+        console.log('[RUNTIME TEMPLATE AUDIT]', fallbackTemplates.map((t) => ({
+          id: t.id,
+          name: t.name,
+          layoutId: t.layoutId,
+          type: t.type,
+          hasSrc: Boolean(t.src),
+          src: t.src || null,
+          hasPreviewSrc: Boolean(t.previewSrc),
+          previewSrc: t.previewSrc || null,
+          hasBackgroundSrc: Boolean(t.backgroundSrc),
+          backgroundSrc: t.backgroundSrc || null,
+          hasOverlaySrc: Boolean(t.overlaySrc),
+          overlaySrc: t.overlaySrc || null,
+          thumbnailSrc: t.thumbnailSrc || null,
+          filePath: t.filePath || null,
+          storagePath: t.storagePath || null,
+          keys: Object.keys(t),
+        })));
+      }
       logTemplateSummary({
         sourceSummary: { currentRuntimeCount: 0, legacyCount: 0, mergedRuntimeCount: 0 },
         builtInCount: WEB_FALLBACK_TEMPLATES.length,
@@ -115,6 +143,26 @@ export function useTemplates(settings = null) {
         const mergedTemplates = mergeTemplates(runtimeTemplates, bundledTemplateOverrides);
         console.log('[templates] built-in templates loaded', { count: WEB_FALLBACK_TEMPLATES.length });
         console.log('[templates] runtime templates loaded', { count: runtimeTemplates.length });
+        if (import.meta.env.DEV) {
+          console.log('[RUNTIME TEMPLATE AUDIT]', mergedTemplates.map((t) => ({
+            id: t.id,
+            name: t.name,
+            layoutId: t.layoutId,
+            type: t.type,
+            hasSrc: Boolean(t.src),
+            src: t.src || null,
+            hasPreviewSrc: Boolean(t.previewSrc),
+            previewSrc: t.previewSrc || null,
+            hasBackgroundSrc: Boolean(t.backgroundSrc),
+            backgroundSrc: t.backgroundSrc || null,
+            hasOverlaySrc: Boolean(t.overlaySrc),
+            overlaySrc: t.overlaySrc || null,
+            thumbnailSrc: t.thumbnailSrc || null,
+            filePath: t.filePath || null,
+            storagePath: t.storagePath || null,
+            keys: Object.keys(t),
+          })));
+        }
         logTemplateSummary({
           sourceSummary: res.sourceSummary || {},
           builtInCount: WEB_FALLBACK_TEMPLATES.length,
@@ -127,6 +175,26 @@ export function useTemplates(settings = null) {
       } else {
         const fallbackTemplates = mergeTemplates([], bundledTemplateOverrides);
         console.log('[templates] built-in templates loaded', { count: WEB_FALLBACK_TEMPLATES.length });
+        if (import.meta.env.DEV) {
+          console.log('[RUNTIME TEMPLATE AUDIT]', fallbackTemplates.map((t) => ({
+            id: t.id,
+            name: t.name,
+            layoutId: t.layoutId,
+            type: t.type,
+            hasSrc: Boolean(t.src),
+            src: t.src || null,
+            hasPreviewSrc: Boolean(t.previewSrc),
+            previewSrc: t.previewSrc || null,
+            hasBackgroundSrc: Boolean(t.backgroundSrc),
+            backgroundSrc: t.backgroundSrc || null,
+            hasOverlaySrc: Boolean(t.overlaySrc),
+            overlaySrc: t.overlaySrc || null,
+            thumbnailSrc: t.thumbnailSrc || null,
+            filePath: t.filePath || null,
+            storagePath: t.storagePath || null,
+            keys: Object.keys(t),
+          })));
+        }
         logTemplateSummary({
           sourceSummary: { currentRuntimeCount: 0, legacyCount: 0, mergedRuntimeCount: 0 },
           builtInCount: WEB_FALLBACK_TEMPLATES.length,
@@ -140,6 +208,26 @@ export function useTemplates(settings = null) {
     } catch (err) {
       const fallbackTemplates = mergeTemplates([], bundledTemplateOverrides);
       console.log('[templates] built-in templates loaded', { count: WEB_FALLBACK_TEMPLATES.length });
+      if (import.meta.env.DEV) {
+        console.log('[RUNTIME TEMPLATE AUDIT]', fallbackTemplates.map((t) => ({
+          id: t.id,
+          name: t.name,
+          layoutId: t.layoutId,
+          type: t.type,
+          hasSrc: Boolean(t.src),
+          src: t.src || null,
+          hasPreviewSrc: Boolean(t.previewSrc),
+          previewSrc: t.previewSrc || null,
+          hasBackgroundSrc: Boolean(t.backgroundSrc),
+          backgroundSrc: t.backgroundSrc || null,
+          hasOverlaySrc: Boolean(t.overlaySrc),
+          overlaySrc: t.overlaySrc || null,
+          thumbnailSrc: t.thumbnailSrc || null,
+          filePath: t.filePath || null,
+          storagePath: t.storagePath || null,
+          keys: Object.keys(t),
+        })));
+      }
       logTemplateSummary({
         sourceSummary: { currentRuntimeCount: 0, legacyCount: 0, mergedRuntimeCount: 0 },
         builtInCount: WEB_FALLBACK_TEMPLATES.length,

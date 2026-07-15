@@ -8,7 +8,25 @@ import { useCallback, useEffect, useState } from 'react';
 // a deterministic mock dataset so the dashboard renders populated state
 // for CSS iteration. The real store only lives in Electron's userData.
 
-const EMPTY_BUCKET = { sessions: 0, copies: 0, revenue: 0, failed: 0 };
+const EMPTY_BUCKET = {
+  sessions: 0,
+  copies: 0,
+  revenue: 0,
+  stripRevenue: 0,
+  keychainRevenue: 0,
+  totalRevenue: 0,
+  keychainUnits: 0,
+  keychainSheets: 0,
+  keychainTransactions: 0,
+  failed: 0,
+};
+const EMPTY_KEYCHAIN_STATS = {
+  unitsSold: 0,
+  revenue: 0,
+  sheetsPrinted: 0,
+  transactions: 0,
+  recentSales: [],
+};
 const EMPTY_STATS = {
   totals: {
     today:   { ...EMPTY_BUCKET },
@@ -18,6 +36,7 @@ const EMPTY_STATS = {
   },
   byDay: [],
   byTemplate: [],
+  keychains: { ...EMPTY_KEYCHAIN_STATS },
   generatedAt: null,
 };
 const FALLBACK_RECENT_TOTAL = 119;
@@ -62,10 +81,10 @@ function buildFallbackStats(sessionType = 'real') {
   );
 
   const buckets = {
-    today:   { sessions: 0, copies: 0, revenue: 0, failed: 0 },
-    week:    { sessions: 0, copies: 0, revenue: 0, failed: 0 },
-    month:   { sessions: 0, copies: 0, revenue: 0, failed: 0 },
-    allTime: { sessions: 0, copies: 0, revenue: 0, failed: 0 },
+    today:   { ...EMPTY_BUCKET },
+    week:    { ...EMPTY_BUCKET },
+    month:   { ...EMPTY_BUCKET },
+    allTime: { ...EMPTY_BUCKET },
   };
 
   // Walk 30 days oldest → newest. Recent days get weighted higher so the
@@ -82,23 +101,42 @@ function buildFallbackStats(sessionType = 'real') {
     const testMode = i % 6 === 0;
     if (!filterBySessionType({ testMode }, sessionType)) continue;
 
-    byDay.push({ date, sessions, copies, revenue });
+    byDay.push({
+      date,
+      sessions,
+      copies,
+      revenue,
+      stripRevenue: revenue,
+      keychainRevenue: 0,
+      totalRevenue: revenue,
+      keychainUnits: 0,
+      keychainSheets: 0,
+      keychainTransactions: 0,
+    });
 
     buckets.allTime.sessions += sessions;
     buckets.allTime.copies   += copies;
     buckets.allTime.revenue  += revenue;
+    buckets.allTime.stripRevenue += revenue;
+    buckets.allTime.totalRevenue += revenue;
     buckets.month.sessions   += sessions;
     buckets.month.copies     += copies;
     buckets.month.revenue    += revenue;
+    buckets.month.stripRevenue += revenue;
+    buckets.month.totalRevenue += revenue;
     if (i < 7) {
       buckets.week.sessions += sessions;
       buckets.week.copies   += copies;
       buckets.week.revenue  += revenue;
+      buckets.week.stripRevenue += revenue;
+      buckets.week.totalRevenue += revenue;
     }
     if (date === today) {
       buckets.today.sessions = sessions;
       buckets.today.copies   = copies;
       buckets.today.revenue  = revenue;
+      buckets.today.stripRevenue = revenue;
+      buckets.today.totalRevenue = revenue;
     }
 
     // Distribute this day's sessions across templates so by-template totals
@@ -122,6 +160,7 @@ function buildFallbackStats(sessionType = 'real') {
     totals: buckets,
     byDay,
     byTemplate: Object.values(byTemplateMap).sort((a, b) => b.revenue - a.revenue),
+    keychains: { ...EMPTY_KEYCHAIN_STATS },
     generatedAt: now.toISOString(),
   };
 }
@@ -250,6 +289,7 @@ export function useStats({
           totals: statsRes.totals || EMPTY_STATS.totals,
           byDay: statsRes.byDay || [],
           byTemplate: statsRes.byTemplate || [],
+          keychains: statsRes.keychains || EMPTY_STATS.keychains,
           generatedAt: statsRes.generatedAt || null,
         });
         setError(null);

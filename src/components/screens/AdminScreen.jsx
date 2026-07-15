@@ -32,6 +32,12 @@ import {
   DEFAULT_UI_COLOR_THEME_ID,
   UI_COLOR_THEME_LIST,
 } from '../../constants/colorThemes';
+import {
+  DEFAULT_BEAUTIFICATION_SETTINGS,
+  MAX_BEAUTIFICATION_INTENSITY,
+  MIN_BEAUTIFICATION_INTENSITY,
+  normalizeBeautificationSettings,
+} from '../../constants/beautificationSettings';
 import { invalidateImageCache } from '../../lib/imageCache';
 import { versionTemplateAssetSrc } from '../../lib/templateAssetUrl';
 import { getTemplateVisibilityKey } from '../../lib/templateVisibility';
@@ -127,12 +133,14 @@ export default function AdminScreen({
     mode: 'daily',
     activeEventId: null,
     printEnabled: true,
+    selectedPrinterName: null,
     printerProfileId: DEFAULT_PRINTER_PROFILE_ID,
     safeMarginOverride: DEFAULT_SAFE_MARGIN_OVERRIDE,
     softcopySettings: DEFAULT_SOFTCOPY_SETTINGS,
     layoutSettings: DEFAULT_LAYOUT_SETTINGS,
     bundledTemplateOverrides: {},
     countdownSeconds: DEFAULT_COUNTDOWN_SECONDS,
+    beautificationSettings: DEFAULT_BEAUTIFICATION_SETTINGS,
     testModeEnabled: false,
   },
   events = [],
@@ -170,6 +178,17 @@ export default function AdminScreen({
   const [softcopyDraft, setSoftcopyDraft] = useState(() => normalizeSoftcopySettings(settings.softcopySettings));
   const [layoutDraft, setLayoutDraft] = useState(() => normalizeLayoutSettings(settings.layoutSettings));
   const [countdownDraft, setCountdownDraft] = useState(() => normalizeCountdownSeconds(settings.countdownSeconds));
+  const [beautificationDraft, setBeautificationDraft] = useState(
+    () => normalizeBeautificationSettings(settings.beautificationSettings),
+  );
+  const [printerList, setPrinterList] = useState({
+    printers: [],
+    selphyPrinters: [],
+    selectedPrinterName: settings.selectedPrinterName || null,
+    guidance: null,
+  });
+  const [printerListLoading, setPrinterListLoading] = useState(false);
+  const [printerListError, setPrinterListError] = useState(null);
   const overlayInputRef = useRef(null);
   const previewInputRef = useRef(null);
   const displayTemplates = useMemo(() => {
@@ -245,6 +264,39 @@ export default function AdminScreen({
   }, [settings.countdownSeconds]);
 
   useEffect(() => {
+    const nextBeautification = normalizeBeautificationSettings(settings.beautificationSettings);
+    queueMicrotask(() => setBeautificationDraft(nextBeautification));
+  }, [settings.beautificationSettings]);
+
+  const refreshPrinterList = useCallback(async () => {
+    if (!window.printApi?.listPrinters) {
+      setPrinterListError('Printer detection requires Electron runtime.');
+      return;
+    }
+    setPrinterListLoading(true);
+    try {
+      const res = await window.printApi.listPrinters();
+      if (!res?.ok) throw new Error(res?.error || 'failed to load printers');
+      setPrinterList({
+        printers: Array.isArray(res.printers) ? res.printers : [],
+        selphyPrinters: Array.isArray(res.selphyPrinters) ? res.selphyPrinters : [],
+        selectedPrinterName: res.selectedPrinterName || null,
+        guidance: res.guidance || null,
+      });
+      setPrinterListError(null);
+    } catch (err) {
+      setPrinterListError(err?.message || String(err));
+    } finally {
+      setPrinterListLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!active || tab !== 'settings') return;
+    queueMicrotask(() => refreshPrinterList());
+  }, [active, refreshPrinterList, tab]);
+
+  useEffect(() => {
     if (active) {
       queueMicrotask(() => {
         setTab('dashboard');
@@ -297,6 +349,11 @@ export default function AdminScreen({
   const activePrintArea = useMemo(
     () => getPrintArea(activePrinterProfile, settings.safeMarginOverride),
     [activePrinterProfile, settings.safeMarginOverride],
+  );
+  const selectedPrinterName = settings.selectedPrinterName || printerList.selectedPrinterName || null;
+  const listedSelectedPrinter = useMemo(
+    () => printerList.printers.find((printer) => printer.name === selectedPrinterName) || null,
+    [printerList.printers, selectedPrinterName],
   );
   const testModeEnabled = settings.testModeEnabled === true;
   const softcopySettings = softcopyDraft;
@@ -435,6 +492,20 @@ export default function AdminScreen({
     setStatusMsg(printEnabled ? 'Printing enabled.' : 'Printing disabled.');
   };
 
+  const updatePrintCopiesEnabled = async (printCopiesEnabled) => {
+    if (!window.adminApi?.updateSettings) {
+      setStatusMsg('Print copies setting changes require Electron runtime.');
+      return;
+    }
+    const res = await window.adminApi.updateSettings({ printCopiesEnabled });
+    if (!res?.ok) {
+      setStatusMsg('Print copies setting update failed: ' + (res?.error || 'unknown'));
+      return;
+    }
+    await refreshConfig();
+    setStatusMsg(printCopiesEnabled ? 'Multiple print copies enabled.' : 'New sessions will print 1 copy only.');
+  };
+
   const toggleTestMode = async () => {
     if (!window.adminApi?.updateSettings) {
       setStatusMsg('Test Mode changes require Electron runtime.');
@@ -509,6 +580,31 @@ export default function AdminScreen({
     setCountdownDraft(savedCountdown);
     await refreshConfig();
     setStatusMsg(`Countdown set to ${savedCountdown} seconds.`);
+  };
+
+  const saveBeautificationSettings = async (nextSettings) => {
+    const normalized = normalizeBeautificationSettings(nextSettings);
+    setBeautificationDraft(normalized);
+    if (!window.adminApi?.updateSettings) {
+      setStatusMsg('Beautification setting changes require Electron runtime.');
+      return;
+    }
+    const res = await window.adminApi.updateSettings({
+      beautificationSettings: normalized,
+    });
+    if (!res?.ok) {
+      setStatusMsg('Beautification update failed: ' + (res?.error || 'unknown'));
+      await refreshConfig();
+      return;
+    }
+    const saved = normalizeBeautificationSettings(
+      res.settings?.beautificationSettings ?? normalized,
+    );
+    setBeautificationDraft(saved);
+    await refreshConfig();
+    setStatusMsg(saved.enabled
+      ? `Beautification enabled at ${saved.intensity}%.`
+      : 'Beautification disabled.');
   };
 
   const updateLayoutEnabled = async (layoutId, enabled) => {
@@ -702,6 +798,14 @@ export default function AdminScreen({
       },
       'Safe area updated.',
     );
+  };
+
+  const handleSelectedPrinterChange = async (printerName) => {
+    await updatePrinterSettings(
+      { selectedPrinterName: printerName || null },
+      printerName ? 'Selected printer updated.' : 'Selected printer cleared.',
+    );
+    await refreshPrinterList();
   };
 
   const pickOverlay = () => overlayInputRef.current?.click();
@@ -1114,6 +1218,21 @@ export default function AdminScreen({
                 {settings.printEnabled !== false ? 'Disable' : 'Enable'}
               </button>
             </div>
+            <div className={`admin-status-toggle ${settings.printCopiesEnabled === true ? 'on' : 'off'}`}>
+              <span className="admin-status-copy">
+                <span className="admin-status-label">Print Copies</span>
+                <span className="admin-status-value">
+                  {settings.printCopiesEnabled === true ? 'Enabled' : '1 copy only'}
+                </span>
+              </span>
+              <button
+                type="button"
+                className={`admin-status-btn ${settings.printCopiesEnabled === true ? 'success active' : 'warning active'}`}
+                onClick={() => updatePrintCopiesEnabled(settings.printCopiesEnabled !== true)}
+              >
+                {settings.printCopiesEnabled === true ? 'Disable' : 'Enable'}
+              </button>
+            </div>
           </div>
           <button className="admin-btn" onClick={onExit}>Exit Admin</button>
         </div>
@@ -1241,6 +1360,60 @@ export default function AdminScreen({
               <div className="admin-inline-note">
                 Print area: x {activePrintArea.x}, y {activePrintArea.y}, w {activePrintArea.w}, h {activePrintArea.h}
               </div>
+              <div className="admin-settings-card-sub">Selected Printer</div>
+              <div className="admin-printer-selector-head">
+                <div className="admin-inline-note">
+                  {selectedPrinterName
+                    ? `Current queue: ${selectedPrinterName}`
+                    : 'No printer queue selected. Select one Canon SELPHY queue before printing.'}
+                </div>
+                <button
+                  type="button"
+                  className="admin-btn ghost"
+                  onClick={refreshPrinterList}
+                  disabled={printerListLoading}
+                >
+                  {printerListLoading ? 'Refreshing...' : 'Refresh Printers'}
+                </button>
+              </div>
+              {printerListError && <div className="admin-inline-note warn">{printerListError}</div>}
+              {printerList.guidance && <div className="admin-inline-note warn">{printerList.guidance}</div>}
+              {selectedPrinterName && !listedSelectedPrinter && printerList.printers.length > 0 && (
+                <div className="admin-inline-note warn">
+                  Selected printer is missing. Choose an online Canon SELPHY printer.
+                </div>
+              )}
+              <div className="admin-printer-queue-list">
+                {(printerList.selphyPrinters.length > 0 ? printerList.selphyPrinters : printerList.printers).map((printer) => {
+                  const activePrinter = printer.name === selectedPrinterName;
+                  return (
+                    <div key={printer.name} className={`admin-printer-queue ${activePrinter ? 'active' : ''} ${printer.isAvailable === false ? 'offline' : ''}`}>
+                      <div className="admin-printer-queue-main">
+                        <strong>{printer.displayName || printer.name}</strong>
+                        <span>{printer.name}</span>
+                        <div className="admin-printer-queue-tags">
+                          {printer.isSelphy && <span className="admin-chip on">Canon SELPHY</span>}
+                          {printer.isDefault && <span className="admin-chip warn">Default</span>}
+                          <span className={`admin-chip ${printer.isAvailable === false ? 'warn' : 'on'}`}>
+                            {printer.isAvailable === false ? 'Offline' : (printer.statusLabel || 'Idle')}
+                          </span>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className={`admin-btn ${activePrinter ? 'success' : 'ghost'}`}
+                        onClick={() => handleSelectedPrinterChange(printer.name)}
+                        disabled={activePrinter || printerListLoading}
+                      >
+                        {activePrinter ? 'Selected' : 'Use this printer'}
+                      </button>
+                    </div>
+                  );
+                })}
+                {!printerListLoading && printerList.printers.length === 0 && !printerListError && (
+                  <div className="admin-inline-note warn">No printers detected.</div>
+                )}
+              </div>
             </section>
 
             <section className="admin-settings-card">
@@ -1264,8 +1437,59 @@ export default function AdminScreen({
 
             <section className="admin-settings-card">
               <div className="admin-settings-card-header">
+                <div className="admin-settings-card-title">Camera Beautification</div>
+                <div className="admin-settings-card-desc">
+                  Apply a subtle, natural softening treatment to camera photos only. Templates and text stay sharp.
+                </div>
+              </div>
+              <button
+                type="button"
+                className={`admin-softcopy-toggle ${beautificationDraft.enabled ? 'is-on' : 'is-off'}`}
+                role="switch"
+                aria-checked={beautificationDraft.enabled}
+                onClick={() => saveBeautificationSettings({
+                  ...beautificationDraft,
+                  enabled: !beautificationDraft.enabled,
+                })}
+              >
+                <span className="admin-softcopy-toggle-ui" aria-hidden="true" />
+                <span>
+                  <strong>Enable Beautification</strong>
+                  <small>Soften harsh webcam texture while preserving facial detail.</small>
+                </span>
+              </button>
+              <label className={`admin-beautification-range ${beautificationDraft.enabled ? '' : 'is-disabled'}`}>
+                <span>
+                  <strong>Intensity</strong>
+                  <output>{beautificationDraft.intensity}%</output>
+                </span>
+                <input
+                  type="range"
+                  min={MIN_BEAUTIFICATION_INTENSITY}
+                  max={MAX_BEAUTIFICATION_INTENSITY}
+                  step="1"
+                  value={beautificationDraft.intensity}
+                  disabled={!beautificationDraft.enabled}
+                  onChange={(event) => {
+                    setBeautificationDraft(normalizeBeautificationSettings({
+                      ...beautificationDraft,
+                      intensity: event.target.value,
+                    }));
+                  }}
+                  onPointerUp={(event) => event.currentTarget.blur()}
+                  onBlur={(event) => saveBeautificationSettings({
+                    ...beautificationDraft,
+                    intensity: event.currentTarget.value,
+                  })}
+                />
+                <small>35% is the recommended natural default. Higher values remain intentionally subtle.</small>
+              </label>
+            </section>
+
+            <section className="admin-settings-card">
+              <div className="admin-settings-card-header">
                 <div className="admin-settings-card-title">Softcopy / QR Settings</div>
-                <div className="admin-settings-card-desc">Control QR generation and which softcopy files are uploaded.</div>
+                <div className="admin-settings-card-desc">Choose which softcopy files are saved locally and whether they are also shared by QR.</div>
               </div>
 
               <div className="admin-softcopy-options">
@@ -1283,34 +1507,24 @@ export default function AdminScreen({
                   </span>
                 </button>
 
-                <div className={`admin-softcopy-media ${softcopySettings.qrEnabled ? '' : 'is-disabled'}`}>
+                <div className="admin-softcopy-media">
                   {[
-                    ['photoEnabled', 'Include Photo', 'Upload the final print image.'],
-                    ['gifEnabled', 'Include GIF', 'Upload the animated GIF.'],
-                    ['videoEnabled', 'Include Video', 'Upload the template video.'],
+                    ['photoEnabled', 'Save Photo', 'Save the final print image locally and include it in QR when enabled.'],
+                    ['gifEnabled', 'Save GIF', 'Generate and save the animated GIF locally and include it in QR when enabled.'],
+                    ['videoEnabled', 'Save Video', 'Generate and save the template video locally and include it in QR when enabled.'],
                   ].map(([key, label, description]) => (
                     <button
                       type="button"
                       key={key}
-                      className={[
-                        'admin-softcopy-toggle',
-                        softcopySettings.qrEnabled && softcopySettings[key] ? 'is-on' : 'is-off',
-                        softcopySettings.qrEnabled ? '' : 'is-blocked',
-                      ].filter(Boolean).join(' ')}
+                      className={`admin-softcopy-toggle ${softcopySettings[key] ? 'is-on' : 'is-off'}`}
                       role="switch"
-                      aria-checked={softcopySettings.qrEnabled && softcopySettings[key]}
-                      aria-disabled={!softcopySettings.qrEnabled}
-                      disabled={!softcopySettings.qrEnabled}
+                      aria-checked={softcopySettings[key]}
                       onClick={() => updateSoftcopySetting(key, !softcopySettings[key])}
                     >
                       <span className="admin-softcopy-toggle-ui" aria-hidden="true" />
                       <span>
                         <strong>{label}</strong>
-                        <small>
-                          {softcopySettings.qrEnabled
-                            ? description
-                            : 'Disabled while QR generation is off.'}
-                        </small>
+                        <small>{description}</small>
                       </span>
                     </button>
                   ))}
@@ -1319,15 +1533,14 @@ export default function AdminScreen({
 
               {!softcopySettings.qrEnabled && (
                 <div className="admin-inline-note">
-                  QR generation is disabled. Printing will still work, but no softcopy QR will be generated.
+                  QR generation and upload are disabled. Enabled softcopy files will still be saved locally.
                 </div>
               )}
-              {softcopySettings.qrEnabled
-                && !softcopySettings.photoEnabled
+              {!softcopySettings.photoEnabled
                 && !softcopySettings.gifEnabled
                 && !softcopySettings.videoEnabled && (
                 <div className="admin-inline-note warn">
-                  Enable at least one softcopy type to generate a QR code.
+                  Enable at least one softcopy type to save local media or generate a QR code.
                 </div>
               )}
             </section>

@@ -1,11 +1,18 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { QRCodeCanvas } from 'qrcode.react';
 import './PrintScreen.css';
-import LayoutPreview from '../LayoutPreview';
 import logoBlack from '../../assets/ai-logo-black.png';
 import typoBlack from '../../assets/ai-typo-black.png';
 import { buildFinalPrintCanvas, PRINT_JPEG_QUALITY } from '../../lib/printImage';
+import { generateKeychain4x6Png } from '../../lib/keychainGenerator';
+import {
+  describeShotForAudit,
+  getShotImageSource,
+  inspectDataUrl,
+  testImageLoad,
+} from '../../lib/shotImageSource';
 import { versionTemplateAssetSrc } from '../../lib/templateAssetUrl';
+import { resolveTemplateRenderAssets } from '../../lib/templateRenderAssets';
 import { DEFAULT_PRINTER_PROFILE_ID, DEFAULT_SAFE_MARGIN_OVERRIDE } from '../../constants/printers';
 import { createSoftcopySessionToken, uploadSoftcopyAssets } from '../../lib/softcopyUpload';
 import { DEFAULT_SOFTCOPY_SETTINGS, resolveSoftcopySettings } from '../../constants/softcopySettings';
@@ -21,6 +28,14 @@ const FINAL_PRINT_STATUSES = new Set(['completed', 'failed', 'cancelled', 'parti
 const IS_DEV = import.meta.env.DEV;
 const RUNTIME_PLATFORM = window.printApi?.platform || 'unknown';
 const CAN_OPEN_PRINT_CENTER = window.printApi?.canOpenPrintCenter === true;
+const SHOW_DIAGNOSTIC_UI = false;
+const SHOW_KEYCHAIN_DEBUG_UI = false;
+const ENABLE_KEYCHAIN_AUTO_SAVE = false;
+const KEYCHAIN_AUTO_SAVE_IN_FLIGHT_KEYS = new Set();
+const KEYCHAIN_AUTO_SAVE_SAVED_KEYS = new Set();
+const KEYCHAIN_AUTO_SAVE_ATTEMPTED_KEYS = new Set();
+const LOCAL_SOFTCOPY_SAVE_IN_FLIGHT_KEYS = new Map();
+const LOCAL_SOFTCOPY_SAVE_SAVED_KEYS = new Map();
 
 function normalizePrintApiResult(result, fallbackCopies) {
   const copiesRequested = clampPrintCopies(result?.copiesRequested ?? result?.requestedCopies ?? fallbackCopies);
@@ -58,9 +73,9 @@ function getSoftcopyErrorMessage(error = '') {
     return 'Upload cannot be retried for this session. Please end session.';
   }
   if (message) {
-    return 'Softcopy upload failed. Please check internet/Supabase and retry.';
+    return 'We could not prepare the QR code. Check the connection or ask the attendant, then try again.';
   }
-  return 'Softcopy upload failed. Please check internet/Supabase and retry.';
+  return 'We could not prepare the QR code. Check the connection or ask the attendant, then try again.';
 }
 
 function createEmptySoftcopyPayload() {
@@ -78,6 +93,11 @@ function createEmptySoftcopyPayload() {
     },
     warnings: [],
     canUpload: false,
+    localPhotoDataUrl: null,
+    localSave: null,
+    keychain4x6: null,
+    keychain4x6Generated: false,
+    keychain4x6Error: null,
   };
 }
 
@@ -95,7 +115,10 @@ function makeSoftcopyCacheKey({ layout, template, shots, selectedFilterCss, soft
     templateId: template?.id || null,
     templateUpdatedAt: template?.updatedAt || template?.createdAt || null,
     selectedFilterCss,
-    shots: (shots || []).map((shot) => (shot ? `${shot.length}:${shot.slice(0, 96)}` : null)),
+    shots: (shots || []).map((shot) => {
+      const source = getShotImageSource(shot);
+      return source ? `${source.length}:${source.slice(0, 96)}` : null;
+    }),
     videoClips: (sessionVideo?.shotVideoClips || []).map((clip) => ({
       shotIndex: clip?.shotIndex ?? null,
       size: clip?.blob?.size || 0,
@@ -111,6 +134,140 @@ function makeSoftcopyCacheKey({ layout, template, shots, selectedFilterCss, soft
   });
 }
 
+function makeKeychainTimestamp(date = new Date()) {
+  const pad = number => String(number).padStart(2, '0');
+  return [
+    date.getFullYear(),
+    pad(date.getMonth() + 1),
+    pad(date.getDate()),
+    '-',
+    pad(date.getHours()),
+    pad(date.getMinutes()),
+    pad(date.getSeconds()),
+  ].join('');
+}
+
+function sanitizeKeychainSessionSegment(sessionId = '') {
+  return String(sessionId || 'session')
+    .replace(/[^A-Za-z0-9_-]+/g, '')
+    .slice(0, 48) || 'session';
+}
+
+function formatAutoKeychainSessionSegment(sessionId = '') {
+  const cleanSessionId = sanitizeKeychainSessionSegment(sessionId || 'unknown');
+  return cleanSessionId.startsWith('session-')
+    ? cleanSessionId
+    : `session-${cleanSessionId}`;
+}
+
+function makeStep4KeychainFilename(sessionId = '') {
+  const stamp = makeKeychainTimestamp();
+  const cleanSessionId = sanitizeKeychainSessionSegment(sessionId);
+
+  return `Afterimage-TEST-keychain-4x6-${stamp}-${cleanSessionId}.png`;
+}
+
+function makeAutoKeychainFilename(sessionId = '', localFilePrefix = '') {
+  const localPrefixMatch = String(localFilePrefix || '').match(/^Afterimage-(\d{8}-\d{6}-[A-Za-z0-9_-]{1,16}(?:-\d+)?)$/);
+  if (localPrefixMatch) {
+    return `Afterimage-keychain-4x6-${localPrefixMatch[1]}.png`;
+  }
+
+  const stamp = makeKeychainTimestamp();
+  const sessionSegment = formatAutoKeychainSessionSegment(sessionId);
+
+  return `Afterimage-keychain-4x6-${stamp}-${sessionSegment}.png`;
+}
+
+function normalizeDownloadsPngSaveResult(result, filename) {
+  const targetPath = result?.targetPath || result?.path || null;
+  return {
+    ...result,
+    filename: result?.filename || filename,
+    targetPath,
+    path: targetPath,
+  };
+}
+
+function createAutoKeychainSessionId(sessionStartValue, fallbackSessionId = '') {
+  if (sessionStartValue) {
+    return formatAutoKeychainSessionSegment(`session-${sessionStartValue}`);
+  }
+  return formatAutoKeychainSessionSegment(fallbackSessionId);
+}
+
+function hashKeychainSessionInput(value = '') {
+  const input = String(value || '');
+  let hash = 2166136261;
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function createKeychainSaveKey({ sessionStartValue = null, sessionToken = '', cacheKey = '' } = {}) {
+  if (sessionStartValue) {
+    return createAutoKeychainSessionId(sessionStartValue);
+  }
+  if (cacheKey) {
+    return `keychain-cache-${hashKeychainSessionInput(cacheKey)}`;
+  }
+  return createAutoKeychainSessionId(null, sessionToken);
+}
+
+function createLocalSoftcopySaveKey({ sessionStartValue = null, sessionToken = '', cacheKey = '' } = {}) {
+  if (sessionStartValue) {
+    return `local-softcopy-${sessionStartValue}`;
+  }
+  if (sessionToken) {
+    return `local-softcopy-${sessionToken}`;
+  }
+  if (cacheKey) {
+    return `local-softcopy-cache-${hashKeychainSessionInput(cacheKey)}`;
+  }
+  return `local-softcopy-${Date.now()}`;
+}
+
+function isKeychainSaveSuccessful(result) {
+  return result?.ok === true
+    && result?.exists === true
+    && Number(result?.sizeBytes || 0) > 0;
+}
+
+function testImageDecode(src, label) {
+  return new Promise((resolve) => {
+    if (!src || typeof src !== 'string') {
+      console.error(`[${label}] missing src`);
+      resolve(false);
+      return;
+    }
+
+    const img = new Image();
+
+    img.onload = () => {
+      console.log(`[${label}] decode OK`, {
+        width: img.naturalWidth || img.width,
+        height: img.naturalHeight || img.height,
+        length: src.length,
+        prefix: src.slice(0, 80),
+      });
+      resolve(true);
+    };
+
+    img.onerror = () => {
+      console.error(`[${label}] decode FAILED`, {
+        length: src.length,
+        prefix: src.slice(0, 120),
+        end: src.slice(-120),
+      });
+      resolve(false);
+    };
+
+    img.src = src;
+  });
+}
+
 export default function PrintScreen({
   active,
   layout,
@@ -119,6 +276,7 @@ export default function PrintScreen({
     mode: 'daily',
     activeEventId: null,
     printEnabled: true,
+    printCopiesEnabled: false,
     testModeEnabled: false,
     printerProfileId: DEFAULT_PRINTER_PROFILE_ID,
     safeMarginOverride: DEFAULT_SAFE_MARGIN_OVERRIDE,
@@ -126,8 +284,10 @@ export default function PrintScreen({
   },
   events = [],
   selectedTmpl,
+  selectedFilter = 'none',
   selectedFilterCss = '',
   shots,
+  arrangedShotIndexes = [],
   sessionVideo = null,
   copies = DEFAULT_PRINT_COPIES,
   retries,
@@ -143,17 +303,49 @@ export default function PrintScreen({
       ? templates.find(t => t.id === selectedTmpl) || null
       : null
   ), [selectedTmpl, templates]);
+  const templateAssets = useMemo(
+    () => resolveTemplateRenderAssets(template),
+    [template],
+  );
+  const templatePreviewBackgroundSrc = templateAssets.backgroundSrc
+    ? versionTemplateAssetSrc(templateAssets.backgroundSrc, template)
+    : null;
+  const templateOverlaySrc = templateAssets.overlaySrc
+    ? versionTemplateAssetSrc(templateAssets.overlaySrc, template)
+    : null;
   const activeEvent = useMemo(
     () => events.find((event) => event.id === settings.activeEventId) || null,
     [events, settings.activeEventId],
   );
   const printEnabled = settings.printEnabled !== false;
+  const printCopiesEnabled = settings.printCopiesEnabled === true;
   const testModeEnabled = settings.testModeEnabled === true;
   const softcopySettings = useMemo(
     () => resolveSoftcopySettings(settings.softcopySettings),
     [settings.softcopySettings],
   );
-  const selectedCopies = clampPrintCopies(copies);
+  const requestedCopies = clampPrintCopies(copies);
+  const selectedCopies = printCopiesEnabled ? requestedCopies : DEFAULT_PRINT_COPIES;
+  const normalizedShotSources = useMemo(
+    () => (shots || []).map(getShotImageSource),
+    [shots],
+  );
+  const photoDebug = useMemo(() => {
+    const normalizedSources = normalizedShotSources.filter(Boolean);
+    const firstSource = normalizedSources[0] || null;
+    const firstSourceAudit = inspectDataUrl(firstSource);
+    return {
+      shotsLength: shots?.length || 0,
+      normalizedSourceCount: normalizedSources.length,
+      firstSourcePrefix: firstSource ? firstSource.slice(0, 100) : null,
+      firstSourceIsDataUrl: Boolean(firstSource?.startsWith('data:image/')),
+      firstSourceAudit,
+      firstSource,
+      layoutId: layout?.id || null,
+      arrangedShotIndexes,
+      missingSourceCount: (shots || []).length - normalizedSources.length,
+    };
+  }, [arrangedShotIndexes, layout?.id, normalizedShotSources, shots]);
   const [printing, setPrinting] = useState(false);
   const [sessionLocked, setSessionLocked] = useState(false);
   const [printCompleted, setPrintCompleted] = useState(false);
@@ -163,6 +355,23 @@ export default function PrintScreen({
   const [printTerminalStatus, setPrintTerminalStatus] = useState(null);
   const [softcopyWarnings, setSoftcopyWarnings] = useState([]);
   const [uploadRetrying, setUploadRetrying] = useState(false);
+  const [softcopyPreviewAssets, setSoftcopyPreviewAssets] = useState({
+    cacheKey: null,
+    status: 'idle',
+    gifBlob: null,
+    videoBlob: null,
+    gifError: null,
+    videoError: null,
+    warnings: [],
+  });
+  const [gifPreviewUrl, setGifPreviewUrl] = useState(null);
+  const [videoPreviewUrl, setVideoPreviewUrl] = useState(null);
+  const [gifPreviewSourceType, setGifPreviewSourceType] = useState('none');
+  const [videoPreviewSourceType, setVideoPreviewSourceType] = useState('none');
+  const [finalPreviewPngUrl, setFinalPreviewPngUrl] = useState(null);
+  const [finalPreviewPngStatus, setFinalPreviewPngStatus] = useState('idle');
+  const [step4KeychainSaving, setStep4KeychainSaving] = useState(false);
+  const [step4KeychainResult, setStep4KeychainResult] = useState(null);
   const finishReadyTimerRef = useRef(null);
   const sessionLockedRef = useRef(false);
   const printInFlightRef = useRef(false);
@@ -170,6 +379,13 @@ export default function PrintScreen({
   const printArtifactRef = useRef(null);
   const softcopyArtifactRef = useRef(null);
   const softcopyLogRef = useRef(null);
+  const softcopyMotionCacheRef = useRef(null);
+  const softcopyMotionPromiseRef = useRef(null);
+  const keychainSaveInFlightRef = useRef(KEYCHAIN_AUTO_SAVE_IN_FLIGHT_KEYS);
+  const keychainSavedRef = useRef(KEYCHAIN_AUTO_SAVE_SAVED_KEYS);
+  const keychainAttemptedRef = useRef(KEYCHAIN_AUTO_SAVE_ATTEMPTED_KEYS);
+  const localSoftcopySaveInFlightRef = useRef(LOCAL_SOFTCOPY_SAVE_IN_FLIGHT_KEYS);
+  const localSoftcopySavedRef = useRef(LOCAL_SOFTCOPY_SAVE_SAVED_KEYS);
 
   useEffect(() => {
     sessionLockedRef.current = sessionLocked;
@@ -197,6 +413,8 @@ export default function PrintScreen({
       softcopyLogRef.current = null;
       setSoftcopyWarnings([]);
       setUploadRetrying(false);
+      setStep4KeychainSaving(false);
+      setStep4KeychainResult(null);
       if (finishReadyTimerRef.current) {
         clearTimeout(finishReadyTimerRef.current);
         finishReadyTimerRef.current = null;
@@ -235,6 +453,109 @@ export default function PrintScreen({
     };
   }, [active, layout, template, shots, selectedFilterCss]);
 
+  useEffect(() => {
+    if (!active || !IS_DEV) return;
+    console.log('[PHOTO AUDIT PrintScreen] received shots', {
+      shotsLength: shots?.length,
+      shots: shots?.map((shot, index) => describeShotForAudit(shot, index)),
+    });
+    console.log('[DATA URL AUDIT PrintScreen first]', inspectDataUrl(getShotImageSource(shots?.[0])));
+  }, [active, shots]);
+
+  useEffect(() => {
+    if (!active || !photoDebug.firstSource) return;
+    console.log('[DATA URL AUDIT PrintScreen first normalized]', inspectDataUrl(photoDebug.firstSource));
+    testImageLoad(photoDebug.firstSource, 'FINAL PREVIEW FIRST SOURCE');
+  }, [active, photoDebug.firstSource]);
+
+  useEffect(() => {
+    if (!active) {
+      const timer = window.setTimeout(() => {
+        setFinalPreviewPngUrl(null);
+        setFinalPreviewPngStatus('idle');
+      }, 0);
+      return () => window.clearTimeout(timer);
+    }
+
+    let cancelled = false;
+    let objectUrl = null;
+    const run = async () => {
+      if (!layout || !template || !shots?.length) {
+        setFinalPreviewPngUrl(null);
+        setFinalPreviewPngStatus('idle');
+        return;
+      }
+
+      setFinalPreviewPngStatus('generating');
+      try {
+        const canvas = await buildFinalPrintCanvas(
+          layout,
+          template,
+          shots,
+          selectedFilterCss,
+          settings,
+        );
+        const blob = await new Promise((resolve) => {
+          canvas.toBlob((result) => resolve(result), 'image/png', 1);
+        });
+        if (cancelled) return;
+        if (!blob) {
+          throw new Error('Final preview PNG blob could not be created.');
+        }
+        objectUrl = URL.createObjectURL(blob);
+        setFinalPreviewPngUrl(objectUrl);
+        setFinalPreviewPngStatus('ready');
+        console.log('[FINAL PNG PREVIEW GENERATED]', {
+          layoutId: layout?.id || null,
+          templateId: template?.id || null,
+          shotCount: shots?.length || 0,
+          blobSize: blob.size,
+          objectUrlLength: objectUrl.length,
+        });
+      } catch (error) {
+        if (cancelled) return;
+        console.error('[FINAL PNG PREVIEW FAILED]', {
+          layoutId: layout?.id || null,
+          templateId: template?.id || null,
+          error: error?.message || String(error),
+        });
+        setFinalPreviewPngUrl(null);
+        setFinalPreviewPngStatus('error');
+      }
+    };
+
+    run();
+
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [
+    active,
+    layout,
+    selectedFilterCss,
+    settings,
+    shots,
+    template,
+  ]);
+
+  useEffect(() => {
+    if (!active || !IS_DEV) return undefined;
+    const timer = window.setTimeout(() => {
+      const frame = document.querySelector('#print-frame-box .final-media-content--photo .layout-preview-frame');
+      const content = document.querySelector('#print-frame-box .final-media-content--photo');
+      if (!frame || !content) return;
+      console.log('[PNG PREVIEW DIMENSIONS]', {
+        wrapperWidth: content.clientWidth,
+        wrapperHeight: content.clientHeight,
+        frameWidth: frame.clientWidth,
+        frameHeight: frame.clientHeight,
+        frameAspect: frame.clientWidth && frame.clientHeight ? frame.clientWidth / frame.clientHeight : null,
+      });
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [active, photoDebug.firstSource, layout?.id]);
+
   const handleChangeBackground = () => {
     if (sessionLocked || printing || printCompleted) {
       console.warn('[print] blocked background change after print started');
@@ -252,54 +573,47 @@ export default function PrintScreen({
     sessionVideo,
   }), [layout, template, shots, selectedFilterCss, softcopySettings, sessionVideo]);
 
-  const buildSoftcopyPayload = async (jpegUrl, cacheKey = softcopyCacheKey) => {
-    const cachedPayload = softcopyArtifactRef.current;
-    if (cachedPayload?.cacheKey === cacheKey && cachedPayload.canUpload) {
-      if (IS_DEV) console.log('[softcopy] generated media cache reused', { sessionToken: cachedPayload.sessionToken });
-      return cachedPayload;
+  const generateSoftcopyMotionMedia = useCallback(async ({ cacheKey = softcopyCacheKey } = {}) => {
+    const cached = softcopyMotionCacheRef.current;
+    if (cached?.cacheKey === cacheKey) {
+      return cached;
+    }
+    if (softcopyMotionPromiseRef.current?.cacheKey === cacheKey) {
+      return softcopyMotionPromiseRef.current.promise;
     }
 
-    const enabled = {
-      photo: softcopySettings.photoEnabled !== false,
-      gif: softcopySettings.gifEnabled !== false,
-      video: softcopySettings.videoEnabled !== false,
-    };
-    const warnings = [];
-    const sessionToken = cachedPayload?.cacheKey === cacheKey && cachedPayload.sessionToken
-      ? cachedPayload.sessionToken
-      : createSoftcopySessionToken();
-    const photoDataUrl = enabled.photo ? jpegUrl : null;
-    const uploadedPaths = cachedPayload?.cacheKey === cacheKey
-      ? {
-          photoPath: cachedPayload.photoPath || cachedPayload.uploadedPaths?.photoPath || null,
-          gifPath: cachedPayload.gifPath || cachedPayload.uploadedPaths?.gifPath || null,
-          videoPath: cachedPayload.videoPath || cachedPayload.uploadedPaths?.videoPath || null,
-        }
-      : {};
-
-    if (!softcopySettings.qrEnabled || !Object.values(enabled).some(Boolean)) {
-      return {
-        sessionToken,
-        photoDataUrl,
-        gifBlob: null,
-        videoBlob: null,
-        videoMimeType: '',
-        videoExtension: '',
-        enabled,
-        warnings,
-        canUpload: false,
-        cacheKey,
-        uploadedPaths,
+    const promise = (async () => {
+      const enabled = {
+        gif: softcopySettings.gifEnabled !== false,
+        video: softcopySettings.videoEnabled !== false,
       };
-    }
+      const warnings = [];
+      let gifBlob = null;
+      let videoBlob = null;
+      let videoMimeType = '';
+      let videoExtension = '';
 
-    let gifBlob = null;
-    let videoBlob = null;
-    let videoMimeType = '';
-    let videoExtension = '';
+      if (!enabled.gif && !enabled.video) {
+        return {
+          cacheKey,
+          status: 'disabled',
+          gifBlob,
+          videoBlob,
+          videoMimeType,
+          videoExtension,
+          enabled,
+          warnings,
+        };
+      }
 
-    timeStart('[softcopy] generate media');
-    try {
+      if (IS_DEV) {
+        console.log('[softcopy preview] settings', {
+          qrEnabled: softcopySettings.qrEnabled !== false,
+          gifEnabled: enabled.gif,
+          videoEnabled: enabled.video,
+        });
+      }
+
       const mediaTasks = [];
       if (enabled.gif) {
         mediaTasks.push((async () => {
@@ -309,6 +623,8 @@ export default function PrintScreen({
               layoutId: layout?.id,
               width: layout?.camera?.width,
               height: layout?.camera?.height,
+              photoFilter: selectedFilterCss,
+              selectedFilter,
             });
             gifBlob = gif?.blob || null;
           } catch (error) {
@@ -325,14 +641,16 @@ export default function PrintScreen({
             const finalVideo = await composeSimultaneousSlotVideo({
               layout,
               shotVideoClips: sessionVideo?.shotVideoClips || [],
-              backgroundSrc: versionTemplateAssetSrc(template.backgroundSrc || template.overlaySrc || template.src, template),
-              templateSrc: versionTemplateAssetSrc(template.overlaySrc || template.src, template),
+              backgroundSrc: templatePreviewBackgroundSrc,
+              templateSrc: templateOverlaySrc,
+              photoFilter: selectedFilterCss,
+              selectedFilter,
             });
             if (finalVideo?.blob) {
               videoBlob = finalVideo.blob;
               videoMimeType = finalVideo.mimeType || '';
               videoExtension = finalVideo.extension || '';
-            } else if (enabled.video) {
+            } else {
               warnings.push('Video could not be generated.');
             }
           } catch (error) {
@@ -343,6 +661,220 @@ export default function PrintScreen({
       }
 
       await Promise.all(mediaTasks);
+
+      if (IS_DEV) {
+        console.log('[softcopy preview] media ready', {
+          hasGifPreviewUrl: Boolean(gifBlob),
+          hasVideoPreviewUrl: Boolean(videoBlob),
+          gifSourceType: gifBlob ? 'blob' : 'none',
+          videoSourceType: videoBlob ? 'blob' : 'none',
+        });
+        console.log('[mirror] gif/video/keychain', {
+          gifMirrorApplied: false,
+          videoMirrorApplied: false,
+          keychainMirrorApplied: false,
+        });
+      }
+
+      const result = {
+        cacheKey,
+        status: 'ready',
+        gifBlob,
+        videoBlob,
+        videoMimeType,
+        videoExtension,
+        enabled,
+        warnings,
+      };
+      softcopyMotionCacheRef.current = result;
+      return result;
+    })();
+
+    softcopyMotionPromiseRef.current = { cacheKey, promise };
+    try {
+      return await promise;
+    } finally {
+      if (softcopyMotionPromiseRef.current?.promise === promise) {
+        softcopyMotionPromiseRef.current = null;
+      }
+    }
+  }, [
+    layout,
+    selectedFilter,
+    selectedFilterCss,
+    sessionVideo,
+    shots,
+    softcopyCacheKey,
+    softcopySettings.gifEnabled,
+    softcopySettings.qrEnabled,
+    softcopySettings.videoEnabled,
+    templateOverlaySrc,
+    templatePreviewBackgroundSrc,
+  ]);
+
+  useEffect(() => {
+    if (!active || (softcopySettings.gifEnabled === false && softcopySettings.videoEnabled === false)) {
+      const timer = window.setTimeout(() => {
+        setSoftcopyPreviewAssets({
+          cacheKey: null,
+          status: 'idle',
+          gifBlob: null,
+          videoBlob: null,
+          gifError: null,
+          videoError: null,
+          warnings: [],
+        });
+      }, 0);
+      return () => window.clearTimeout(timer);
+    }
+
+    let cancelled = false;
+    const primeTimer = window.setTimeout(() => {
+      setSoftcopyPreviewAssets((current) => (
+        current.cacheKey === softcopyCacheKey && current.status === 'ready'
+          ? current
+          : {
+              cacheKey: softcopyCacheKey,
+              status: 'generating',
+              gifBlob: null,
+              videoBlob: null,
+              gifError: null,
+              videoError: null,
+              warnings: [],
+            }
+      ));
+    }, 0);
+
+    generateSoftcopyMotionMedia({ cacheKey: softcopyCacheKey })
+      .then((motionMedia) => {
+        if (cancelled) return;
+        setSoftcopyPreviewAssets({
+          cacheKey: motionMedia.cacheKey || softcopyCacheKey,
+          status: motionMedia.status || 'ready',
+          gifBlob: motionMedia.gifBlob || null,
+          videoBlob: motionMedia.videoBlob || null,
+          gifError: motionMedia.gifBlob ? null : (softcopySettings.gifEnabled !== false ? 'GIF preview unavailable' : null),
+          videoError: motionMedia.videoBlob ? null : (softcopySettings.videoEnabled !== false ? 'Video preview unavailable' : null),
+          warnings: motionMedia.warnings || [],
+        });
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        console.error('[softcopy preview] failed', {
+          type: 'media',
+          error: error?.message || String(error),
+        });
+        setSoftcopyPreviewAssets({
+          cacheKey: softcopyCacheKey,
+          status: 'error',
+          gifBlob: null,
+          videoBlob: null,
+          gifError: softcopySettings.gifEnabled !== false ? 'GIF preview unavailable' : null,
+          videoError: softcopySettings.videoEnabled !== false ? 'Video preview unavailable' : null,
+          warnings: [],
+        });
+      });
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(primeTimer);
+    };
+  }, [active, generateSoftcopyMotionMedia, softcopyCacheKey, softcopySettings.gifEnabled, softcopySettings.videoEnabled]);
+
+  useEffect(() => {
+    let gifUrl = null;
+    let videoUrl = null;
+    const gifBlob = softcopyPreviewAssets.gifBlob;
+    const videoBlob = softcopyPreviewAssets.videoBlob;
+
+    if (gifBlob) {
+      gifUrl = URL.createObjectURL(gifBlob);
+    }
+    if (videoBlob) {
+      videoUrl = URL.createObjectURL(videoBlob);
+    }
+
+    const timer = window.setTimeout(() => {
+      setGifPreviewUrl(gifUrl);
+      setVideoPreviewUrl(videoUrl);
+      setGifPreviewSourceType(gifBlob ? 'object-url' : 'none');
+      setVideoPreviewSourceType(videoBlob ? 'object-url' : 'none');
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timer);
+      if (gifUrl) URL.revokeObjectURL(gifUrl);
+      if (videoUrl) URL.revokeObjectURL(videoUrl);
+    };
+  }, [softcopyPreviewAssets]);
+
+  const buildSoftcopyPayload = async (pngUrl, jpegUrl, cacheKey = softcopyCacheKey) => {
+    const cachedPayload = softcopyArtifactRef.current;
+    if (
+      cachedPayload?.cacheKey === cacheKey
+      && (cachedPayload.canUpload || cachedPayload.localSave?.ok || cachedPayload.keychain4x6Generated || cachedPayload.keychain4x6Error)
+    ) {
+      if (IS_DEV) console.log('[softcopy] generated media cache reused', { sessionToken: cachedPayload.sessionToken });
+      return cachedPayload;
+    }
+
+    const enabled = {
+      photo: softcopySettings.photoEnabled !== false,
+      gif: softcopySettings.gifEnabled !== false,
+      video: softcopySettings.videoEnabled !== false,
+    };
+    const warnings = [];
+    const sessionToken = cachedPayload?.cacheKey === cacheKey && cachedPayload.sessionToken
+      ? cachedPayload.sessionToken
+      : createSoftcopySessionToken();
+    if (IS_DEV) {
+      console.log('[softcopy] media generation plan', {
+        sessionId: sessionToken,
+        qrEnabled: softcopySettings.qrEnabled !== false,
+        photoEnabled: enabled.photo,
+        gifEnabled: enabled.gif,
+        videoEnabled: enabled.video,
+      });
+    }
+    const photoDataUrl = enabled.photo ? jpegUrl : null;
+    const localPhotoDataUrl = enabled.photo ? pngUrl : null;
+    let gifBlob = null;
+    let videoBlob = null;
+    let videoMimeType = '';
+    let videoExtension = '';
+    const uploadedPaths = cachedPayload?.cacheKey === cacheKey
+      ? {
+          photoPath: cachedPayload.photoPath || cachedPayload.uploadedPaths?.photoPath || null,
+          gifPath: cachedPayload.gifPath || cachedPayload.uploadedPaths?.gifPath || null,
+          videoPath: cachedPayload.videoPath || cachedPayload.uploadedPaths?.videoPath || null,
+        }
+      : {};
+
+    if (!Object.values(enabled).some(Boolean)) {
+      return {
+        sessionToken,
+        photoDataUrl,
+        localPhotoDataUrl,
+        gifBlob: null,
+        videoBlob: null,
+        videoMimeType: '',
+        videoExtension: '',
+        enabled,
+        warnings,
+        canUpload: false,
+        cacheKey,
+        uploadedPaths,
+      };
+    }
+
+    timeStart('[softcopy] generate media');
+    try {
+      const motionMedia = await generateSoftcopyMotionMedia({ cacheKey });
+      gifBlob = motionMedia.gifBlob || null;
+      videoBlob = motionMedia.videoBlob || null;
+      videoMimeType = motionMedia.videoMimeType || '';
+      videoExtension = motionMedia.videoExtension || '';
+      warnings.push(...(motionMedia.warnings || []));
     } finally {
       timeEnd('[softcopy] generate media');
     }
@@ -350,6 +882,7 @@ export default function PrintScreen({
     return {
       sessionToken,
       photoDataUrl,
+      localPhotoDataUrl,
       gifBlob,
       videoBlob,
       videoMimeType,
@@ -360,6 +893,426 @@ export default function PrintScreen({
       cacheKey,
       uploadedPaths,
     };
+  };
+
+  const getSavedFileNames = (savedFiles = []) => savedFiles
+    .map(file => typeof file === 'string' ? file : file?.name)
+    .filter(Boolean);
+
+  const getSavedPhotoFile = (savedFiles = []) => savedFiles
+    .find(file => {
+      const name = typeof file === 'string' ? file : file?.name;
+      const kind = typeof file === 'string' ? '' : file?.kind;
+      return kind === 'photo' || String(name || '').endsWith('-photo.png');
+    });
+
+  const getSavedKeychainFile = (savedFiles = []) => savedFiles
+    .find(file => {
+      const name = typeof file === 'string' ? file : file?.name;
+      const kind = typeof file === 'string' ? '' : file?.kind;
+      return kind === 'keychain4x6' || String(name || '').includes('keychain-4x6');
+    });
+
+  const buildLocalMetadata = (payload, upload = {}) => {
+    const savedPhotoFile = getSavedPhotoFile(payload.localSave?.savedFiles);
+    const savedKeychainFile = getSavedKeychainFile(payload.localSave?.savedFiles);
+    const photoFilename = savedPhotoFile?.name
+      || payload.localSave?.savedFiles?.find?.((file) => String(file?.name || '').endsWith('-photo.png'))?.name
+      || null;
+    const finalPrintPath = savedPhotoFile?.path || null;
+    const keychain4x6Filename = savedKeychainFile?.name
+      || payload.keychain4x6Save?.filename
+      || payload.keychain4x6?.filename
+      || null;
+    const keychain4x6SavedPath = savedKeychainFile?.path || payload.keychain4x6Save?.path || null;
+    const localFiles = Array.from(new Set([
+      ...getSavedFileNames(payload.localSave?.savedFiles),
+      ...(keychain4x6Filename ? [keychain4x6Filename] : []),
+    ]));
+    const qrEnabled = softcopySettings.qrEnabled !== false;
+    const qrUploadAttempted = qrEnabled && ['ready', 'error'].includes(upload.status);
+    return {
+      sessionId: payload.sessionToken,
+      token: payload.sessionToken,
+      createdAt: payload.createdAt,
+      layoutId: layout?.id || null,
+      templateId: template?.id || null,
+      backgroundId: template?.id || null,
+      selectedFilter: selectedFilter || 'none',
+      qrEnabled,
+      qrUploadAttempted,
+      qrUploadSucceeded: qrUploadAttempted ? upload.status === 'ready' : null,
+      photoEnabled: payload.enabled?.photo === true,
+      gifEnabled: payload.enabled?.gif === true,
+      videoEnabled: payload.enabled?.video === true,
+      finalPrintPath,
+      finalPrintFilename: photoFilename,
+      photoSaved: localFiles.some(name => name.endsWith('-photo.png')),
+      gifSaved: localFiles.some(name => name.endsWith('-animation.gif')),
+      videoSaved: localFiles.some(name => /-video\.(mp4|webm|mov)$/.test(name)),
+      keychain4x6Generated: payload.keychain4x6Generated === true,
+      keychain4x6Saved: payload.keychain4x6Save?.ok === true,
+      keychain4x6Filename,
+      keychain4x6SavedPath,
+      keychain4x6Exists: payload.keychain4x6Save?.exists === true,
+      keychain4x6SizeBytes: Number.isFinite(Number(payload.keychain4x6Save?.sizeBytes))
+        ? Number(payload.keychain4x6Save.sizeBytes)
+        : null,
+      keychain4x6CanvasWidth: payload.keychain4x6?.width || null,
+      keychain4x6CanvasHeight: payload.keychain4x6?.height || null,
+      keychain4x6PlacementCount: payload.keychain4x6?.placements?.length || 0,
+      keychain4x6LocalOnly: true,
+      keychain4x6Uploaded: false,
+      keychain4x6Error: payload.keychain4x6Error || null,
+      localFiles,
+      localFileErrors: payload.localSave?.fileErrors || [],
+      qrUrl: upload.qrUrl || null,
+      uploadError: upload.status === 'error' ? (upload.error || 'Softcopy upload failed.') : null,
+    };
+  };
+
+  const saveLocalSoftcopy = async (payload) => {
+    if (payload.localSave?.ok) return payload.localSave;
+    if (!window.softcopyApi?.saveSessionMedia) {
+      return {
+        ok: false,
+        unavailable: true,
+        error: 'Local softcopy saving is unavailable.',
+      };
+    }
+
+    const sessionKey = createLocalSoftcopySaveKey({
+      sessionStartValue: sessionStartRef?.current,
+      sessionToken: payload.sessionToken,
+      cacheKey: payload.cacheKey || softcopyCacheKey,
+    });
+    if (localSoftcopySavedRef.current.has(sessionKey)) {
+      const savedResult = localSoftcopySavedRef.current.get(sessionKey);
+      console.log('[LOCAL SAVE AUDIT] skipped duplicate local softcopy save', {
+        sessionKey,
+        reason: 'already-saved',
+        savedFiles: savedResult?.savedFiles?.map(file => file.name) || [],
+      });
+      return savedResult;
+    }
+    if (localSoftcopySaveInFlightRef.current.has(sessionKey)) {
+      console.log('[LOCAL SAVE AUDIT] skipped duplicate local softcopy save', {
+        sessionKey,
+        reason: 'already-in-flight',
+      });
+      return localSoftcopySaveInFlightRef.current.get(sessionKey);
+    }
+
+    const savePromise = (async () => {
+      let result;
+      try {
+        const localMediaFiles = [];
+        if (payload.localPhotoDataUrl) {
+          const response = await fetch(payload.localPhotoDataUrl);
+          localMediaFiles.push({
+            kind: 'photo',
+            name: 'photo.png',
+            mimeType: 'image/png',
+            data: await response.arrayBuffer(),
+          });
+        }
+        if (payload.gifBlob) {
+          localMediaFiles.push({
+            kind: 'gif',
+            name: 'animation.gif',
+            mimeType: 'image/gif',
+            data: await payload.gifBlob.arrayBuffer(),
+          });
+        }
+        if (payload.videoBlob) {
+          const extension = ['mp4', 'webm', 'mov'].includes(payload.videoExtension)
+            ? payload.videoExtension
+            : (payload.videoMimeType?.includes('mp4') ? 'mp4' : 'webm');
+          localMediaFiles.push({
+            kind: 'video',
+            name: `video.${extension}`,
+            mimeType: payload.videoMimeType || payload.videoBlob.type || 'video/webm',
+            data: await payload.videoBlob.arrayBuffer(),
+          });
+        }
+        const uploadMediaFiles = [
+          payload.photoDataUrl ? { kind: 'photo', name: 'photo.jpg' } : null,
+          payload.gifBlob ? { kind: 'gif', name: 'animation.gif' } : null,
+          payload.videoBlob ? { kind: 'video', name: `video.${payload.videoExtension || 'webm'}` } : null,
+        ].filter(Boolean);
+
+        console.log('[keychain-save] upload exclusion check', {
+          keychainInUpload: uploadMediaFiles.some(f => f.kind === 'keychain4x6'),
+          uploadFileNames: uploadMediaFiles.map(f => f.name),
+        });
+
+        console.log('[DIAG local-save 3] localMediaFiles before invoke', {
+          count: localMediaFiles.length,
+          files: localMediaFiles.map(f => ({
+            kind: f.kind,
+            name: f.name,
+            mimeType: f.mimeType,
+            sizeBytes: f.sizeBytes || f.data?.byteLength || f.arrayBuffer?.byteLength || null,
+            hasData: Boolean(f.data || f.arrayBuffer || f.dataUrl),
+          })),
+        });
+
+        console.log('[DIAG local-save 4] uploadMediaFiles before upload', {
+          count: uploadMediaFiles.length,
+          files: uploadMediaFiles.map(f => ({
+            kind: f.kind,
+            name: f.name,
+          })),
+          keychainInUpload: uploadMediaFiles.some(f => f.kind === 'keychain4x6'),
+        });
+
+        console.log('[keychain] FINAL LOCAL/UPLOAD CHECK', {
+          generated: Boolean(payload.keychain4x6?.blob),
+          filename: payload.keychain4x6?.filename,
+          dedicatedSaveOk: payload.keychain4x6Save?.ok === true,
+          dedicatedSavePath: payload.keychain4x6Save?.path || null,
+          includedInLocalSave: localMediaFiles.some(file => file.kind === 'keychain4x6'),
+          includedInUpload: uploadMediaFiles.some(file => file.kind === 'keychain4x6'),
+          keychainInLocal: localMediaFiles.some(file => file.kind === 'keychain4x6'),
+          keychainInUpload: uploadMediaFiles.some(file => file.kind === 'keychain4x6'),
+          localFileNames: localMediaFiles.map(file => ({ kind: file.kind, name: file.name })),
+          uploadFileNames: uploadMediaFiles.map(file => ({ kind: file.kind, name: file.name })),
+        });
+
+        if (IS_DEV) {
+          console.log('[softcopy-local] saving enabled media regardless of QR', {
+            sessionId: payload.sessionToken,
+            qrEnabled: softcopySettings.qrEnabled !== false,
+            files: localMediaFiles.map(file => ({ kind: file.kind, name: file.name })),
+          });
+        }
+
+        result = await window.softcopyApi.saveSessionMedia({
+          sessionId: payload.sessionToken,
+          date: payload.createdAt.slice(0, 10),
+          files: localMediaFiles,
+          metadata: buildLocalMetadata(payload),
+        });
+      } catch (error) {
+        console.error('[DIAG local-save ERROR]', error);
+        result = { ok: false, error: error?.message || String(error) };
+      }
+      if (IS_DEV) {
+        if (result?.ok) {
+          console.log('[softcopy-local] saved', {
+            sessionId: payload.sessionToken,
+            folderPath: result.folderPath,
+            savedFiles: result.savedFiles,
+          });
+        } else {
+          console.log('[softcopy-local] save failed', {
+            sessionId: payload.sessionToken,
+            error: result?.error || 'unknown',
+          });
+        }
+      }
+      if (result?.ok) {
+        localSoftcopySavedRef.current.set(sessionKey, result);
+      }
+      return result;
+    })();
+
+    localSoftcopySaveInFlightRef.current.set(sessionKey, savePromise);
+    try {
+      return await savePromise;
+    } finally {
+      localSoftcopySaveInFlightRef.current.delete(sessionKey);
+    }
+  };
+
+  const attachKeychain4x6 = async (payload, finalArtworkDataUrl) => {
+    const sessionId = createAutoKeychainSessionId(sessionStartRef?.current, payload.sessionToken);
+    const sessionKey = createKeychainSaveKey({
+      sessionStartValue: sessionStartRef?.current,
+      sessionToken: payload.sessionToken,
+      cacheKey: payload.cacheKey || softcopyCacheKey,
+    });
+    const alreadySaved = keychainSavedRef.current.has(sessionKey);
+    const alreadyInFlight = keychainSaveInFlightRef.current.has(sessionKey);
+    const alreadyAttempted = keychainAttemptedRef.current.has(sessionKey);
+
+    console.log('[keychain auto-save] attempt', {
+      sessionKey,
+      alreadySaved,
+      alreadyInFlight,
+    });
+
+    if (alreadySaved) {
+      console.log('[keychain auto-save] skip duplicate', {
+        sessionKey,
+        reason: 'already-saved',
+      });
+      return payload;
+    }
+
+    if (alreadyInFlight) {
+      console.log('[keychain auto-save] skip duplicate', {
+        sessionKey,
+        reason: 'already-in-flight',
+      });
+      return payload;
+    }
+
+    if (alreadyAttempted) {
+      console.log('[keychain auto-save] skip duplicate', {
+        sessionKey,
+        reason: 'already-attempted',
+      });
+      return payload;
+    }
+
+    keychainAttemptedRef.current.add(sessionKey);
+    keychainSaveInFlightRef.current.add(sessionKey);
+    console.log('[keychain auto-save] start', {
+      sessionKey,
+    });
+    console.log('[keychain auto-save] starting', {
+      sessionId,
+      sessionKey,
+      layoutId: layout?.id,
+      selectedTmpl,
+      shotCount: shots?.length || 0,
+      hasFinalArtwork: Boolean(finalArtworkDataUrl),
+      finalArtworkLength: finalArtworkDataUrl?.length || 0,
+      finalArtworkPrefix: finalArtworkDataUrl ? finalArtworkDataUrl.slice(0, 80) : null,
+    });
+
+    try {
+      const keychain4x6 = await generateKeychain4x6Png({
+        layout,
+        layoutId: layout?.id,
+        shots,
+        sourceStripDataUrl: finalArtworkDataUrl,
+        finalArtworkDataUrl,
+        selectedTemplate: template,
+        selectedTmpl,
+        selectedFilterCss,
+        sessionId,
+        templateAssets,
+      });
+      if (!keychain4x6) {
+        payload.keychain4x6 = null;
+        payload.keychain4x6Generated = false;
+        payload.keychain4x6Error = null;
+        console.warn('[keychain] skipped unsupported layout', {
+          layoutId: layout?.id || '',
+        });
+        console.log('[DIAG local-save 2] keychain result', {
+          hasKeychain: false,
+          kind: null,
+          name: null,
+          mimeType: null,
+          sizeBytes: null,
+          hasData: false,
+        });
+        return payload;
+      }
+
+      const filename = makeAutoKeychainFilename(sessionId, payload.localSave?.filePrefix);
+      payload.keychain4x6 = {
+        ...keychain4x6,
+        filename,
+      };
+      payload.keychain4x6Generated = true;
+      payload.keychain4x6Save = null;
+      payload.keychain4x6Error = null;
+      console.log('[DIAG local-save 2] keychain result', {
+        hasKeychain: true,
+        kind: 'keychain4x6',
+        name: filename,
+        mimeType: keychain4x6.mimeType,
+        sizeBytes: keychain4x6.blob?.size || null,
+        hasData: Boolean(keychain4x6.blob || keychain4x6.data || keychain4x6.arrayBuffer || keychain4x6.dataUrl),
+      });
+      if (!window.diagApi?.writeDownloadsPngFile) {
+        throw new Error('Downloads PNG save API is unavailable.');
+      }
+      const keychainBuffer = await keychain4x6.blob.arrayBuffer();
+      const rawSaveResult = await window.diagApi.writeDownloadsPngFile({
+        filename,
+        arrayBuffer: keychainBuffer,
+      });
+      const saveResult = normalizeDownloadsPngSaveResult(rawSaveResult, filename);
+      payload.keychain4x6Save = saveResult;
+      if (!isKeychainSaveSuccessful(saveResult)) {
+        throw new Error(saveResult?.error || 'Keychain Downloads save failed.');
+      }
+      keychainSavedRef.current.add(sessionKey);
+      console.log('[keychain auto-save] success', {
+        sessionKey,
+        filename: saveResult.filename,
+        targetPath: saveResult.targetPath,
+      });
+      console.log('[keychain auto-save] saved', {
+        filename: saveResult.filename,
+        targetPath: saveResult.targetPath,
+        exists: saveResult.exists,
+        sizeBytes: saveResult.sizeBytes,
+      });
+      console.log('[LOCAL SAVE ORDER] 5 keychain saved', {
+        filename: saveResult.filename,
+        targetPath: saveResult.targetPath,
+      });
+      console.log('[keychain-save] result', {
+        filename: saveResult.filename,
+        targetPath: saveResult.targetPath,
+        exists: saveResult.exists,
+        sizeBytes: saveResult.sizeBytes,
+      });
+      console.log('[keychain] SAVE RESULT', {
+        filename: saveResult.filename,
+        savedPath: saveResult.targetPath,
+        exists: saveResult.exists,
+        sizeBytes: saveResult.sizeBytes,
+      });
+      payload.finalPrintPath = getSavedPhotoFile(payload.localSave?.savedFiles)?.path || null;
+    } catch (error) {
+      const message = error?.message || String(error);
+      if (!payload.keychain4x6) {
+        payload.keychain4x6Generated = false;
+      }
+      payload.keychain4x6Save = payload.keychain4x6Save || {
+        ok: false,
+        error: message,
+      };
+      payload.keychain4x6Error = message;
+      console.error('[DIAG local-save ERROR]', error);
+      console.error('[keychain-save ERROR]', error);
+      console.error('[keychain auto-save] failed', error);
+      console.log('[keychain auto-save] failed', {
+        sessionKey,
+        error: message,
+      });
+      console.error('[keychain] generation failed', {
+        sessionId,
+        sessionKey,
+        layoutId: layout?.id || '',
+        error: message,
+      });
+    } finally {
+      keychainSaveInFlightRef.current.delete(sessionKey);
+    }
+    return payload;
+  };
+
+  const updateLocalSoftcopyMetadata = async (payload, uploadResult) => {
+    if (!payload.localSave?.ok || !window.softcopyApi?.saveSessionMedia) return;
+    const result = await window.softcopyApi.saveSessionMedia({
+      sessionId: payload.sessionToken,
+      date: payload.createdAt.slice(0, 10),
+      filePrefix: payload.localSave.filePrefix,
+      files: [],
+      metadataOnly: true,
+      metadata: buildLocalMetadata(payload, uploadResult),
+    });
+    if (!result?.ok) {
+      console.warn('[softcopy-local] metadata update failed', result?.error || 'unknown');
+    }
   };
 
   const performSoftcopyUpload = async (payload, { isRetry = false } = {}) => {
@@ -395,6 +1348,16 @@ export default function PrintScreen({
         sessionToken: payload.sessionToken,
         existingPaths: payload.uploadedPaths || {},
       });
+      if (IS_DEV) {
+        console.log('[keychain] excluded from QR upload', {
+          sessionId: payload.sessionToken,
+          uploadFileNames: [
+            payload.photoDataUrl ? 'photo.jpg' : null,
+            payload.gifBlob ? 'animation.gif' : null,
+            payload.videoBlob ? `video.${payload.videoExtension || 'webm'}` : null,
+          ].filter(Boolean),
+        });
+      }
       const nextLog = { status: 'ready', ...uploaded };
       softcopyArtifactRef.current = {
         ...payload,
@@ -410,6 +1373,14 @@ export default function PrintScreen({
         status: 'ready',
         ...uploaded,
       });
+      await updateLocalSoftcopyMetadata(payload, nextLog);
+      if (IS_DEV) {
+        console.log('[softcopy-upload] upload result', {
+          sessionId: payload.sessionToken,
+          uploadSucceeded: true,
+          localSaveSucceeded: payload.localSave?.ok === true,
+        });
+      }
       return nextLog;
     } catch (softcopyErr) {
       const message = softcopyErr?.message || String(softcopyErr);
@@ -438,21 +1409,23 @@ export default function PrintScreen({
         qrUrl: null,
         error: message,
       });
-      return { status: 'error', error: message };
+      const failedResult = { status: 'error', error: message };
+      await updateLocalSoftcopyMetadata(payload, failedResult);
+      if (IS_DEV) {
+        console.log('[softcopy-upload] upload result', {
+          sessionId: payload.sessionToken,
+          uploadSucceeded: false,
+          localSaveSucceeded: payload.localSave?.ok === true,
+        });
+      }
+      return failedResult;
     } finally {
       uploadInFlightRef.current = false;
     }
   };
 
-  const prepareAndUploadSoftcopy = async (jpegUrl) => {
+  const prepareSoftcopyMedia = async (pngUrl, jpegUrl) => {
     if (IS_DEV) console.log('[softcopy] active settings before upload', softcopySettings);
-    const shouldPrepareSoftcopy = softcopySettings.qrEnabled;
-    if (!shouldPrepareSoftcopy) {
-      console.log('[softcopy] skipped because QR is disabled');
-      softcopyLogRef.current = { status: 'disabled' };
-      onSoftcopyChange?.({ status: 'idle', qrUrl: null });
-      return { status: 'disabled' };
-    }
     if (softcopyLogRef.current?.status === 'ready') {
       console.log('[softcopy] existing QR reused for print retry');
       return softcopyLogRef.current;
@@ -460,14 +1433,61 @@ export default function PrintScreen({
 
     timeStart('[softcopy] generate/upload');
     try {
-      const payload = await buildSoftcopyPayload(jpegUrl, softcopyCacheKey);
+      const payload = await buildSoftcopyPayload(pngUrl, jpegUrl, softcopyCacheKey);
+      payload.createdAt = payload.createdAt || new Date().toISOString();
+      setSoftcopyPreviewAssets({
+        cacheKey: payload.cacheKey || softcopyCacheKey,
+        status: payload.gifBlob || payload.videoBlob ? 'ready' : 'idle',
+        gifBlob: payload.gifBlob || null,
+        videoBlob: payload.videoBlob || null,
+        gifError: payload.enabled?.gif !== false && !payload.gifBlob ? 'GIF preview unavailable' : null,
+        videoError: payload.enabled?.video !== false && !payload.videoBlob ? 'Video preview unavailable' : null,
+        warnings: payload.warnings || [],
+      });
+      payload.localSave = await saveLocalSoftcopy(payload);
       softcopyArtifactRef.current = payload;
-      setSoftcopyWarnings(payload.warnings || []);
+      setSoftcopyWarnings(softcopySettings.qrEnabled ? (payload.warnings || []) : []);
+      const completeLocalSaveOrder = async (result) => {
+        if (ENABLE_KEYCHAIN_AUTO_SAVE) {
+          await attachKeychain4x6(payload, pngUrl);
+          const currentPayload = softcopyArtifactRef.current || {};
+          softcopyArtifactRef.current = {
+            ...currentPayload,
+            keychain4x6: payload.keychain4x6 || currentPayload.keychain4x6 || null,
+            keychain4x6Generated: payload.keychain4x6Generated === true,
+            keychain4x6Save: payload.keychain4x6Save || currentPayload.keychain4x6Save || null,
+            keychain4x6Error: payload.keychain4x6Error || currentPayload.keychain4x6Error || null,
+          };
+        }
+        console.log('[LOCAL SAVE ORDER] complete', {
+          sessionId: payload.sessionToken,
+        });
+        return result;
+      };
+
       if (!payload.canUpload) {
         if (IS_DEV) console.log('[softcopy] skipped disabled media', payload.enabled);
-        softcopyLogRef.current = { status: 'disabled' };
+        const disabledResult = { status: 'disabled' };
+        softcopyLogRef.current = disabledResult;
         onSoftcopyChange?.({ status: 'idle', qrUrl: null });
-        return { status: 'disabled' };
+        return completeLocalSaveOrder(disabledResult);
+      }
+
+      if (!softcopySettings.qrEnabled) {
+        if (IS_DEV) {
+          console.log('[softcopy-upload] skipped because QR disabled', {
+            sessionId: payload.sessionToken,
+          });
+        }
+        const disabledResult = {
+          status: 'disabled',
+          sessionToken: payload.sessionToken,
+          localSave: payload.localSave,
+        };
+        softcopyLogRef.current = disabledResult;
+        onSoftcopyChange?.({ status: 'idle', qrUrl: null });
+        await updateLocalSoftcopyMetadata(payload, disabledResult);
+        return completeLocalSaveOrder(disabledResult);
       }
 
       const uploaded = await performSoftcopyUpload(payload);
@@ -478,13 +1498,13 @@ export default function PrintScreen({
             warnings: uploaded.warnings || [],
           });
         }
-        return softcopyLogRef.current;
+        return completeLocalSaveOrder(softcopyLogRef.current);
       }
-      return {
+      return completeLocalSaveOrder({
         status: 'error',
         error: uploaded.error || 'Softcopy upload failed.',
         sessionToken: payload.sessionToken || null,
-      };
+      });
     } catch (softcopyErr) {
       const message = softcopyErr?.message || String(softcopyErr);
       console.warn('[softcopy] failure summary', {
@@ -534,6 +1554,166 @@ export default function PrintScreen({
     onPrint?.();
   };
 
+  const handleStep4KeychainSave = async () => {
+    if (step4KeychainSaving) return;
+    setStep4KeychainSaving(true);
+    let finalShots = [];
+    try {
+      if (!window.diagApi?.writeDownloadsPngFile) {
+        throw new Error('Diagnostic PNG Downloads API is unavailable.');
+      }
+      finalShots = Array.isArray(shots) ? shots.filter(Boolean) : [];
+      const sessionId = sessionStartRef?.current ? `session-${sessionStartRef.current}` : 'session';
+      console.log('[KEYCHAIN REAL INPUT AUDIT]', {
+        layoutId: layout?.id,
+        selectedTmpl,
+        selectedTemplateName: template?.name,
+        shotsLength: shots?.length || 0,
+        arrangedShotIndexes,
+        shots: shots?.map((shot, index) => {
+          const src = getShotImageSource(shot);
+          return {
+            index,
+            rawType: typeof shot,
+            rawIsString: typeof shot === 'string',
+            rawPrefix: typeof shot === 'string' ? shot.slice(0, 120) : null,
+            rawKeys: shot && typeof shot === 'object' ? Object.keys(shot) : null,
+            normalizedHasSource: Boolean(src),
+            normalizedPrefix: src ? src.slice(0, 120) : null,
+            normalizedIsDataUrl: src?.startsWith('data:image/'),
+            normalizedLength: src?.length,
+          };
+        }),
+      });
+      console.log('[KEYCHAIN STEP4 INPUT]', {
+        layoutId: layout?.id,
+        selectedTmpl,
+        selectedTemplateName: template?.name,
+        shotCount: shots?.length || 0,
+        shots: shots?.map((shot, index) => {
+          const src = getShotImageSource(shot);
+          return {
+            index,
+            hasSource: Boolean(src),
+            prefix: src ? src.slice(0, 100) : null,
+            isDataUrl: src?.startsWith('data:image/'),
+            length: src?.length,
+          };
+        }),
+      });
+      console.log('[STEP 4 keychain photo audit] shots prop', {
+        isArray: Array.isArray(shots),
+        length: shots?.length,
+        entries: shots?.map((shot, index) => ({
+          index,
+          type: typeof shot,
+          isString: typeof shot === 'string',
+          stringPrefix: typeof shot === 'string' ? shot.slice(0, 80) : null,
+          keys: shot && typeof shot === 'object' ? Object.keys(shot) : null,
+          hasSrc: Boolean(shot?.src),
+          hasFullSrc: Boolean(shot?.fullSrc),
+          hasDataUrl: Boolean(shot?.dataUrl),
+          hasPreviewUrl: Boolean(shot?.previewUrl),
+          srcPrefix: shot?.src ? String(shot.src).slice(0, 80) : null,
+          fullSrcPrefix: shot?.fullSrc ? String(shot.fullSrc).slice(0, 80) : null,
+          dataUrlPrefix: shot?.dataUrl ? String(shot.dataUrl).slice(0, 80) : null,
+        })),
+      });
+      console.log('[STEP 4 keychain real photos] input photos', {
+        sessionId,
+        layoutId: layout?.id || '',
+        photoCount: finalShots.length,
+        photos: finalShots.map((photo, index) => ({
+          index,
+          hasSrc: Boolean(getShotImageSource(photo)),
+          width: photo?.width,
+          height: photo?.height,
+        })),
+      });
+      const normalizedSources = finalShots.map(getShotImageSource).filter(Boolean);
+      if (normalizedSources.length === 0) {
+        const error = new Error('No valid real session photos loaded for keychain.');
+        error.photoCount = finalShots.length;
+        error.normalizedSourceCount = 0;
+        error.validImageCount = 0;
+        throw error;
+      }
+      let decodeOkCount = 0;
+      for (const [index, src] of normalizedSources.entries()) {
+        const decodeOk = await testImageDecode(src, `KEYCHAIN INPUT PHOTO ${index}`);
+        if (decodeOk) decodeOkCount += 1;
+      }
+      if (decodeOkCount === 0) {
+        const error = new Error('No valid real session photos loaded for keychain.');
+        error.photoCount = finalShots.length;
+        error.normalizedSourceCount = normalizedSources.length;
+        error.validImageCount = 0;
+        throw error;
+      }
+      const finalArtworkCanvas = await buildFinalPrintCanvas(
+        layout,
+        template,
+        finalShots,
+        selectedFilterCss,
+        settings,
+      );
+      const finalArtworkDataUrl = finalArtworkCanvas.toDataURL('image/png');
+
+      console.log('[STEP 4 keychain final artwork] generating', {
+        canvasWidth: 1200,
+        canvasHeight: 1800,
+        selectedFilterCss,
+        hasFinalArtwork: Boolean(finalArtworkDataUrl),
+        finalArtworkLength: finalArtworkDataUrl.length,
+        finalArtworkPrefix: finalArtworkDataUrl.slice(0, 80),
+      });
+
+      const keychain = await generateKeychain4x6Png({
+        layout,
+        layoutId: layout?.id,
+        shots: finalShots,
+        sourceStripDataUrl: finalArtworkDataUrl,
+        finalArtworkDataUrl,
+        selectedTemplate: template,
+        selectedTmpl,
+        selectedFilterCss,
+        sessionId,
+        templateAssets,
+      });
+      if (!keychain) {
+        throw new Error(`Unsupported keychain layout: ${layout?.id || 'unknown'}`);
+      }
+
+      const filename = makeStep4KeychainFilename(sessionId);
+      const arrayBuffer = await keychain.blob.arrayBuffer();
+      const result = await window.diagApi.writeDownloadsPngFile({
+        filename,
+        arrayBuffer,
+      });
+      console.log('[STEP 4 keychain real photos] save result', {
+        filename: result?.filename || filename,
+        targetPath: result?.targetPath,
+        exists: result?.exists,
+        sizeBytes: result?.sizeBytes,
+      });
+      setStep4KeychainResult({
+        ...result,
+        filename: result?.filename || filename,
+      });
+    } catch (error) {
+      console.error('[STEP 4 keychain real photos] failed', error);
+      setStep4KeychainResult({
+        ok: false,
+        error: error?.message || String(error),
+        photoCount: error?.photoCount ?? finalShots?.length ?? null,
+        normalizedSourceCount: error?.normalizedSourceCount ?? null,
+        validImageCount: error?.validImageCount ?? null,
+      });
+    } finally {
+      setStep4KeychainSaving(false);
+    }
+  };
+
   // Compose the 1200×1800 strip once, use it twice:
   //   • PNG download (lossless local copy)
   //   • JPEG data URL sent to Electron for printing (smaller IPC payload)
@@ -566,7 +1746,11 @@ export default function PrintScreen({
       return;
     }
     if (IS_DEV) {
-      console.log('[print] selected copies', selectedCopies);
+      console.log('[print] resolved copies', {
+        requestedCopies,
+        printCopiesEnabled,
+        finalCopies: selectedCopies,
+      });
       console.log('[print] print clicked, locking session');
     }
 
@@ -627,47 +1811,52 @@ export default function PrintScreen({
       }
       timeStart('[print] compose final');
       try {
+        if (IS_DEV) {
+          console.log('[filter] final render filter', {
+            selectedFilter: selectedFilter || 'none',
+            outputType: 'print-and-qr-photo',
+          });
+          console.log('[BACKGROUND CANVAS COMPOSE]', {
+            selectedBackgroundId: template?.id || null,
+            selectedBackgroundName: template?.name || null,
+            templateAssets,
+            backgroundRenderMode: 'background+overlay+photos',
+          });
+        }
         canvas = await buildFinalPrintCanvas(
           layout,
-          versionTemplateAssetSrc(template.overlaySrc || template.backgroundSrc || template.src, template),
+          template,
           shots,
           selectedFilterCss,
           settings,
         );
+        if (IS_DEV) {
+          console.log('[mirror] final render', {
+            usesCapturedMirroredSource: true,
+            extraMirrorApplied: false,
+          });
+        }
       } finally {
         timeEnd('[print] compose final');
       }
 
-      // Save a lossless PNG automatically. Electron writes to Downloads
-      // without a browser download prompt; browser mode keeps the old fallback.
+      // This PNG data URL is the shared final artwork source. The canonical
+      // local photo file is saved by softcopy-local as Afterimage-...-photo.png.
       const pngUrl = canvas.toDataURL('image/png');
-      const timestampStamp = () => {
-        const d = new Date();
-        const pad = (n) => String(n).padStart(2, '0');
-        return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
-      };
-      const downloadDataUrl = (dataUrl, filename) => {
-        const a = document.createElement('a');
-        a.href = dataUrl;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-      };
-      const pngFilename = `afterimage-strip-${timestampStamp()}.png`;
-      let savedPng = false;
-      if (window.printApi?.saveStrip) {
-        const saveRes = await window.printApi.saveStrip(pngUrl, { filename: pngFilename });
-        savedPng = !!saveRes?.ok;
-        if (saveRes?.ok) {
-          console.log('[print] autosaved PNG:', saveRes.path);
-        } else {
-          console.warn('[print] autosave failed:', saveRes?.error || 'unknown');
-        }
-      }
-      if (!savedPng) {
-        downloadDataUrl(pngUrl, pngFilename);
-      }
+      console.log('[DIAG local-save 1] final PNG ready', {
+        hasFinalDataUrl: Boolean(pngUrl),
+        finalDataUrlLength: pngUrl?.length,
+        sessionId: softcopyArtifactRef.current?.sessionToken || null,
+        layoutId: layout?.id || '',
+      });
+      console.log('[LOCAL SAVE AUDIT PNG]', {
+        filename: 'afterimage-strip-*.png',
+        isKeychain: false,
+        isNormalPhoto: true,
+        caller: 'PrintScreen.handlePrint',
+        action: 'legacy-afterimage-strip-autosave-disabled',
+        canonical: 'softcopy-local:save-session-media photo.png',
+      });
 
       // Print via Electron (JPEG to keep IPC payload small)
       timeStart('[receipt] final blob');
@@ -684,17 +1873,13 @@ export default function PrintScreen({
         layoutName: layout?.name || layout?.id || null,
       };
 
-      if (qrEnabled && softcopyMediaEnabled) {
+      if (softcopyMediaEnabled) {
         softcopyStarted = true;
-        softcopyPromise = prepareAndUploadSoftcopy(jpegUrl);
-      } else if (!qrEnabled) {
-        console.log('[softcopy] skipped because QR is disabled');
-        softcopyLogRef.current = { status: 'disabled' };
-        softcopyPromise = Promise.resolve({ status: 'disabled' });
+        softcopyPromise = prepareSoftcopyMedia(pngUrl, jpegUrl);
       } else {
         if (IS_DEV) console.log('[softcopy] skipped because no softcopy media is enabled');
-        softcopyLogRef.current = { status: 'disabled' };
-        softcopyPromise = Promise.resolve({ status: 'disabled' });
+        softcopyStarted = true;
+        softcopyPromise = prepareSoftcopyMedia(pngUrl, jpegUrl);
       }
 
       if (window.printApi?.printStrip) {
@@ -767,13 +1952,6 @@ export default function PrintScreen({
         canvas.width = 0;
         canvas.height = 0;
       }
-      if (printStatus === 'completed') {
-        setPrintProgress(null);
-        finishReadyTimerRef.current = setTimeout(() => {
-          setFinishReady(true);
-          finishReadyTimerRef.current = null;
-        }, 700);
-      }
       printInFlightRef.current = false;
       console.log('[print] print lock released');
 
@@ -783,12 +1961,20 @@ export default function PrintScreen({
         const message = softcopyErr?.message || String(softcopyErr);
         softcopyLog = { status: 'error', error: message, sessionToken: softcopyArtifactRef.current?.sessionToken || null };
       }
+      if (printStatus === 'completed') {
+        setPrintProgress(null);
+        finishReadyTimerRef.current = setTimeout(() => {
+          setFinishReady(true);
+          finishReadyTimerRef.current = null;
+        }, 700);
+      }
 
       // Record the session regardless of outcome — failed prints still
       // represent a customer interaction and are useful for troubleshooting.
       try {
         if (window.adminApi?.logSession) {
           const startedAt = sessionStartRef?.current;
+          const savedPhotoFile = getSavedPhotoFile(softcopyArtifactRef.current?.localSave?.savedFiles);
           await window.adminApi.logSession({
             timestamp:    new Date().toISOString(),
             layoutId:     layout?.id || null,
@@ -814,6 +2000,8 @@ export default function PrintScreen({
             softcopyVideoPath: softcopyLog.videoPath || null,
             softcopyExpiresAt: softcopyLog.expiresAt || null,
             softcopyStatus: softcopyLog.status || null,
+            finalPrintPath: savedPhotoFile?.path || null,
+            printImagePath: savedPhotoFile?.path || null,
             testMode: testModeEnabled,
           });
           console.log('[sessions] saved print status', { printStatus, printCopiesCompleted, printCopiesRequested, testMode: testModeEnabled });
@@ -831,8 +2019,18 @@ export default function PrintScreen({
   const softcopyIsReady = softcopy?.status === 'ready' && softcopy.qrUrl;
   const softcopyIsError = softcopy?.status === 'error';
   const softcopyErrorMessage = getSoftcopyErrorMessage(softcopy?.error || '');
+  const showSoftcopyGifCard = softcopySettings.gifEnabled !== false;
+  const showSoftcopyVideoCard = softcopySettings.videoEnabled !== false;
+  const motionPreviewCount = Number(showSoftcopyGifCard) + Number(showSoftcopyVideoCard);
+  const finalPreviewGridClass = motionPreviewCount === 2
+    ? 'final-media-preview-grid--paired'
+    : motionPreviewCount === 1
+      ? 'final-media-preview-grid--stacked'
+      : 'final-media-preview-grid--photo-only';
+  const gifPreviewReady = Boolean(gifPreviewUrl);
+  const videoPreviewReady = Boolean(videoPreviewUrl);
   const showChangeBackground = Boolean(onBack) && !sessionLocked && !printing && !printCompleted;
-  const canEditCopies = !sessionLocked && !printing;
+  const canEditCopies = printCopiesEnabled && !sessionLocked && !printing;
   const showTerminalEndSession = !printing && (
     ['failed', 'cancelled', 'partial'].includes(printTerminalStatus)
   );
@@ -843,6 +2041,7 @@ export default function PrintScreen({
     ? 'Print cancelled.'
     : 'Print failed.';
   const showPrinterGuidance = Boolean(printError || ['failed', 'cancelled', 'partial'].includes(printTerminalStatus));
+  const showPrintReadyCard = !printing && !printCompleted;
   const printerGuidance = RUNTIME_PLATFORM === 'darwin'
     ? 'Printer appears offline or the job is waiting in macOS Print Center. Check the printer, then cancel or resume the job in Print Center. Afterimage can stop queued app jobs, but jobs already sent to the printer must be managed in Print Center.'
     : RUNTIME_PLATFORM === 'win32'
@@ -853,7 +2052,7 @@ export default function PrintScreen({
     : uploadRetrying
       ? 'Uploading...'
       : softcopyIsBusy
-      ? (softcopyIsUploading ? 'Uploading softcopy...' : 'Generating QR...')
+      ? (softcopyIsUploading ? 'Uploading Your Photos...' : 'Preparing QR Code...')
       : printCompleted
         ? (softcopyIsError ? 'Finish Without QR' : 'Finish')
         : printError
@@ -864,14 +2063,46 @@ export default function PrintScreen({
   // aspect-ratio and per-cell percentage positions. Falling back to a
   // 1200×1800 portrait keeps the preview rendering even if (somehow)
   // no layout was set.
+  if (IS_DEV) {
+    console.log('[final-preview layout] media availability', {
+      hasPhoto: Boolean(shots?.length),
+      hasGif: gifPreviewReady,
+      hasVideo: videoPreviewReady,
+      gifEnabled: showSoftcopyGifCard,
+      videoEnabled: showSoftcopyVideoCard,
+      qrEnabled: softcopySettings.qrEnabled !== false,
+    });
+    console.log('[PRINT PREVIEW TEMPLATE ASSETS]', {
+      selectedTmpl,
+      templateName: template?.name || null,
+      assets: templateAssets,
+    });
+    console.log('[FINAL PREVIEW PHOTO INPUT]', {
+      layoutId: layout?.id,
+      selectedTmpl,
+      shotsLength: shots?.length || 0,
+      arrangedShotIndexes,
+      shots: shots?.map((shot, index) => ({
+        index,
+        type: typeof shot,
+        isString: typeof shot === 'string',
+        prefix: typeof shot === 'string' ? shot.slice(0, 100) : null,
+        keys: shot && typeof shot === 'object' ? Object.keys(shot) : null,
+        src: shot?.src ? String(shot.src).slice(0, 100) : null,
+        fullSrc: shot?.fullSrc ? String(shot.fullSrc).slice(0, 100) : null,
+        dataUrl: shot?.dataUrl ? String(shot.dataUrl).slice(0, 100) : null,
+      })),
+    });
+  }
+
   return (
     <div className={`screen ${active ? 'active' : ''}`} id="s-print" data-screen-label="07 Print">
       {/*
       <PageHeader
-        step="Step 6 of 6"
+        step="Step 7 of 7"
         title="Review & Print"
         subtitle="Looking good? Confirm your print."
-        pills={['done', 'done', 'done', 'done', 'done', 'active']}
+        pills={['done', 'done', 'done', 'done', 'done', 'done', 'active']}
       />
       */}
 
@@ -880,20 +2111,152 @@ export default function PrintScreen({
           {testModeEnabled && (
             <div className="print-test-badge">TEST MODE</div>
           )}
-          <div className="print-preview-label">Final preview</div>
-          <div className="print-frame-box" id="print-frame-box">
-            <LayoutPreview
-              layout={layout}
-              shots={shots}
-              templateSrc={versionTemplateAssetSrc(template?.overlaySrc || template?.src, template)}
-              templateAlt={template?.name}
-              className="print-frame-wrap"
-              cellClassName="print-frame-cell"
-              overlayClassName="tmpl-bg"
-              photoFilter={selectedFilterCss}
-            />
+          <div className="print-preview-heading">
+            <div className="print-preview-label">Final preview</div>
+            <p>Review your finished photo before printing.</p>
           </div>
-          
+          {SHOW_DIAGNOSTIC_UI && (
+            <div className="print-photo-debug">
+              <strong>PHOTO DEBUG</strong>
+              <span>shots: {photoDebug.shotsLength}</span>
+              <span>normalized: {photoDebug.normalizedSourceCount}</span>
+              <span>first prefix: {photoDebug.firstSourcePrefix || 'none'}</span>
+              <span>isDataUrl: {String(photoDebug.firstSourceIsDataUrl)}</span>
+              <span>base64Length: {photoDebug.firstSourceAudit?.base64Length ?? 'n/a'}</span>
+              <span>base64Mod4: {photoDebug.firstSourceAudit?.base64Mod4 ?? 'n/a'}</span>
+              <span>invalidBase64: {String(photoDebug.firstSourceAudit?.hasInvalidBase64Chars ?? false)}</span>
+              <span>whitespace: {String(photoDebug.firstSourceAudit?.hasWhitespace ?? false)}</span>
+              <span>layout id: {photoDebug.layoutId || 'none'}</span>
+              <span>arranged: {photoDebug.arrangedShotIndexes.join(', ') || 'none'}</span>
+              <span>missing: {photoDebug.missingSourceCount}</span>
+              <div className="print-photo-debug-sample">
+                <span>First normalized photo test</span>
+                {photoDebug.firstSource ? (
+                  <img
+                    src={photoDebug.firstSource}
+                    alt="First normalized photo test"
+                    onLoad={(event) => {
+                      console.log('[PHOTO DEBUG SAMPLE LOAD OK]', {
+                        srcPrefix: photoDebug.firstSource?.slice(0, 80),
+                        naturalWidth: event.currentTarget.naturalWidth,
+                        naturalHeight: event.currentTarget.naturalHeight,
+                      });
+                    }}
+                    onError={(event) => {
+                      console.error('[PHOTO DEBUG SAMPLE LOAD FAILED]', {
+                        srcPrefix: photoDebug.firstSource?.slice(0, 120),
+                        srcLength: photoDebug.firstSource?.length,
+                        currentSrc: event.currentTarget?.currentSrc,
+                      });
+                    }}
+                  />
+                ) : (
+                  <em>No normalized source</em>
+                )}
+              </div>
+            </div>
+          )}
+          <div className="print-frame-box" id="print-frame-box">
+            <div className={`final-media-preview-grid ${finalPreviewGridClass}`.trim()}>
+              <article className="final-media-card final-media-card--photo">
+                <div className="final-media-label">PNG</div>
+                <div className="final-media-content final-media-content--photo">
+                  {finalPreviewPngStatus === 'generating' && !finalPreviewPngUrl ? (
+                    <div className="final-media-status">Generating PNG...</div>
+                  ) : finalPreviewPngUrl ? (
+                    <img
+                      className="final-media-photo-img"
+                      src={finalPreviewPngUrl}
+                      alt="PNG preview"
+                      onLoad={(event) => {
+                        console.log('[FINAL PREVIEW PNG LOAD OK]', {
+                          naturalWidth: event.currentTarget.naturalWidth,
+                          naturalHeight: event.currentTarget.naturalHeight,
+                          srcLength: finalPreviewPngUrl?.length || 0,
+                        });
+                      }}
+                      onError={(event) => {
+                        console.error('[FINAL PREVIEW PNG LOAD FAILED]', {
+                          currentSrc: event.currentTarget?.currentSrc,
+                          srcLength: finalPreviewPngUrl?.length || 0,
+                        });
+                      }}
+                    />
+                  ) : (
+                    <div className="final-media-status">PNG preview unavailable</div>
+                  )}
+                </div>
+              </article>
+
+              {showSoftcopyGifCard && (
+                <article className="final-media-card final-media-card--gif">
+                  <div className="final-media-label">GIF</div>
+                  <div className="final-media-content">
+                    {softcopyPreviewAssets.status === 'generating' && !gifPreviewReady && (
+                      <div className="final-media-status">Generating GIF...</div>
+                    )}
+                    {gifPreviewReady && gifPreviewUrl ? (
+                      <img
+                        src={gifPreviewUrl}
+                        alt="GIF preview"
+                        onLoad={() => {
+                          console.log('[softcopy preview] GIF loaded', {
+                            sourceType: gifPreviewSourceType,
+                            srcLength: gifPreviewUrl?.length || 0,
+                          });
+                        }}
+                        onError={(event) => {
+                          console.error('[softcopy preview] failed', {
+                            type: 'gif',
+                            error: 'GIF preview failed to load',
+                            currentSrc: event.currentTarget?.currentSrc,
+                          });
+                        }}
+                      />
+                    ) : softcopyPreviewAssets.status === 'error' || softcopyPreviewAssets.gifError ? (
+                      <div className="final-media-status">GIF unavailable</div>
+                    ) : null}
+                  </div>
+                </article>
+              )}
+
+              {showSoftcopyVideoCard && (
+                <article className="final-media-card final-media-card--video">
+                  <div className="final-media-label">VIDEO</div>
+                  <div className="final-media-content">
+                    {softcopyPreviewAssets.status === 'generating' && !videoPreviewReady && (
+                      <div className="final-media-status">Generating Video...</div>
+                    )}
+                    {videoPreviewReady && videoPreviewUrl ? (
+                      <video
+                        src={videoPreviewUrl}
+                        autoPlay
+                        muted
+                        loop
+                        playsInline
+                        preload="metadata"
+                        onLoadedData={() => {
+                          console.log('[softcopy preview] VIDEO loaded', {
+                            sourceType: videoPreviewSourceType,
+                            srcLength: videoPreviewUrl?.length || 0,
+                          });
+                        }}
+                        onError={(event) => {
+                          console.error('[softcopy preview] failed', {
+                            type: 'video',
+                            error: 'Video preview failed to load',
+                            currentSrc: event.currentTarget?.currentSrc,
+                          });
+                        }}
+                      />
+                    ) : softcopyPreviewAssets.status === 'error' || softcopyPreviewAssets.videoError ? (
+                      <div className="final-media-status">Video unavailable</div>
+                    ) : null}
+                  </div>
+                </article>
+              )}
+            </div>
+          </div>
         </div>
 
         <div className="print-sidebar">
@@ -902,119 +2265,139 @@ export default function PrintScreen({
             <img className="print-brand-wordmark" src={typoBlack} alt="Afterimage" />
           </div>
 
-          {softcopyIsBusy && (
-            <div className="softcopy-qr-card">
-              <div className="softcopy-spinner" aria-hidden="true" />
-              <h3>{softcopyIsUploading ? 'Uploading softcopy...' : 'Generating QR Code...'}</h3>
-              <p>{softcopyIsUploading ? 'Please wait while your enabled media is uploaded.' : 'Please wait while your softcopy media is prepared.'}</p>
-            </div>
-          )}
-
-          {softcopyWarnings.length > 0 && (
-            <div className="retry-banner">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="12" r="10" />
-                <line x1="12" y1="7" x2="12" y2="13" />
-                <line x1="12" y1="17" x2="12.01" y2="17" />
-              </svg>
-              <div>
-                <p><strong>Some softcopy outputs could not be generated.</strong></p>
-                <p>{softcopyWarnings.join(' ')}</p>
-              </div>
-            </div>
-          )}
-
-          {softcopyIsReady && (
-            <div className="softcopy-qr-card">
-              <QRCodeCanvas value={softcopy.qrUrl} size={240} includeMargin />
-              <h3>Scan to get your photo, GIF, and video</h3>
-              <p>This link expires in 6 hours.</p>
-            </div>
-          )}
-
-          {softcopyIsError && (
-            <div className="softcopy-qr-card softcopy-qr-card--error">
-              <h3>Softcopy upload failed</h3>
-              <p>{softcopyErrorMessage}</p>
-              <div className="softcopy-error-actions">
-                <button
-                  type="button"
-                  className="btn-ghost"
-                  onClick={handleRetryUpload}
-                  disabled={uploadRetrying}
-                >
-                  {uploadRetrying ? 'Retrying…' : 'Retry Upload'}
-                </button>
-                {showRecoveryEndSession && (
-                  <button
-                    type="button"
-                    className="btn-ghost"
-                    onClick={handleEndSession}
-                  >
-                    End Session
-                  </button>
+          <div className="print-sidebar-content">
+            {(softcopyIsBusy || softcopyIsReady || softcopyIsError || softcopyWarnings.length > 0) && (
+              <section className="print-download-section" aria-label="Photo download">
+                {softcopyIsBusy && (
+                  <div className="softcopy-qr-card softcopy-qr-card--loading" aria-live="polite">
+                    <div className="softcopy-spinner" aria-hidden="true" />
+                    <h3>Preparing your download QR...</h3>
+                    <p>Your photos are being prepared. This usually takes a moment.</p>
+                  </div>
                 )}
-              </div>
-            </div>
-          )}
 
-          <div className="print-sidebar-title">Print Options</div>
+                {softcopyWarnings.length > 0 && (
+                  <div className="retry-banner">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <circle cx="12" cy="12" r="10" />
+                      <line x1="12" y1="7" x2="12" y2="13" />
+                      <line x1="12" y1="17" x2="12.01" y2="17" />
+                    </svg>
+                    <div>
+                      <p><strong>Some download formats are unavailable.</strong></p>
+                      <p>{softcopyWarnings.join(' ')}</p>
+                    </div>
+                  </div>
+                )}
 
-          <div className="copies-section">
-            <div className="copies-label">Print Copies</div>
-            <div className="copies-row">
-              <button
-                className="cnt-btn"
-                onClick={() => onChangeCopies?.(-1)}
-                disabled={!canEditCopies || selectedCopies <= MIN_PRINT_COPIES}
-                aria-label="Decrease print copies"
-              >
-                -
-              </button>
-              <div className="cnt-num" id="copies-num" aria-live="polite">{selectedCopies}</div>
-              <button
-                className="cnt-btn"
-                onClick={() => onChangeCopies?.(1)}
-                disabled={!canEditCopies || selectedCopies >= MAX_PRINT_COPIES}
-                aria-label="Increase print copies"
-              >
-                +
-              </button>
-            </div>
+                {softcopyIsReady && (
+                  <div className="softcopy-qr-card" aria-live="polite">
+                    <h3>Scan to Download</h3>
+                    <QRCodeCanvas value={softcopy.qrUrl} size={400} includeMargin />
+                    <p>This link expires in 6 hours.</p>
+                  </div>
+                )}
+
+                {softcopyIsError && (
+                  <div className="softcopy-qr-card softcopy-qr-card--error" role="alert">
+                    <h3>QR download is unavailable right now.</h3>
+                    <p>You may still print your photos. {softcopyErrorMessage}</p>
+                    <div className="softcopy-error-actions">
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        onClick={handleRetryUpload}
+                        disabled={uploadRetrying}
+                      >
+                        {uploadRetrying ? 'Retrying…' : 'Retry Upload'}
+                      </button>
+                      {showRecoveryEndSession && (
+                        <button
+                          type="button"
+                          className="btn-ghost"
+                          onClick={handleEndSession}
+                        >
+                          End Session
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </section>
+            )}
+
+            {showPrintReadyCard && (
+              <section className="print-ready-card" aria-labelledby="print-ready-title">
+                <div className="print-ready-copy">
+                  <div className="print-sidebar-title" id="print-ready-title">Ready to Print?</div>
+                  <div className="print-sidebar-instruction">
+                    {printCopiesEnabled
+                      ? `Choose your copies below. This session will print ${selectedCopies} ${selectedCopies === 1 ? 'copy' : 'copies'}.`
+                      : 'Press Print Photos when you are ready.'}
+                  </div>
+                </div>
+
+                {printCopiesEnabled && (
+                  <div className="copies-section">
+                    <div className="copies-label">Print Copies</div>
+                    <div className="copies-row">
+                      <button
+                        className="cnt-btn"
+                        onClick={() => onChangeCopies?.(-1)}
+                        disabled={!canEditCopies || selectedCopies <= MIN_PRINT_COPIES}
+                        aria-label="Decrease print copies"
+                      >
+                        -
+                      </button>
+                      <div className="cnt-num" id="copies-num" aria-live="polite">{selectedCopies}</div>
+                      <button
+                        className="cnt-btn"
+                        onClick={() => onChangeCopies?.(1)}
+                        disabled={!canEditCopies || selectedCopies >= MAX_PRINT_COPIES}
+                        aria-label="Increase print copies"
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {printError && (
+                  <div className="retry-banner print-error-banner">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <circle cx="12" cy="12" r="10" />
+                      <line x1="12" y1="7" x2="12" y2="13" />
+                      <line x1="12" y1="17" x2="12.01" y2="17" />
+                    </svg>
+                    <div>
+                      <p><strong>{printErrorTitle}</strong> {printError}</p>
+                      {showPrinterGuidance && <p>{printerGuidance}</p>}
+                    </div>
+                  </div>
+                )}
+
+                {!printEnabled && (
+                  <div className="retry-banner" id="print-disabled-banner">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <circle cx="12" cy="12" r="10" />
+                      <line x1="8" y1="8" x2="16" y2="16" />
+                      <line x1="16" y1="8" x2="8" y2="16" />
+                    </svg>
+                    <p><strong>Printing is currently disabled.</strong> Please ask the attendant for assistance.</p>
+                  </div>
+                )}
+              </section>
+            )}
           </div>
-
-          {printError && (
-            <div className="retry-banner print-error-banner">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="12" r="10" />
-                <line x1="12" y1="7" x2="12" y2="13" />
-                <line x1="12" y1="17" x2="12.01" y2="17" />
-              </svg>
-              <div>
-                <p><strong>{printErrorTitle}</strong> {printError}</p>
-                {showPrinterGuidance && <p>{printerGuidance}</p>}
-              </div>
-            </div>
-          )}
-
-          {!printEnabled && (
-            <div className="retry-banner" id="print-disabled-banner">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="12" r="10" />
-                <line x1="8" y1="8" x2="16" y2="16" />
-                <line x1="16" y1="8" x2="8" y2="16" />
-              </svg>
-              <p><strong>Printing is currently disabled.</strong> Please ask the attendant for assistance.</p>
-            </div>
-          )}
 
           <div className="print-actions">
             <button
               className="btn-print"
+              aria-live="polite"
               onClick={printCompleted ? (finishReady ? onPrint : undefined) : handlePrintClick}
               disabled={printing || softcopyIsBusy || uploadRetrying || !printEnabled || (printCompleted && !finishReady)}
             >
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <polyline points="6 9 6 2 18 2 18 9" />
                 <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
                 <rect x="6" y="14" width="12" height="8" />
@@ -1065,6 +2448,51 @@ export default function PrintScreen({
               >
                 End Session
               </button>
+            )}
+
+            {SHOW_KEYCHAIN_DEBUG_UI && (
+              <div className="print-step4-keychain">
+                <button
+                  type="button"
+                  className="btn-ghost print-secondary-action"
+                  onClick={handleStep4KeychainSave}
+                  disabled={step4KeychainSaving}
+                >
+                  {step4KeychainSaving ? 'Saving keychain...' : 'TEST: Save Keychain 4x6'}
+                </button>
+                {step4KeychainResult && (
+                  <div className={`print-step4-result ${step4KeychainResult.ok ? 'ok' : 'bad'}`}>
+                    <div><strong>ok:</strong> {String(step4KeychainResult.ok === true)}</div>
+                    {step4KeychainResult.filename && (
+                      <div><strong>filename:</strong> {step4KeychainResult.filename}</div>
+                    )}
+                    {step4KeychainResult.downloadsDir && (
+                      <div><strong>downloadsDir:</strong> {step4KeychainResult.downloadsDir}</div>
+                    )}
+                    {step4KeychainResult.targetPath && (
+                      <div><strong>targetPath:</strong> {step4KeychainResult.targetPath}</div>
+                    )}
+                    {Object.prototype.hasOwnProperty.call(step4KeychainResult, 'exists') && (
+                      <div><strong>exists:</strong> {String(step4KeychainResult.exists)}</div>
+                    )}
+                    {Object.prototype.hasOwnProperty.call(step4KeychainResult, 'sizeBytes') && (
+                      <div><strong>sizeBytes:</strong> {step4KeychainResult.sizeBytes}</div>
+                    )}
+                    {Object.prototype.hasOwnProperty.call(step4KeychainResult, 'photoCount') && (
+                      <div><strong>photoCount:</strong> {step4KeychainResult.photoCount}</div>
+                    )}
+                    {Object.prototype.hasOwnProperty.call(step4KeychainResult, 'normalizedSourceCount') && (
+                      <div><strong>normalizedSourceCount:</strong> {step4KeychainResult.normalizedSourceCount}</div>
+                    )}
+                    {Object.prototype.hasOwnProperty.call(step4KeychainResult, 'validImageCount') && (
+                      <div><strong>validImageCount:</strong> {step4KeychainResult.validImageCount}</div>
+                    )}
+                    {step4KeychainResult.error && (
+                      <div><strong>error:</strong> {step4KeychainResult.error}</div>
+                    )}
+                  </div>
+                )}
+              </div>
             )}
           </div>
         </div>

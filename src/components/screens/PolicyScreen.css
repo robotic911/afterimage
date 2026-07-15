@@ -14,6 +14,7 @@
 
 .policy-left {
   width: 800px;
+  max-height: calc(100vh - 64px);
   background: var(--white);
   padding: 48px 44px;
   display: flex;
@@ -24,8 +25,8 @@
   box-shadow: 0 20px 48px rgba(0,0,0,.18);
 }
 .policy-left-title {
-  font-size: 42px; font-weight: 800; color: var(--primary);
-  letter-spacing: -1.5px; line-height: 1.15;
+  font-size: var(--kiosk-title-size); font-weight: 850; color: var(--primary);
+  letter-spacing: 0; line-height: 1.08;
 }
 .policy-left-title span { color: rgba(0,0,0,.4); font-weight: 300; font-style: italic; }
 
@@ -57,24 +58,39 @@
 .policy-rules {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 10px;
 }
 
 .rule-card {
-  background: rgba(255,255,255,.08);
-  border-radius: var(--r); padding: 24px 28px;
+  background: rgba(0,0,0,.035);
+  border-radius: var(--r); padding: 14px 18px;
   display: flex; 
-  align-items: center; gap: 20px;
-  border: 1px solid rgba(255,255,255,.14);
+  align-items: center; gap: 16px;
+  border: 1px solid rgba(0,0,0,.1);
   transition: border-color .2s, transform .2s;
 }
-.rule-card:hover { border-color: rgba(255,255,255,.28); transform: translateX(4px); }
+.rule-card:hover { border-color: rgba(0,0,0,.28); transform: translateX(4px); }
 .rule-num {
-  width: 70px; height: 70px; border-radius: 50%;
-  background: rgba(255,255,255,.14); color: var(--secondary);
-  font-size: 25px; font-weight: 800;
+  width: 50px; height: 50px; border-radius: 50%;
+  background: #000; color: #fff;
+  font-size: 22px; font-weight: 800;
   display: flex; align-items: center; justify-content: center;
   flex-shrink: 0; margin-top: 2px;
 }
-.rule-content h4 { font-size: 23px; font-weight: 700; color: var(--secondary); }
-.rule-content p  { font-size: 17px; color: rgba(255,255,255,.7); margin-top: 5px; line-height: 1.55; }
+.rule-content h4 { font-size: clamp(20px, 1.45vw, 25px); font-weight: 800; color: #111; }
+.rule-content p  { font-size: clamp(16px, 1.1vw, 19px); color: #555; margin-top: 4px; line-height: 1.35; }
+
+@media (max-height: 900px) {
+  .policy-left {
+    padding: 30px 36px;
+    gap: 14px;
+  }
+
+  .policy-stat-card {
+    padding: 14px 18px;
+  }
+
+  .rule-card {
+    padding: 10px 14px;
+  }
+}
