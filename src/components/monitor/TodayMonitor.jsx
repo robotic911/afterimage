@@ -140,6 +140,29 @@ function sortPrintJobs(jobs = []) {
   });
 }
 
+function shallowRecordEqual(a, b) {
+  if (a === b) return true;
+  if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false;
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) return false;
+  return aKeys.every((key) => Object.is(a[key], b[key]));
+}
+
+function reconcileRecordsById(current = [], next = []) {
+  const currentById = new Map(current.map((record) => [record?.id, record]));
+  let changed = current.length !== next.length;
+  const reconciled = next.map((record, index) => {
+    const currentRecord = currentById.get(record?.id);
+    const resolved = currentRecord && shallowRecordEqual(currentRecord, record)
+      ? currentRecord
+      : record;
+    if (resolved !== current[index]) changed = true;
+    return resolved;
+  });
+  return changed ? reconciled : current;
+}
+
 function buildOutputs(session) {
   const outputs = [];
   if (session?.softcopyPhotoPath) outputs.push('Photo');
@@ -467,6 +490,7 @@ export default function TodayMonitor() {
     activeRequestRef.current = true;
     const requestId = ++requestSeqRef.current;
     const todayYmd = toLocalYmd(new Date());
+    const shouldRefreshPrinters = ['initial', 'manual', 'shortcut'].includes(source);
     if (source === 'manual' || source === 'shortcut') {
       console.log('[monitor] refresh triggered');
     }
@@ -483,7 +507,9 @@ export default function TodayMonitor() {
           to: todayYmd,
         }),
         window.printApi?.getQueue ? window.printApi.getQueue() : Promise.resolve({ ok: true, jobs: [] }),
-        window.printApi?.listPrinters ? window.printApi.listPrinters() : Promise.resolve({ ok: true, printers: [], selphyPrinters: [] }),
+        shouldRefreshPrinters && window.printApi?.listPrinters
+          ? window.printApi.listPrinters()
+          : Promise.resolve({ ok: true, skipped: true }),
       ]);
 
       if (requestId !== requestSeqRef.current) return;
@@ -500,9 +526,9 @@ export default function TodayMonitor() {
 
       setSettings(settingsRes.settings || null);
       setEvents(eventsRes.events || []);
-      setSessions(nextTodaySessions);
-      setPrintJobs(Array.isArray(queueRes.jobs) ? queueRes.jobs : []);
-      if (printersRes?.ok) {
+      setSessions((current) => reconcileRecordsById(current, nextTodaySessions));
+      setPrintJobs((current) => reconcileRecordsById(current, Array.isArray(queueRes.jobs) ? queueRes.jobs : []));
+      if (printersRes?.ok && !printersRes.skipped) {
         setPrinterList({
           printers: Array.isArray(printersRes.printers) ? printersRes.printers : [],
           selphyPrinters: Array.isArray(printersRes.selphyPrinters) ? printersRes.selphyPrinters : [],
@@ -510,7 +536,7 @@ export default function TodayMonitor() {
           guidance: printersRes.guidance || null,
         });
         setPrinterError(null);
-      } else {
+      } else if (!printersRes?.skipped) {
         setPrinterError(printersRes?.error || 'failed to load printers');
       }
       setCountdownDraft(String(normalizeCountdownSeconds(settingsRes.settings?.countdownSeconds ?? DEFAULT_COUNTDOWN_SECONDS)));
@@ -543,6 +569,23 @@ export default function TodayMonitor() {
     }
   }, []);
 
+  const applySessionRecordUpdate = useCallback((record) => {
+    if (!record || typeof record !== 'object' || !record.id) {
+      refresh('event');
+      return;
+    }
+
+    const todayYmd = toLocalYmd(new Date());
+    setSessions((current) => {
+      const withoutRecord = current.filter((session) => session.id !== record.id);
+      const nextSessions = record.dateLocal === todayYmd
+        ? [record, ...withoutRecord].sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''))
+        : withoutRecord;
+      return reconcileRecordsById(current, nextSessions);
+    });
+    setLastUpdated(new Date().toISOString());
+  }, [refresh]);
+
   useEffect(() => {
     document.body.classList.add('window-monitor');
     document.title = 'Afterimage Today Monitor';
@@ -561,7 +604,7 @@ export default function TodayMonitor() {
   useEffect(() => {
     if (!window.printApi?.onQueueChanged) return undefined;
     return window.printApi.onQueueChanged((jobs) => {
-      setPrintJobs(Array.isArray(jobs) ? jobs : []);
+      setPrintJobs((current) => reconcileRecordsById(current, Array.isArray(jobs) ? jobs : []));
       setQueueError(null);
     });
   }, []);
@@ -577,7 +620,8 @@ export default function TodayMonitor() {
       && !window.adminApi?.onSettingsChanged
       && !window.adminApi?.onEventsChanged
     ) return undefined;
-    const onSessionChange = () => refresh('event');
+    const onSessionChange = (record) => applySessionRecordUpdate(record);
+    const refreshFromEvent = () => refresh('event');
     const onSettingsChange = (nextSettings) => {
       if (nextSettings && typeof nextSettings === 'object' && !Array.isArray(nextSettings)) {
         console.log('[settings] changed broadcast received', { group: 'appSettings', settings: nextSettings });
@@ -589,12 +633,15 @@ export default function TodayMonitor() {
     };
     const unsubLogged = window.adminApi.onSessionLogged?.(onSessionChange);
     const unsubUpdated = window.adminApi.onSessionsUpdated?.(onSessionChange);
-    const unsubCleared = window.adminApi.onSessionsCleared?.(onSessionChange);
-    const unsubTodayReset = window.adminApi.onTodayMonitorRecordsReset?.(onSessionChange);
-    const unsubTodayRecords = window.todayMonitorApi?.onRecordsReset?.(onSessionChange);
+    const unsubCleared = window.adminApi.onSessionsCleared?.(() => {
+      setSessions([]);
+      refreshFromEvent();
+    });
+    const unsubTodayReset = window.adminApi.onTodayMonitorRecordsReset?.(refreshFromEvent);
+    const unsubTodayRecords = window.todayMonitorApi?.onRecordsReset?.(refreshFromEvent);
     const unsubTodaySessionsUpdated = window.todayMonitorApi?.onSessionsUpdated?.(onSessionChange);
     const unsubSettings = window.adminApi.onSettingsChanged?.(onSettingsChange);
-    const unsubEvents = window.adminApi.onEventsChanged?.(onSessionChange);
+    const unsubEvents = window.adminApi.onEventsChanged?.(refreshFromEvent);
     return () => {
       unsubLogged?.();
       unsubUpdated?.();
@@ -605,7 +652,7 @@ export default function TodayMonitor() {
       unsubSettings?.();
       unsubEvents?.();
     };
-  }, [refresh]);
+  }, [applySessionRecordUpdate, refresh]);
 
   useEffect(() => {
     const timer = setInterval(() => refresh('poll'), 5000);

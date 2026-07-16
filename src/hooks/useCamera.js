@@ -8,6 +8,7 @@ const CAMERA_QUALITY_PROFILES = [
   { label: '1440p-24', width: 2560, height: 1440, frameRate: 24 },
   { label: '1080p-30', width: 1920, height: 1080, frameRate: 30 },
 ];
+let cachedPreferredCameraDeviceId = null;
 
 function formatCameraError(error) {
   const name = String(error?.name || '').toLowerCase();
@@ -122,7 +123,7 @@ export function useCamera(active, preferredWidth, preferredHeight) {
           return { stream, profile };
         } catch (error) {
           lastError = error;
-          console.warn(`[camera] ${profile.label} stream unavailable, trying fallback.`, error);
+          if (IS_DEV) console.warn(`[camera] ${profile.label} stream unavailable, trying fallback.`, error);
         }
       }
 
@@ -132,7 +133,13 @@ export function useCamera(active, preferredWidth, preferredHeight) {
     const findPreferredCamera = async () => {
       if (!navigator.mediaDevices?.enumerateDevices) return null;
 
-      const devices = await navigator.mediaDevices.enumerateDevices();
+      const devices = await navigator.mediaDevices.enumerateDevices().catch(() => []);
+      if (cachedPreferredCameraDeviceId) {
+        const cached = devices.find(
+          (device) => device.kind === 'videoinput' && device.deviceId === cachedPreferredCameraDeviceId,
+        );
+        if (cached) return cached;
+      }
       return devices.find(
         (device) =>
           device.kind === 'videoinput' &&
@@ -191,17 +198,35 @@ export function useCamera(active, preferredWidth, preferredHeight) {
     };
 
     if (active) {
-      openBestStream()
-        .then(async ({ stream: bootstrapStream, profile: bootstrapProfile }) => {
+      (async () => {
+        let preferredDevice = await findPreferredCamera();
+        if (preferredDevice?.deviceId) {
+          cachedPreferredCameraDeviceId = preferredDevice.deviceId;
+          try {
+            const { stream: preferredStream, profile: preferredProfile } =
+              await openBestStream(preferredDevice.deviceId);
+            await attachStream(preferredStream, preferredDevice, preferredProfile);
+            return;
+          } catch (error) {
+            if (IS_DEV) console.warn('[camera] preferred camera open failed, falling back to default camera.', error);
+          }
+        }
+
+        const { stream: bootstrapStream, profile: bootstrapProfile } = await openBestStream();
+        if (cancelled) {
+          bootstrapStream.getTracks().forEach(t => t.stop());
+          return;
+        }
           const bootstrapTrack = bootstrapStream.getVideoTracks()[0];
           const bootstrapSettings = bootstrapTrack?.getSettings?.();
-          const preferredDevice = await findPreferredCamera();
+          preferredDevice = await findPreferredCamera();
 
           if (
             preferredDevice &&
             preferredDevice.deviceId &&
             bootstrapSettings?.deviceId !== preferredDevice.deviceId
           ) {
+            cachedPreferredCameraDeviceId = preferredDevice.deviceId;
             bootstrapStream.getTracks().forEach(t => t.stop());
 
             try {
@@ -215,7 +240,7 @@ export function useCamera(active, preferredWidth, preferredHeight) {
           }
 
           await attachStream(bootstrapStream, preferredDevice, bootstrapProfile);
-        })
+      })()
         .catch((error) => {
           console.error('[camera] failed', error);
           setCameraError(formatCameraError(error));

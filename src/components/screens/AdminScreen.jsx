@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import './AdminScreen.css';
-import AdminDashboard from './AdminDashboard';
 import { LAYOUTS } from '../../constants/layouts';
 import {
   DEFAULT_PRINTER_PROFILE_ID,
@@ -48,6 +47,7 @@ const TEMPLATE_STATUS_CATEGORIES = [
   { key: 'active', title: 'Active', enabled: true },
   { key: 'inactive', title: 'Inactive', enabled: false },
 ];
+const AdminDashboard = lazy(() => import('./AdminDashboard'));
 
 function resolveTemplateType(templateLike = {}) {
   if (TEMPLATE_TYPE_ORDER.includes(templateLike.type)) {
@@ -1239,12 +1239,14 @@ export default function AdminScreen({
       </div>
 
       {tab === 'dashboard' ? (
-        <AdminDashboard
-          active={active}
-          events={events}
-          settings={settings}
-          templates={displayTemplates}
-        />
+        <Suspense fallback={<div className="admin-settings-panel">Loading dashboard...</div>}>
+          <AdminDashboard
+            active={active}
+            events={events}
+            settings={settings}
+            templates={displayTemplates}
+          />
+        </Suspense>
       ) : tab === 'settings' ? (
         <div className="admin-settings-panel">
           <div className="admin-settings-header">

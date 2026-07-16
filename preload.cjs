@@ -175,6 +175,7 @@ contextBridge.exposeInMainWorld('adminApi', {
                       }),
   getStats:         (filters = {})                => ipcRenderer.invoke('sessions:stats', filters),
   clearSessions:    ()                            => ipcRenderer.invoke('sessions:clear'),
+  updateSessionSoftcopy: (id, patch)              => ipcRenderer.invoke('sessions:update-softcopy', { id, patch }),
   resetTodayMonitorRecords: ()                    => ipcRenderer.invoke('today-monitor:reset-today-records'),
   printExtraSessionCopy: (payload) =>
     ipcRenderer.invoke('today-monitor:print-extra-session-copy', payload),

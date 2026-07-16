@@ -1,13 +1,18 @@
-import { StrictMode } from 'react'
+import { StrictMode, Suspense, lazy } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
-import App from './App.jsx'
-import TodayMonitor from './components/monitor/TodayMonitor.jsx'
 
 const windowType = new URLSearchParams(window.location.search).get('window')
+const App = lazy(() => import('./App.jsx'))
+const TodayMonitor = lazy(() => import('./components/monitor/TodayMonitor.jsx'))
 
 export function Root() {
-  return windowType === 'today-monitor' ? <TodayMonitor /> : <App />
+  const Component = windowType === 'today-monitor' ? TodayMonitor : App
+  return (
+    <Suspense fallback={null}>
+      <Component />
+    </Suspense>
+  )
 }
 
 createRoot(document.getElementById('root')).render(

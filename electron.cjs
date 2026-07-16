@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, protocol, nativeImage, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, protocol, nativeImage, screen, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const fsp = fs.promises;
@@ -650,6 +650,20 @@ function loadRendererWindow(win, windowType = null) {
   return win.loadURL(target);
 }
 
+function configureMediaPermissions() {
+  const defaultSession = session.defaultSession;
+  defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    if (permission === 'media') {
+      callback(true);
+      return;
+    }
+    callback(false);
+  });
+  defaultSession.setPermissionCheckHandler((_webContents, permission) => (
+    permission === 'media'
+  ));
+}
+
 function broadcastToAllWindows(channel, payload) {
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) {
@@ -731,8 +745,26 @@ function createTodayMonitorWindow() {
   return todayMonitorWindow;
 }
 
+function scheduleTodayMonitorWindow() {
+  let scheduled = false;
+  const openMonitor = () => {
+    if (scheduled) return;
+    scheduled = true;
+    setTimeout(() => {
+      if (app.isQuitting || !mainWindow || mainWindow.isDestroyed()) return;
+      if (todayMonitorWindow && !todayMonitorWindow.isDestroyed()) return;
+      createTodayMonitorWindow();
+    }, 750);
+  };
+
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.once('did-finish-load', openMonitor);
+  mainWindow.webContents.once('did-fail-load', openMonitor);
+}
+
 app.whenReady().then(async () => {
   resolvePaths();
+  configureMediaPermissions();
 
   // Bootstrap filesystem
   await fsp.mkdir(templatesDir, { recursive: true });
@@ -799,7 +831,7 @@ app.whenReady().then(async () => {
   });
 
   createWindow();
-  createTodayMonitorWindow();
+  scheduleTodayMonitorWindow();
 });
 
 app.on('before-quit', () => {
@@ -2111,6 +2143,29 @@ function broadcastToRenderers(channel, payload) {
 }
 
 const SESSION_PRINT_STATUSES = new Set(['completed', 'failed', 'cancelled', 'partial']);
+let sessionsCache = {
+  size: null,
+  mtimeMs: null,
+  records: null,
+};
+
+function invalidateSessionsCache() {
+  sessionsCache = {
+    size: null,
+    mtimeMs: null,
+    records: null,
+  };
+}
+
+async function getSessionsFileSignature() {
+  try {
+    const stats = await fsp.stat(sessionsFile);
+    return { size: stats.size, mtimeMs: stats.mtimeMs };
+  } catch {
+    return { size: 0, mtimeMs: 0 };
+  }
+}
+
 function normalizeKeychainCopies(value) {
   const count = Number(value);
   if (isValidKeychainCopies(count)) return count;
@@ -2303,7 +2358,16 @@ function filterSessionsByQuery(all = [], filter = {}) {
 }
 
 async function readAllSessions() {
-  if (!fs.existsSync(sessionsFile)) return [];
+  const signature = await getSessionsFileSignature();
+  if (sessionsCache.records
+    && sessionsCache.size === signature.size
+    && sessionsCache.mtimeMs === signature.mtimeMs) {
+    return sessionsCache.records;
+  }
+  if (!signature.size) {
+    sessionsCache = { ...signature, records: [] };
+    return sessionsCache.records;
+  }
   const raw = await fsp.readFile(sessionsFile, 'utf8');
   const out = [];
   for (const line of raw.split(/\r?\n/)) {
@@ -2311,16 +2375,19 @@ async function readAllSessions() {
     if (!trimmed) continue;
     try { out.push(JSON.parse(trimmed)); } catch { /* skip malformed */ }
   }
+  sessionsCache = { ...signature, records: out };
   return out;
 }
 
 async function writeAllSessions(records = []) {
   if (!Array.isArray(records) || records.length === 0) {
     if (fs.existsSync(sessionsFile)) await fsp.unlink(sessionsFile);
+    invalidateSessionsCache();
     return;
   }
   const nextContents = `${records.map((record) => JSON.stringify(record)).join('\n')}\n`;
   await fsp.writeFile(sessionsFile, nextContents, 'utf8');
+  invalidateSessionsCache();
 }
 
 function getIntegerField(value, fallback = 0) {
@@ -2499,6 +2566,7 @@ ipcMain.handle('sessions:log', async (_ev, payload = {}) => {
   try {
     const record = sanitizeSession(payload);
     await fsp.appendFile(sessionsFile, JSON.stringify(record) + '\n', 'utf8');
+    invalidateSessionsCache();
     // Broadcast to every renderer so any open admin dashboard refreshes
     // immediately — no need for the admin to click refresh.
     for (const win of BrowserWindow.getAllWindows()) {
@@ -2509,6 +2577,44 @@ ipcMain.handle('sessions:log', async (_ev, payload = {}) => {
     return { ok: true, session: record };
   } catch (err) {
     return { ok: false, error: err.message };
+  }
+});
+
+function sanitizeSessionSoftcopyPatch(input = {}) {
+  const patch = {};
+  const stringFields = [
+    'softcopySessionToken',
+    'softcopyPhotoPath',
+    'softcopyGifPath',
+    'softcopyVideoPath',
+    'softcopyExpiresAt',
+    'softcopyStatus',
+    'finalPrintPath',
+    'printImagePath',
+  ];
+  for (const field of stringFields) {
+    if (!Object.prototype.hasOwnProperty.call(input, field)) continue;
+    patch[field] = typeof input[field] === 'string' ? input[field].slice(0, field === 'softcopyStatus' ? 32 : 256) : null;
+  }
+  return patch;
+}
+
+ipcMain.handle('sessions:update-softcopy', async (_ev, { id, patch = {} } = {}) => {
+  try {
+    const sessionId = typeof id === 'string' ? id.trim() : '';
+    if (!sessionId) return { ok: false, error: 'missing session id' };
+    const cleanPatch = sanitizeSessionSoftcopyPatch(patch);
+    if (Object.keys(cleanPatch).length === 0) return { ok: false, error: 'empty softcopy patch' };
+    const updatedSession = await updateSessionRecord(sessionId, (record) => ({
+      ...record,
+      ...cleanPatch,
+    }));
+    if (!updatedSession) return { ok: false, error: 'session not found' };
+    broadcastToRenderers('sessions:updated', updatedSession);
+    broadcastToRenderers('today-monitor:sessions-updated', updatedSession);
+    return { ok: true, session: updatedSession };
+  } catch (err) {
+    return { ok: false, error: err?.message || String(err) };
   }
 });
 
@@ -2708,6 +2814,7 @@ ipcMain.handle('sessions:clear', async () => {
   // Only reachable from the admin dashboard behind a confirm modal.
   try {
     if (fs.existsSync(sessionsFile)) await fsp.unlink(sessionsFile);
+    invalidateSessionsCache();
     // Tell every renderer so an open dashboard re-pulls its (now empty) state.
     broadcastToRenderers('sessions:cleared');
     return { ok: true };

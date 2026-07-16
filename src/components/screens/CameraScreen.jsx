@@ -430,7 +430,7 @@ export default function CameraScreen({
     const dataUrl = CAPTURE_MIME === 'image/jpeg'
       ? canvas.toDataURL(CAPTURE_MIME, CAPTURE_JPEG_QUALITY)
       : await canvasToPngDataUrl(canvas);
-    console.log('[CAPTURE DATA URL CREATED]', inspectDataUrl(dataUrl));
+    if (IS_DEV) console.log('[CAPTURE DATA URL CREATED]', inspectDataUrl(dataUrl));
     if (IS_DEV) {
       console.log('[capture-resolution] captured photo', {
         shotIndex: nextIndex,
@@ -440,17 +440,19 @@ export default function CameraScreen({
         bytesOrLength: dataUrl.length,
         sourceType: CAPTURE_MIME,
       });
+      console.log('[CAPTURE CANVAS AUDIT]', {
+        canvasWidth: canvas.width,
+        canvasHeight: canvas.height,
+        videoWidth: video?.videoWidth || null,
+        videoHeight: video?.videoHeight || null,
+        dataUrlLength: dataUrl.length,
+      });
     }
-    console.log('[CAPTURE CANVAS AUDIT]', {
-      canvasWidth: canvas.width,
-      canvasHeight: canvas.height,
-      videoWidth: video?.videoWidth || null,
-      videoHeight: video?.videoHeight || null,
-      dataUrlLength: dataUrl.length,
-    });
-    const canDecode = await testImageLoad(dataUrl, 'CAPTURE BLOB DATA URL');
-    if (!canDecode) {
-      throw new Error('Captured data URL failed to decode immediately after capture');
+    if (IS_DEV) {
+      const canDecode = await testImageLoad(dataUrl, 'CAPTURE BLOB DATA URL');
+      if (!canDecode) {
+        throw new Error('Captured data URL failed to decode immediately after capture');
+      }
     }
     canvas.width = 0;
     canvas.height = 0;
@@ -460,13 +462,15 @@ export default function CameraScreen({
     // function was defined on an earlier render.
     const newShots = [...shotsRef.current];
     newShots[nextIndex] = dataUrl;
-    console.log('[PHOTO AUDIT capture] new shot', {
-      type: typeof dataUrl,
-      isString: typeof dataUrl === 'string',
-      prefix: typeof dataUrl === 'string' ? dataUrl.slice(0, 100) : null,
-      keys: dataUrl && typeof dataUrl === 'object' ? Object.keys(dataUrl) : null,
-    });
-    console.log('[DATA URL AUDIT capture]', inspectDataUrl(dataUrl));
+    if (IS_DEV) {
+      console.log('[PHOTO AUDIT capture] new shot', {
+        type: typeof dataUrl,
+        isString: typeof dataUrl === 'string',
+        prefix: typeof dataUrl === 'string' ? dataUrl.slice(0, 100) : null,
+        keys: dataUrl && typeof dataUrl === 'object' ? Object.keys(dataUrl) : null,
+      });
+      console.log('[DATA URL AUDIT capture]', inspectDataUrl(dataUrl));
+    }
     shotsRef.current = newShots;
     setShots(newShots);
     const newIndex = nextIndex + 1;
