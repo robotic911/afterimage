@@ -67,13 +67,13 @@ svg {
   --button-min-height: 56px;
   --admin-control-min-height: 44px;
   --touch-target-min: 44px;
-  --kiosk-title-size: clamp(42px, 3.5vw, 56px);
-  --kiosk-section-title-size: clamp(30px, 2.5vw, 40px);
-  --kiosk-instruction-size: clamp(22px, 1.8vw, 28px);
-  --kiosk-helper-size: clamp(18px, 1.3vw, 22px);
-  --kiosk-button-size: clamp(20px, 1.6vw, 26px);
-  --kiosk-button-height: 72px;
-  --kiosk-button-padding-x: 36px;
+  --kiosk-title-size: clamp(34px, 2.8vw, 44px);
+  --kiosk-section-title-size: clamp(24px, 2vw, 32px);
+  --kiosk-instruction-size: clamp(18px, 1.4vw, 23px);
+  --kiosk-helper-size: clamp(15px, 1.05vw, 18px);
+  --kiosk-button-size: clamp(18px, 1.25vw, 22px);
+  --kiosk-button-height: 62px;
+  --kiosk-button-padding-x: 28px;
 }
 
 html, body, #root {

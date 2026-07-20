@@ -9,10 +9,10 @@
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(560px, 1fr) minmax(760px, 900px);
-  gap: clamp(28px, 2.25vw, 44px);
+  grid-template-columns: minmax(0, 1fr) clamp(520px, 34vw, 640px);
+  gap: clamp(14px, 1.2vw, 20px);
   align-items: stretch;
-  padding: 18px 40px 8px;
+  padding: 8px 24px 6px;
   overflow: hidden;
 }
 
@@ -20,6 +20,11 @@
   display: flex;
   justify-content: center;
   align-items: center;
+  overflow: hidden;
+}
+
+.sel-preview-panel > .sel-card-header:empty {
+  display: none;
 }
 
 .sel-preview-panel,
@@ -38,8 +43,8 @@
   height: 100%;
   background: var(--white);
   border: 1px solid var(--border);
-  border-radius: 28px;
-  box-shadow: 0 12px 40px rgba(0,0,0,.08);
+  border-radius: 14px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.07);
 }
 
 .sel-preview-box {
@@ -53,11 +58,11 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
 }
 
 .sel-card-kicker {
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 800;
   letter-spacing: 1.6px;
   text-transform: uppercase;
@@ -65,8 +70,8 @@
 }
 
 .sel-card-title {
-  margin-top: 6px;
-  font-size: clamp(24px, 1.55vw, 28px);
+  margin-top: 3px;
+  font-size: clamp(20px, 1.35vw, 25px);
   font-weight: 800;
   letter-spacing: 0;
   line-height: 1.12;
@@ -74,9 +79,9 @@
 }
 
 .sel-section-helper {
-  margin-top: 7px;
+  margin-top: 4px;
   color: rgba(0,0,0,.62);
-  font-size: 16px;
+  font-size: 13px;
   font-weight: 600;
   line-height: 1.3;
 }
@@ -91,11 +96,11 @@
 .sel-card-chip,
 .sel-card-count {
   flex-shrink: 0;
-  padding: 7px 11px;
+  padding: 5px 9px;
   border-radius: 999px;
   background: rgba(0,0,0,.06);
   color: var(--primary);
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 700;
   line-height: 1.2;
 }
@@ -119,7 +124,9 @@
 
 .sel-preview-wrap {
   background: #fff;
-  box-shadow: 10px 0px 20px rgba(0, 0, 0, 0.621);
+  height: 100%;
+  max-height: 100%;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, .26);
 }
 
 /* Layout-specific preview hooks for Select Background.
@@ -151,7 +158,7 @@
 }
 
 .sel-preview-wrap.layout-preview--studio-quad {
-  --layout-preview-width: 100%;
+  --layout-preview-height: 100%;
   --grid-inset-top: 0px;
   --grid-inset-right: 0px;
   --grid-inset-bottom: 0px;
@@ -169,20 +176,20 @@
 
 .sel-preview-frame-image,
 .sel-preview-template {
-  box-shadow: 10px 10px 10px 10px #888888;
+  box-shadow: none;
 }
 
 .sel-options-box {
   display: flex;
   flex-direction: column;
-  width: min(100%, 900px);
-  max-width: 900px;
+  width: 100%;
+  max-width: 640px;
   box-sizing: border-box;
-  padding: clamp(20px, 1.35vw, 26px);
-  gap: 16px;
+  padding: clamp(12px, .95vw, 16px);
+  gap: 10px;
   border-color: rgba(0,0,0,.1);
-  border-radius: 28px;
-  box-shadow: 0 18px 44px rgba(0,0,0,.09);
+  border-radius: 14px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.07);
 }
 
 .tmpl-card:focus-visible {
@@ -193,15 +200,19 @@
 .sel-backgrounds-section {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   min-height: 0;
+  flex: 1 1 auto;
 }
 
 .sel-grid {
+  flex: 1 1 auto;
+  min-height: 0;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 9px 10px;
+  grid-template-columns: repeat(auto-fit, minmax(122px, 1fr));
+  gap: 8px;
   align-content: start;
+  overflow: hidden;
 }
 
 .sel-empty {
@@ -219,14 +230,16 @@
 .tmpl-card {
   position: relative;
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(28px, auto);
   align-items: center;
-  gap: 8px;
+  justify-items: stretch;
+  gap: 5px;
   width: 100%;
-  min-height: 50px;
-  padding: 5px 30px 5px 5px;
+  min-height: 104px;
+  padding: 6px;
   border: 1px solid rgba(0,0,0,.14);
-  border-radius: 12px;
+  border-radius: 10px;
   background: #ffffff;
   color: var(--dark);
   cursor: pointer;
@@ -234,7 +247,7 @@
   overflow: hidden;
   box-shadow: 0 5px 14px rgba(0,0,0,.06);
   appearance: none;
-  text-align: left;
+  text-align: center;
 }
 
 .tmpl-card:hover {
@@ -253,10 +266,10 @@
 .tmpl-img-wrap {
   position: relative;
   display: block;
-  width: 60px;
-  height: 60px;
+  width: 100%;
+  height: clamp(64px, 7vh, 86px);
   border: 1px solid rgba(0,0,0,.1);
-  border-radius: 8px;
+  border-radius: 7px;
   overflow: hidden;
   background: linear-gradient(180deg, #f7f7f7 0%, #ececec 100%);
 }
@@ -282,10 +295,10 @@
 
 .tmpl-card-name {
   min-width: 0;
-  padding-left: 25px;
+  padding: 0 18px 0 2px;
   color: var(--dark);
-  font-size: clamp(14px, .85vw, 16px);
-  font-weight: 700;
+  font-size: clamp(12px, .74vw, 14px);
+  font-weight: 800;
   line-height: 1.12;
   overflow-wrap: anywhere;
 }
@@ -316,22 +329,21 @@
 
 @media (max-width: 1500px), (max-height: 820px) {
   .sel-body {
-    grid-template-columns: minmax(520px, 1fr) minmax(720px, 860px);
-    gap: 24px;
-    padding: 14px 32px 6px;
+    grid-template-columns: minmax(0, 1fr) clamp(500px, 35vw, 620px);
+    gap: 14px;
+    padding: 6px 18px;
   }
 
   .sel-options-box {
-    padding: 18px 20px;
-    gap: 13px;
+    padding: 12px;
+    gap: 8px;
   }
 
   .tmpl-card {
-    min-height: 46px;
+    min-height: 94px;
   }
 
   .tmpl-img-wrap {
-    width: 34px;
-    height: 34px;
+    height: 58px;
   }
 }

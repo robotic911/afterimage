@@ -3,18 +3,18 @@
 .arrange-body {
   flex: 1;
   min-height: 0;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(360px, 26vw, 500px);
   overflow: hidden;
 }
 
 .arrange-preview-panel {
-  flex: 1;
   min-width: 0;
   min-height: 0;
-  padding: 10px 56px;
+  padding: 8px 18px 8px 24px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 8px;
 }
 
 .arrange-preview-label {
@@ -33,15 +33,15 @@
   align-items: center;
   justify-content: center;
   background: var(--white);
-  border-radius: var(--r-lg);
-  border: 1px solid var(--border);
+  border-radius: 12px;
+  border: 1px solid rgba(0,0,0,.1);
   overflow: hidden;
-  padding: 24px;
-  box-shadow: 0 2px 16px rgba(0,0,0,.06);
+  padding: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.07);
 }
 
 .arrange-preview-panel .layout-preview-frame {
-  --layout-preview-height: 76vh;
+  --layout-preview-height: 100%;
 }
 
 .arrange-frame-wrap {
@@ -52,7 +52,7 @@
 /* Layout-specific preview hooks for Arrange Pictures.
    Keep slot math shared; use these selectors only for visual tuning. */
 .arrange-frame-wrap.layout-preview--classic-strip-4 {
-  --layout-preview-height: 76vh;
+  --layout-preview-height: 100%;
   --grid-inset-top: 0px;
   --grid-inset-right: 0px;
   --grid-inset-bottom: 0px;
@@ -60,7 +60,7 @@
 }
 
 .arrange-frame-wrap.layout-preview--classic-strip-3 {
-  --layout-preview-height: 76vh;
+  --layout-preview-height: 100%;
   --grid-inset-top: 0px;
   --grid-inset-right: 0px;
   --grid-inset-bottom: 0px;
@@ -68,7 +68,7 @@
 }
 
 .arrange-frame-wrap.layout-preview--portrait-grid {
-  --layout-preview-height: 76vh;
+  --layout-preview-height: 100%;
   --grid-inset-top: 0px;
   --grid-inset-right: 0px;
   --grid-inset-bottom: 0px;
@@ -76,7 +76,7 @@
 }
 
 .arrange-frame-wrap.layout-preview--studio-quad {
-  --layout-preview-height: 76vh;
+  --layout-preview-height: 100%;
   --grid-inset-top: 0px;
   --grid-inset-right: 0px;
   --grid-inset-bottom: 0px;
@@ -118,50 +118,52 @@
   justify-content: center;
   text-align: center;
   color: var(--mid);
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 700;
   letter-spacing: .5px;
   padding: 12px;
 }
 
 .arrange-sidebar {
-  max-width: 800px;
-    flex-shrink: 0;
+  min-width: 0;
+  min-height: 0;
   background: var(--white);
   border-left: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  padding: 40px 40px 32px;
-  gap: 16px;
+  padding: 22px 22px 16px;
+  gap: 10px;
+  overflow: hidden;
 }
 
 .arrange-sidebar-title {
-  font-size: var(--kiosk-section-title-size);
+  font-size: clamp(23px, 1.8vw, 30px);
   font-weight: 800;
   color: var(--dark);
   letter-spacing: -1px;
 }
 
 .arrange-sidebar-copy {
-  font-size: var(--kiosk-instruction-size);
-  line-height: 1.5;
+  font-size: clamp(17px, 1.2vw, 21px);
+  line-height: 1.25;
   color: #444;
   font-weight: 700;
 }
 
 .arrange-thumb-grid {
-  --arrange-thumb-width: clamp(150px, 12vw, 220px);
+  --arrange-thumb-width: minmax(0, 1fr);
   width: 100%;
+  flex: 1 1 auto;
   height: auto;
   min-height: 0;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, var(--arrange-thumb-width)));
+  grid-template-columns: repeat(2, var(--arrange-thumb-width));
   grid-auto-rows: auto;
   justify-content: center;
   align-content: start;
-  gap: 16px 20px;
+  gap: 10px;
   overflow: hidden;
-  margin-top: 4px;
+  margin-top: 0;
 }
 
 .arrange-thumb-cell {
@@ -173,18 +175,18 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 5px;
   overflow: hidden;
-  padding: 8px;
+  padding: 4px;
   border: 2px solid transparent;
-  border-radius: 20px;
+  border-radius: 12px;
   position: relative;
 }
 
 .arrange-photo-label {
   width: 100%;
   color: var(--dark);
-  font-size: 17px;
+  font-size: 14px;
   font-weight: 900;
   text-align: center;
 }
@@ -199,7 +201,7 @@
   max-width: 100%;
   max-height: 100%;
   border: 2px solid var(--border);
-  border-radius: 18px;
+  border-radius: 10px;
   background: var(--light-bg);
   cursor: pointer;
   transition: transform .15s, border-color .15s, box-shadow .15s;
@@ -220,8 +222,8 @@
 
 .arrange-thumb.selected {
   border-color: var(--primary);
-  border-width: 4px;
-  box-shadow: 0 0 0 5px rgba(0,0,0,.16);
+  border-width: 3px;
+  box-shadow: 0 0 0 4px rgba(0,0,0,.14);
   transform: translateY(-2px);
 }
 
@@ -240,7 +242,7 @@
   place-items: center;
   padding: 10px;
   color: #8a1f1f;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 800;
   text-align: center;
 }
@@ -257,25 +259,25 @@
   position: absolute;
   top: 6px;
   right: 6px;
-  width: 44px;
-  height: 44px;
+  width: 34px;
+  height: 34px;
   border-radius: 50%;
   background: var(--primary);
   color: var(--secondary);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 22px;
+  font-size: 18px;
   font-weight: 800;
   box-shadow: 0 6px 18px rgba(0,0,0,.18);
 }
 
 .arrange-reset-btn {
   margin-top: auto;
-  font-size: var(--kiosk-button-size);
-  min-height: 64px;
-  padding-left: 28px;
-  padding-right: 28px;
+  font-size: clamp(17px, 1.1vw, 20px);
+  min-height: 50px;
+  padding-left: 22px;
+  padding-right: 22px;
 }
 
 .arrange-footer {

@@ -7,43 +7,62 @@
   overflow: hidden;
   height: 100%;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   align-items: stretch;
+  position: relative;
 }
 
 /* top bar */
 .cam-topbar {
-  width: 100%;
+  position: absolute;
+  top: 10px;
+  left: calc(clamp(220px, 12vw, 240px) + 24px);
+  right: calc(clamp(132px, 8vw, 164px) + 24px);
+  z-index: 8;
   display: flex;
   align-items: center;
-  justify-content: flex-start;
-  padding: 18px 32px 10px;
+  justify-content: center;
+  padding: 0;
   box-sizing: border-box;
+  pointer-events: none;
 }
 
 .cam-live {
   display: flex;
   align-items: center;
-  gap: 10px;
-  font-size: clamp(22px, 1.8vw, 30px);
+  gap: 8px;
+  max-width: 100%;
+  min-height: 44px;
+  padding: 8px 16px;
+  border: 1px solid rgba(255, 255, 255, .14);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, .52);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .24);
+  font-size: clamp(17px, 1.2vw, 22px);
   font-weight: 800;
   letter-spacing: 0;
   color: rgba(255, 255, 255, .92);
+  overflow: hidden;
 }
 
 .cam-live span {
   line-height: 1.1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .cam-live small {
-  margin-left: 10px;
-  padding: 6px 10px;
+  margin-left: 4px;
+  padding: 5px 9px;
   border-radius: 999px;
   background: rgba(255, 255, 255, .14);
   color: rgba(255, 255, 255, .78);
-  font-size: clamp(14px, 1vw, 18px);
+  font-size: clamp(12px, .85vw, 15px);
   font-weight: 800;
   line-height: 1;
+  white-space: nowrap;
 }
 
 .live-dot {
@@ -65,13 +84,13 @@
   width: 100%;
   display: grid;
   grid-template-columns:
-    clamp(280px, 15vw, 310px)
+    clamp(220px, 12vw, 240px)
     minmax(0, 1fr)
-    clamp(150px, 10.5vw, 220px);
-  gap: clamp(16px, 1.15vw, 22px);
+    clamp(132px, 8vw, 164px);
+  gap: clamp(8px, .65vw, 12px);
   align-items: stretch;
   overflow: hidden;
-  padding: 0 clamp(18px, 1.15vw, 22px) clamp(16px, 2vh, 24px);
+  padding: clamp(8px, .8vw, 14px);
   box-sizing: border-box;
 }
 
@@ -103,9 +122,9 @@
   height: 100%;
   display: flex;
   flex-direction: column;
-  padding: clamp(18px, 1.35vw, 26px);
+  padding: clamp(10px, .9vw, 14px);
   border: 1px solid rgba(255, 255, 255, .18);
-  border-radius: 24px;
+  border-radius: 16px;
   background:
     linear-gradient(180deg, rgba(24, 24, 24, .94), rgba(8, 8, 8, .9));
   box-shadow: 0 22px 56px rgba(0, 0, 0, .34);
@@ -117,24 +136,24 @@
 .camera-filter-heading {
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  margin-bottom: clamp(14px, 1.5vh, 20px);
-  padding-bottom: clamp(14px, 1.4vh, 18px);
+  gap: 4px;
+  margin-bottom: clamp(8px, 1vh, 12px);
+  padding-bottom: clamp(8px, 1vh, 12px);
   border-bottom: 1px solid rgba(255, 255, 255, .12);
   color: #ffffff;
 }
 
 .camera-filter-heading strong {
-  font-size: clamp(25px, 1.7vw, 32px);
+  font-size: clamp(19px, 1.25vw, 24px);
   line-height: 1.1;
-  letter-spacing: -.02em;
+  letter-spacing: 0;
 }
 
 .camera-filter-heading span {
   color: rgba(255, 255, 255, .7);
-  font-size: clamp(14px, .9vw, 17px);
+  font-size: clamp(12px, .8vw, 14px);
   font-weight: 600;
-  line-height: 1.4;
+  line-height: 1.25;
 }
 
 .camera-filter-panel.is-locked .camera-filter-heading span {
@@ -147,7 +166,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: repeat(var(--filter-count), minmax(0, 1fr));
-  gap: clamp(7px, .85vh, 11px);
+  gap: clamp(5px, .6vh, 8px);
 }
 
 .camera-filter-option {
@@ -155,12 +174,12 @@
   display: flex;
   min-width: 0;
   min-height: 0;
-  padding: clamp(8px, .75vh, 12px) clamp(12px, .9vw, 16px);
+  padding: clamp(6px, .6vh, 9px) clamp(7px, .65vw, 10px);
   align-items: center;
   justify-content: flex-start;
-  gap: clamp(10px, .8vw, 14px);
+  gap: clamp(7px, .55vw, 10px);
   border: 1px solid rgba(255, 255, 255, .2);
-  border-radius: 16px;
+  border-radius: 10px;
   background: rgba(255, 255, 255, .08);
   color: #ffffff;
   font: inherit;
@@ -199,10 +218,10 @@
 
 .camera-filter-swatch {
   flex: 0 0 auto;
-  width: clamp(42px, 2.75vw, 52px);
-  height: clamp(42px, 2.75vw, 52px);
+  width: clamp(32px, 2.1vw, 38px);
+  height: clamp(32px, 2.1vw, 38px);
   border: 1px solid rgba(255, 255, 255, .45);
-  border-radius: 13px;
+  border-radius: 9px;
   box-shadow:
     inset 0 0 0 1px rgba(0, 0, 0, .15),
     0 7px 16px rgba(0, 0, 0, .18);
@@ -219,7 +238,7 @@
 .camera-filter-name {
   overflow: hidden;
   color: #ffffff;
-  font-size: clamp(14px, 1vw, 16px);
+  font-size: clamp(13px, .85vw, 15px);
   font-weight: 800;
   line-height: 1.1;
   text-overflow: ellipsis;
@@ -229,7 +248,7 @@
 .camera-filter-desc {
   overflow: hidden;
   color: rgba(255, 255, 255, .62);
-  font-size: clamp(12px, .78vw, 14px);
+  font-size: clamp(11px, .72vw, 12px);
   font-weight: 600;
   line-height: 1.15;
   text-overflow: ellipsis;
@@ -238,14 +257,14 @@
 
 .camera-filter-check {
   flex: 0 0 auto;
-  width: 24px;
-  height: 24px;
+  width: 19px;
+  height: 19px;
   display: grid;
   place-items: center;
   border-radius: 999px;
   background: #ffffff;
   color: #000000;
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 900;
   opacity: 0;
   transform: scale(.72);
@@ -266,7 +285,7 @@
   max-height: 100%;
   overflow: hidden;
   flex: 0 0 auto;
-  border-radius: 10px;
+  border-radius: 6px;
   background: #0a0a0a;
   border: 1px solid rgba(255, 255, 255, .08);
   box-shadow: 0 20px 60px rgba(0, 0, 0, .36);
@@ -412,7 +431,7 @@
 .camera-capture-status {
   position: absolute;
   left: 50%;
-  bottom: clamp(122px, 14vh, 150px);
+  bottom: clamp(18px, 2.4vh, 28px);
   z-index: 4;
   transform: translateX(-50%);
   padding: 10px 18px;
@@ -438,10 +457,10 @@
   grid-template-rows: repeat(var(--shot-count), minmax(0, 1fr));
   align-items: stretch;
   justify-items: center;
-  gap: clamp(8px, 1.2vh, 14px);
-  padding: clamp(10px, 1vw, 14px);
+  gap: clamp(6px, .85vh, 10px);
+  padding: clamp(6px, .65vw, 9px);
   border: 1px solid rgba(255, 255, 255, .1);
-  border-radius: 24px;
+  border-radius: 16px;
   background: rgba(0, 0, 0, .28);
   backdrop-filter: blur(10px);
   box-sizing: border-box;
@@ -494,16 +513,16 @@
 
 .camera-screen--portrait .camera-side-thumb-cell,
 .camera-screen--portrait .camera-bottom-thumb-cell {
-  height: 100%;
-  width: auto;
+  height: auto;
+  width: 100%;
 }
 
 .camera-screen--portrait .camera-side-strip,
 .camera-screen--portrait .camera-bottom-strip {
   height: 100%;
   width: 100%;
-  gap: clamp(8px, 1vh, 12px);
-  padding: clamp(10px, 1vw, 14px);
+  gap: clamp(6px, .8vh, 10px);
+  padding: clamp(6px, .65vw, 9px);
 }
 
 .camera-screen--portrait .camera-side-thumb-cell,
@@ -514,8 +533,8 @@
 
 .camera-screen--portrait .camera-side-strip .thumb-slot,
 .camera-screen--portrait .camera-bottom-strip .thumb-slot {
-  width: auto;
-  height: 100%;
+  width: 100%;
+  height: auto;
 }
 
 .camera-screen--landscape .camera-side-thumb-cell,
@@ -591,7 +610,7 @@
 
 @media (max-height: 760px) {
   .cam-topbar {
-    padding-block: 12px 4px;
+    top: 8px;
   }
 
   .thumb-slot {
@@ -600,12 +619,12 @@
   }
 
   .camera-capture-status {
-    bottom: clamp(98px, 13vh, 120px);
+    bottom: 16px;
   }
 
   .camera-filter-panel {
-    padding: 12px 14px;
-    border-radius: 18px;
+    padding: 8px 9px;
+    border-radius: 12px;
   }
 
   .camera-filter-heading {
@@ -615,7 +634,7 @@
   }
 
   .camera-filter-heading strong {
-    font-size: 21px;
+    font-size: 18px;
   }
 
   .camera-filter-heading span {
@@ -655,22 +674,27 @@
 
   .camera-side-strip,
   .camera-bottom-strip {
-    padding: 8px;
-    border-radius: 18px;
+    padding: 6px;
+    border-radius: 14px;
   }
 }
 
 @media (max-width: 1500px) {
   .cam-main {
     grid-template-columns:
-      clamp(254px, 18vw, 286px)
+      clamp(208px, 15vw, 226px)
       minmax(0, 1fr)
-      clamp(136px, 14vw, 210px);
-    gap: 16px;
-    padding-inline: 18px;
+      clamp(122px, 9vw, 148px);
+    gap: 8px;
+    padding: 10px;
   }
 
   .camera-filter-panel {
-    padding-inline: 16px;
+    padding-inline: 10px;
+  }
+
+  .cam-topbar {
+    left: calc(clamp(208px, 15vw, 226px) + 20px);
+    right: calc(clamp(122px, 9vw, 148px) + 20px);
   }
 }

@@ -31,6 +31,15 @@ export default function ReviewPhotosScreen({
   const selectedCount = selectedRetakeIndexes.length;
   const selectedSummary = formatPhotoList(selectedRetakeIndexes);
   const isRetakeMode = reviewMode === 'retake-select';
+  const reviewStatusText = isRetakeMode
+    ? selectedCount === 0
+      ? 'Select at least one photo to retake.'
+      : `${selectedCount} photo${selectedCount === 1 ? '' : 's'} selected. Only selected photos will be replaced.`
+    : hasUsedRetakeChance
+      ? 'Retake already used.'
+      : retakeCompletedKey > 0
+        ? 'Selected photos updated.'
+        : 'Photos are arranged on the next screen.';
 
   useEffect(() => {
     if (!active) {
@@ -172,43 +181,15 @@ export default function ReviewPhotosScreen({
             })}
           </div>
         </div>
-
-        <aside className="review-photos-sidebar">
-          {isRetakeMode ? (
-            <>
-              <div className="review-sidebar-title">Retake Selection</div>
-              <div className="review-sidebar-copy">Only selected photos will be replaced.</div>
-              <div className={`review-selected-count ${selectedCount > 0 ? 'has-selection' : ''}`}>
-                {selectedCount === 0
-                  ? 'Select at least one photo.'
-                  : `${selectedCount} photo${selectedCount === 1 ? '' : 's'} selected`}
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="review-sidebar-title">Ready to continue?</div>
-              <div className="review-sidebar-copy">
-                If you want to change any photo, tap Retake Photos.
-              </div>
-              {retakeCompletedKey > 0 && !hasUsedRetakeChance && (
-                <div className="review-status-banner" role="status">
-                  Selected photos updated.
-                </div>
-              )}
-              {hasUsedRetakeChance && (
-                <div className="review-status-banner" role="status">
-                  Retake already used.
-                </div>
-              )}
-              <div className="review-sidebar-note">
-                Photos are arranged on the next screen.
-              </div>
-            </>
-          )}
-        </aside>
       </div>
 
       <div className="page-footer review-photos-footer">
+        <div
+          className={`review-footer-status ${selectedCount > 0 ? 'has-selection' : ''}`}
+          role="status"
+        >
+          {reviewStatusText}
+        </div>
         {isRetakeMode ? (
           <>
             <button
@@ -240,11 +221,7 @@ export default function ReviewPhotosScreen({
               >
                 Retake Photos
               </button>
-            ) : (
-              <div className="review-retake-used-note" role="status">
-                Retake already used.
-              </div>
-            )}
+            ) : null}
             <button
               type="button"
               className="btn-primary review-primary-btn"
