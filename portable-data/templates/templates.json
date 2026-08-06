@@ -1,0 +1,1267 @@
+{
+  "exportedAt": "2026-07-20T12:38:46.634Z",
+  "schemaVersion": 1,
+  "templates": [
+    {
+      "assets": {
+        "template": "assets/default-classic-black/template.png"
+      },
+      "copiedAssetNames": [
+        "template.png"
+      ],
+      "createdAt": "2026-04-27T09:30:12.369Z",
+      "desc": "A clean black frame with a sleek studio feel",
+      "enabled": true,
+      "eventId": null,
+      "id": "default-classic-black",
+      "layoutId": null,
+      "mode": "daily",
+      "name": "Classic Black",
+      "storageMode": "legacy",
+      "type": "Uncategorized",
+      "updatedAt": "2026-04-27T09:30:12.369Z"
+    },
+    {
+      "assets": {
+        "template": "assets/default-dark-maroon/template.png"
+      },
+      "copiedAssetNames": [
+        "template.png"
+      ],
+      "createdAt": "2026-04-21T08:29:59.348Z",
+      "desc": "Rich burgundy depth with vintage character",
+      "enabled": true,
+      "eventId": null,
+      "id": "default-dark-maroon",
+      "layoutId": null,
+      "mode": "daily",
+      "name": "Dark Maroon",
+      "storageMode": "legacy",
+      "type": "Uncategorized",
+      "updatedAt": "2026-04-24T19:58:00.989Z"
+    },
+    {
+      "assets": {
+        "template": "assets/default-dark-teal/template.png"
+      },
+      "copiedAssetNames": [
+        "template.png"
+      ],
+      "createdAt": "2026-04-21T08:29:59.348Z",
+      "desc": "Deep moody tones with a cinematic edge",
+      "enabled": true,
+      "eventId": null,
+      "id": "default-dark-teal",
+      "layoutId": null,
+      "mode": "daily",
+      "name": "Dark Teal",
+      "storageMode": "legacy",
+      "type": "Uncategorized",
+      "updatedAt": "2026-04-24T19:58:14.043Z"
+    },
+    {
+      "assets": {
+        "template": "assets/a395657aa318/template.png"
+      },
+      "copiedAssetNames": [
+        "template.png"
+      ],
+      "createdAt": "2026-04-23T14:07:56.105Z",
+      "desc": "The OG!",
+      "enabled": true,
+      "eventId": null,
+      "id": "a395657aa318",
+      "layoutId": null,
+      "mode": "daily",
+      "name": "KUKU Original",
+      "storageMode": "legacy",
+      "type": "Uncategorized",
+      "updatedAt": "2026-04-24T19:58:36.417Z"
+    },
+    {
+      "assets": {
+        "template": "assets/default-original/template.png"
+      },
+      "copiedAssetNames": [
+        "template.png"
+      ],
+      "createdAt": "2026-04-27T09:30:12.369Z",
+      "desc": "The classic KUKU look with familiar booth styling",
+      "enabled": true,
+      "eventId": null,
+      "id": "default-original",
+      "layoutId": null,
+      "mode": "daily",
+      "name": "Original",
+      "storageMode": "legacy",
+      "type": "Uncategorized",
+      "updatedAt": "2026-04-27T09:30:12.369Z"
+    },
+    {
+      "assets": {
+        "template": "assets/default-soft-white/template.png"
+      },
+      "copiedAssetNames": [
+        "template.png"
+      ],
+      "createdAt": "2026-04-27T09:30:12.369Z",
+      "desc": "Bright minimal tones for a crisp timeless strip",
+      "enabled": true,
+      "eventId": null,
+      "id": "default-soft-white",
+      "layoutId": null,
+      "mode": "daily",
+      "name": "Soft White",
+      "storageMode": "legacy",
+      "type": "Uncategorized",
+      "updatedAt": "2026-04-27T09:30:12.369Z"
+    },
+    {
+      "assets": {
+        "template": "assets/default-warm-blush/template.png"
+      },
+      "copiedAssetNames": [
+        "template.png"
+      ],
+      "createdAt": "2026-04-21T08:29:59.348Z",
+      "desc": "Soft rosy warmth for a dreamy feel",
+      "enabled": true,
+      "eventId": null,
+      "id": "default-warm-blush",
+      "layoutId": null,
+      "mode": "daily",
+      "name": "Warm Blush",
+      "storageMode": "legacy",
+      "type": "Uncategorized",
+      "updatedAt": "2026-04-24T19:58:24.674Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/classic-strip-3-classic-black/overlay.png",
+        "preview": "assets/classic-strip-3-classic-black/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-06T20:09:07.415Z",
+      "desc": "A clean black frame with a sleek studio feel",
+      "enabled": true,
+      "eventId": null,
+      "id": "classic-strip-3-classic-black",
+      "layoutId": "classic-strip-3",
+      "mode": "daily",
+      "name": "Classic Black",
+      "storageMode": "legacy",
+      "type": "Original",
+      "updatedAt": "2026-05-30T08:55:28.754Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/classic-strip-3-dream/overlay.png",
+        "preview": "assets/classic-strip-3-dream/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-06-07T04:49:02.240Z",
+      "desc": "",
+      "enabled": true,
+      "eventId": null,
+      "id": "classic-strip-3-dream",
+      "layoutId": "classic-strip-3",
+      "mode": "daily",
+      "name": "Dream",
+      "type": "Original",
+      "updatedAt": "2026-06-07T04:49:54.039Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/classic-strip-3-fruity/overlay.png",
+        "preview": "assets/classic-strip-3-fruity/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-06-07T04:48:38.434Z",
+      "desc": "",
+      "enabled": true,
+      "eventId": null,
+      "id": "classic-strip-3-fruity",
+      "layoutId": "classic-strip-3",
+      "mode": "daily",
+      "name": "Fruity",
+      "type": "Original",
+      "updatedAt": "2026-06-07T04:48:38.434Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/classic-strip-3-invincible-navy/overlay.png",
+        "preview": "assets/classic-strip-3-invincible-navy/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-06T20:09:24.297Z",
+      "desc": "Deep navy styling with a bold modern finish",
+      "enabled": true,
+      "eventId": null,
+      "id": "classic-strip-3-invincible-navy",
+      "layoutId": "classic-strip-3",
+      "mode": "daily",
+      "name": "Invincible Navy",
+      "storageMode": "legacy",
+      "type": "Themed",
+      "updatedAt": "2026-05-30T09:39:45.083Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/classic-strip-3-kodak-yellow/overlay.png",
+        "preview": "assets/classic-strip-3-kodak-yellow/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-06T20:09:29.932Z",
+      "desc": "Bold retro yellow styling inspired by vintage photo stock",
+      "enabled": true,
+      "eventId": null,
+      "id": "classic-strip-3-kodak-yellow",
+      "layoutId": "classic-strip-3",
+      "mode": "daily",
+      "name": "Kodak Yellow",
+      "storageMode": "legacy",
+      "type": "Themed",
+      "updatedAt": "2026-05-30T09:39:49.940Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/classic-strip-3-love-lavender/overlay.png",
+        "preview": "assets/classic-strip-3-love-lavender/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-06T20:09:42.808Z",
+      "desc": "Soft lavender theme with a sweet romantic mood",
+      "enabled": true,
+      "eventId": null,
+      "id": "classic-strip-3-love-lavender",
+      "layoutId": "classic-strip-3",
+      "mode": "daily",
+      "name": "Love Lavender",
+      "storageMode": "legacy",
+      "type": "Themed",
+      "updatedAt": "2026-05-30T09:39:52.358Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/classic-strip-3-mercury/overlay.png",
+        "preview": "assets/classic-strip-3-mercury/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-06-07T04:48:01.916Z",
+      "desc": "",
+      "enabled": true,
+      "eventId": null,
+      "id": "classic-strip-3-mercury",
+      "layoutId": "classic-strip-3",
+      "mode": "daily",
+      "name": "Mercury",
+      "type": "Original",
+      "updatedAt": "2026-06-07T04:48:01.916Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/classic-strip-3-omni-red/overlay.png",
+        "preview": "assets/classic-strip-3-omni-red/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-06T20:09:49.670Z",
+      "desc": "Bold red styling with a vivid high-energy look",
+      "enabled": true,
+      "eventId": null,
+      "id": "classic-strip-3-omni-red",
+      "layoutId": "classic-strip-3",
+      "mode": "daily",
+      "name": "Omni Red",
+      "storageMode": "legacy",
+      "type": "Themed",
+      "updatedAt": "2026-05-30T09:39:55.352Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/classic-strip-3-original/overlay.png",
+        "preview": "assets/classic-strip-3-original/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-06T20:09:56.062Z",
+      "desc": "The classic Afterimage look with familiar booth styling",
+      "enabled": true,
+      "eventId": null,
+      "id": "classic-strip-3-original",
+      "layoutId": "classic-strip-3",
+      "mode": "daily",
+      "name": "Original",
+      "storageMode": "legacy",
+      "type": "Original",
+      "updatedAt": "2026-05-30T09:39:58.160Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/classic-strip-3-peach/overlay.png",
+        "preview": "assets/classic-strip-3-peach/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-06T20:10:03.208Z",
+      "desc": "Soft peach palette with a warm, friendly finish",
+      "enabled": true,
+      "eventId": null,
+      "id": "classic-strip-3-peach",
+      "layoutId": "classic-strip-3",
+      "mode": "daily",
+      "name": "Peach",
+      "storageMode": "legacy",
+      "type": "Original",
+      "updatedAt": "2026-05-30T09:40:00.396Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/classic-strip-3-pink/overlay.png",
+        "preview": "assets/classic-strip-3-pink/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-06T20:10:14.423Z",
+      "desc": "Candy pink backdrop for a fun and playful strip",
+      "enabled": true,
+      "eventId": null,
+      "id": "classic-strip-3-pink",
+      "layoutId": "classic-strip-3",
+      "mode": "daily",
+      "name": "Pink",
+      "storageMode": "legacy",
+      "type": "Original",
+      "updatedAt": "2026-05-30T09:40:06.480Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/classic-strip-3-soft-white/overlay.png",
+        "preview": "assets/classic-strip-3-soft-white/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-06T20:10:20.847Z",
+      "desc": "Bright minimal tones for a crisp timeless strip",
+      "enabled": true,
+      "eventId": null,
+      "id": "classic-strip-3-soft-white",
+      "layoutId": "classic-strip-3",
+      "mode": "daily",
+      "name": "Soft White",
+      "storageMode": "legacy",
+      "type": "Original",
+      "updatedAt": "2026-05-30T10:51:34.864Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/classic-strip-3-sunrise/overlay.png",
+        "preview": "assets/classic-strip-3-sunrise/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-06-07T04:47:17.484Z",
+      "desc": "",
+      "enabled": true,
+      "eventId": null,
+      "id": "classic-strip-3-sunrise",
+      "layoutId": "classic-strip-3",
+      "mode": "daily",
+      "name": "Sunrise",
+      "type": "Original",
+      "updatedAt": "2026-06-07T04:47:17.484Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/classic-strip-4-classic-black/overlay.png",
+        "preview": "assets/classic-strip-4-classic-black/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-30T07:30:09.608Z",
+      "desc": "A clean black frame with a sleek studio feel",
+      "enabled": true,
+      "eventId": null,
+      "id": "classic-strip-4-classic-black",
+      "layoutId": "classic-strip-4",
+      "mode": "daily",
+      "name": "Classic Black",
+      "type": "Original",
+      "updatedAt": "2026-05-30T07:30:09.608Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/classic-strip-4-royal-blue/overlay.png",
+        "preview": "assets/classic-strip-4-royal-blue/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-06T20:23:48.295Z",
+      "desc": "Blue Blooded",
+      "enabled": true,
+      "eventId": null,
+      "id": "classic-strip-4-royal-blue",
+      "layoutId": "classic-strip-4",
+      "mode": "daily",
+      "name": "Dream",
+      "storageMode": "legacy",
+      "type": "Original",
+      "updatedAt": "2026-05-30T09:44:32.867Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/classic-strip-4-fruity/overlay.png",
+        "preview": "assets/classic-strip-4-fruity/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-30T09:45:24.008Z",
+      "desc": "",
+      "enabled": true,
+      "eventId": null,
+      "id": "classic-strip-4-fruity",
+      "layoutId": "classic-strip-4",
+      "mode": "daily",
+      "name": "Fruity",
+      "type": "Original",
+      "updatedAt": "2026-05-30T09:45:24.008Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/classic-strip-4-invincible-navy/overlay.png",
+        "preview": "assets/classic-strip-4-invincible-navy/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-06T20:06:23.409Z",
+      "desc": "Deep navy styling with a bold modern finish",
+      "enabled": true,
+      "eventId": null,
+      "id": "classic-strip-4-invincible-navy",
+      "layoutId": "classic-strip-4",
+      "mode": "daily",
+      "name": "Invincible Navy",
+      "storageMode": "legacy",
+      "type": "Original",
+      "updatedAt": "2026-05-30T09:38:23.313Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/classic-strip-4-kodak-yellow/overlay.png",
+        "preview": "assets/classic-strip-4-kodak-yellow/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-06T20:06:31.775Z",
+      "desc": "Bold retro yellow styling inspired by vintage photo stock",
+      "enabled": true,
+      "eventId": null,
+      "id": "classic-strip-4-kodak-yellow",
+      "layoutId": "classic-strip-4",
+      "mode": "daily",
+      "name": "Kodak Yellow",
+      "storageMode": "legacy",
+      "type": "Original",
+      "updatedAt": "2026-05-30T08:04:55.683Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/classic-strip-4-love-lavender/overlay.png",
+        "preview": "assets/classic-strip-4-love-lavender/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-06T20:06:37.949Z",
+      "desc": "Soft lavender theme with a sweet romantic mood",
+      "enabled": true,
+      "eventId": null,
+      "id": "classic-strip-4-love-lavender",
+      "layoutId": "classic-strip-4",
+      "mode": "daily",
+      "name": "Love Lavender",
+      "storageMode": "legacy",
+      "type": "Original",
+      "updatedAt": "2026-05-30T07:33:48.343Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/classic-strip-4-mercury/overlay.png",
+        "preview": "assets/classic-strip-4-mercury/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-06T20:23:25.123Z",
+      "desc": "Shiny!",
+      "enabled": true,
+      "eventId": null,
+      "id": "classic-strip-4-mercury",
+      "layoutId": "classic-strip-4",
+      "mode": "daily",
+      "name": "Mercury",
+      "storageMode": "legacy",
+      "type": "Themed",
+      "updatedAt": "2026-05-30T09:44:49.292Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/classic-strip-4-omni-red/overlay.png",
+        "preview": "assets/classic-strip-4-omni-red/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-06T20:06:49.719Z",
+      "desc": "Bold red styling with a vivid high-energy look",
+      "enabled": true,
+      "eventId": null,
+      "id": "classic-strip-4-omni-red",
+      "layoutId": "classic-strip-4",
+      "mode": "daily",
+      "name": "Omni Red",
+      "storageMode": "legacy",
+      "type": "Original",
+      "updatedAt": "2026-05-30T09:39:25.871Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/classic-strip-4-original/overlay.png",
+        "preview": "assets/classic-strip-4-original/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-06T20:07:01.078Z",
+      "desc": "The classic Afterimage look with familiar booth styling",
+      "enabled": true,
+      "eventId": null,
+      "id": "classic-strip-4-original",
+      "layoutId": "classic-strip-4",
+      "mode": "daily",
+      "name": "Original",
+      "storageMode": "legacy",
+      "type": "Original",
+      "updatedAt": "2026-05-30T09:39:29.733Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/classic-strip-4-peach/overlay.png",
+        "preview": "assets/classic-strip-4-peach/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-06T20:07:09.193Z",
+      "desc": "Soft peach palette with a warm, friendly finish",
+      "enabled": true,
+      "eventId": null,
+      "id": "classic-strip-4-peach",
+      "layoutId": "classic-strip-4",
+      "mode": "daily",
+      "name": "Peach",
+      "storageMode": "legacy",
+      "type": "Original",
+      "updatedAt": "2026-05-30T09:39:35.193Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/classic-strip-4-pink/overlay.png",
+        "preview": "assets/classic-strip-4-pink/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-06T20:10:45.691Z",
+      "desc": "Candy pink backdrop for a fun and playful strip",
+      "enabled": true,
+      "eventId": null,
+      "id": "classic-strip-4-pink",
+      "layoutId": "classic-strip-4",
+      "mode": "daily",
+      "name": "Pink",
+      "storageMode": "legacy",
+      "type": "Original",
+      "updatedAt": "2026-05-30T09:51:30.049Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/classic-strip-4-soft-white/overlay.png",
+        "preview": "assets/classic-strip-4-soft-white/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-06T20:10:28.824Z",
+      "desc": "Bright minimal tones for a crisp timeless strip",
+      "enabled": true,
+      "eventId": null,
+      "id": "classic-strip-4-soft-white",
+      "layoutId": "classic-strip-4",
+      "mode": "daily",
+      "name": "Soft White",
+      "storageMode": "legacy",
+      "type": "Original",
+      "updatedAt": "2026-05-30T09:40:16.853Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/classic-strip-4-sunrise/overlay.png",
+        "preview": "assets/classic-strip-4-sunrise/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-06T20:23:00.218Z",
+      "desc": "Just like 10 mins after sunrise",
+      "enabled": true,
+      "eventId": null,
+      "id": "classic-strip-4-sunrise",
+      "layoutId": "classic-strip-4",
+      "mode": "daily",
+      "name": "Sunrise",
+      "storageMode": "legacy",
+      "type": "Themed",
+      "updatedAt": "2026-05-30T09:44:13.369Z"
+    },
+    {
+      "assets": {},
+      "copiedAssetNames": [],
+      "createdAt": "2026-05-09T14:01:06.875Z",
+      "desc": "",
+      "enabled": true,
+      "eventId": "test-92a4",
+      "id": "classic-strip-4-garden-ever",
+      "layoutId": "classic-strip-4",
+      "mode": "event",
+      "name": "Garden Ever",
+      "storageMode": "legacy",
+      "type": "Original",
+      "updatedAt": "2026-05-09T14:01:06.875Z"
+    },
+    {
+      "assets": {},
+      "copiedAssetNames": [],
+      "createdAt": "2026-05-09T13:58:28.609Z",
+      "desc": "",
+      "enabled": true,
+      "eventId": "test-92a4",
+      "id": "classic-strip-4-rose-petals",
+      "layoutId": "classic-strip-4",
+      "mode": "event",
+      "name": "Rose Petals",
+      "storageMode": "legacy",
+      "type": "Original",
+      "updatedAt": "2026-05-09T13:58:28.609Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/portrait-grid-classic-black/overlay.png",
+        "preview": "assets/portrait-grid-classic-black/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-06T20:11:43.272Z",
+      "desc": "A clean black frame with a sleek studio feel",
+      "enabled": true,
+      "eventId": null,
+      "id": "portrait-grid-classic-black",
+      "layoutId": "portrait-grid",
+      "mode": "daily",
+      "name": "Classic Black",
+      "storageMode": "legacy",
+      "type": "Original",
+      "updatedAt": "2026-05-30T09:40:22.268Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/portrait-grid-dream/overlay.png",
+        "preview": "assets/portrait-grid-dream/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-06-07T04:51:20.355Z",
+      "desc": "",
+      "enabled": true,
+      "eventId": null,
+      "id": "portrait-grid-dream",
+      "layoutId": "portrait-grid",
+      "mode": "daily",
+      "name": "Dream",
+      "type": "Original",
+      "updatedAt": "2026-06-07T04:51:20.355Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/portrait-grid-fruity/overlay.png",
+        "preview": "assets/portrait-grid-fruity/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-06-07T04:50:54.094Z",
+      "desc": "",
+      "enabled": true,
+      "eventId": null,
+      "id": "portrait-grid-fruity",
+      "layoutId": "portrait-grid",
+      "mode": "daily",
+      "name": "Fruity",
+      "type": "Original",
+      "updatedAt": "2026-06-07T04:50:54.094Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/portrait-grid-invincible-navy/overlay.png",
+        "preview": "assets/portrait-grid-invincible-navy/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-06T20:11:50.952Z",
+      "desc": "Deep navy styling with a bold modern finish",
+      "enabled": true,
+      "eventId": null,
+      "id": "portrait-grid-invincible-navy",
+      "layoutId": "portrait-grid",
+      "mode": "daily",
+      "name": "Invincible Navy",
+      "storageMode": "legacy",
+      "type": "Themed",
+      "updatedAt": "2026-05-30T09:40:25.667Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/portrait-grid-kodak-yellow/overlay.png",
+        "preview": "assets/portrait-grid-kodak-yellow/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-06T20:11:56.371Z",
+      "desc": "Bold retro yellow styling inspired by vintage photo stock",
+      "enabled": true,
+      "eventId": null,
+      "id": "portrait-grid-kodak-yellow",
+      "layoutId": "portrait-grid",
+      "mode": "daily",
+      "name": "Kodak Yellow",
+      "storageMode": "legacy",
+      "type": "Themed",
+      "updatedAt": "2026-05-30T09:40:29.094Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/portrait-grid-love-lavender/overlay.png",
+        "preview": "assets/portrait-grid-love-lavender/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-06T20:12:06.581Z",
+      "desc": "Soft lavender theme with a sweet romantic mood",
+      "enabled": true,
+      "eventId": null,
+      "id": "portrait-grid-love-lavender",
+      "layoutId": "portrait-grid",
+      "mode": "daily",
+      "name": "Love Lavender",
+      "storageMode": "legacy",
+      "type": "Themed",
+      "updatedAt": "2026-05-30T09:40:32.128Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/portrait-grid-mercury/overlay.png",
+        "preview": "assets/portrait-grid-mercury/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-06-07T04:50:25.655Z",
+      "desc": "",
+      "enabled": true,
+      "eventId": null,
+      "id": "portrait-grid-mercury",
+      "layoutId": "portrait-grid",
+      "mode": "daily",
+      "name": "Mercury",
+      "type": "Original",
+      "updatedAt": "2026-06-07T04:53:51.870Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/portrait-grid-omni-red/overlay.png",
+        "preview": "assets/portrait-grid-omni-red/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-06T20:12:10.801Z",
+      "desc": "Bold red styling with a vivid high-energy look",
+      "enabled": true,
+      "eventId": null,
+      "id": "portrait-grid-omni-red",
+      "layoutId": "portrait-grid",
+      "mode": "daily",
+      "name": "Omni Red",
+      "storageMode": "legacy",
+      "type": "Themed",
+      "updatedAt": "2026-05-30T09:40:34.961Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/portrait-grid-original/overlay.png",
+        "preview": "assets/portrait-grid-original/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-06T20:12:16.705Z",
+      "desc": "The classic Afterimage look with familiar booth styling",
+      "enabled": true,
+      "eventId": null,
+      "id": "portrait-grid-original",
+      "layoutId": "portrait-grid",
+      "mode": "daily",
+      "name": "Original",
+      "storageMode": "legacy",
+      "type": "Original",
+      "updatedAt": "2026-05-30T09:40:37.975Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/portrait-grid-peach/overlay.png",
+        "preview": "assets/portrait-grid-peach/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-06T20:12:22.622Z",
+      "desc": "Soft peach palette with a warm, friendly finish",
+      "enabled": true,
+      "eventId": null,
+      "id": "portrait-grid-peach",
+      "layoutId": "portrait-grid",
+      "mode": "daily",
+      "name": "Peach",
+      "storageMode": "legacy",
+      "type": "Original",
+      "updatedAt": "2026-05-30T09:40:41.742Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/portrait-grid-pink/overlay.png",
+        "preview": "assets/portrait-grid-pink/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-06T20:12:28.126Z",
+      "desc": "Candy pink backdrop for a fun and playful strip",
+      "enabled": true,
+      "eventId": null,
+      "id": "portrait-grid-pink",
+      "layoutId": "portrait-grid",
+      "mode": "daily",
+      "name": "Pink",
+      "storageMode": "legacy",
+      "type": "Original",
+      "updatedAt": "2026-05-30T09:40:45.529Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/portrait-grid-soft-white/overlay.png",
+        "preview": "assets/portrait-grid-soft-white/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-06T20:12:40.157Z",
+      "desc": "Bright minimal tones for a crisp timeless strip",
+      "enabled": true,
+      "eventId": null,
+      "id": "portrait-grid-soft-white",
+      "layoutId": "portrait-grid",
+      "mode": "daily",
+      "name": "Soft White",
+      "storageMode": "legacy",
+      "type": "Original",
+      "updatedAt": "2026-05-30T09:40:49.024Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/portrait-grid-sunrise/overlay.png",
+        "preview": "assets/portrait-grid-sunrise/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-06-07T04:49:41.807Z",
+      "desc": "",
+      "enabled": true,
+      "eventId": null,
+      "id": "portrait-grid-sunrise",
+      "layoutId": "portrait-grid",
+      "mode": "daily",
+      "name": "Sunrise",
+      "type": "Original",
+      "updatedAt": "2026-06-07T04:49:41.807Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/default-studio-quad-classic-black/overlay.png",
+        "preview": "assets/default-studio-quad-classic-black/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-30T08:06:10.519Z",
+      "desc": "A clean black frame with a sleek studio feel",
+      "enabled": true,
+      "eventId": null,
+      "id": "default-studio-quad-classic-black",
+      "layoutId": "studio-quad",
+      "mode": "daily",
+      "name": "Classic Black",
+      "type": "Original",
+      "updatedAt": "2026-05-30T08:06:10.569Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/studio-quad-classic-black/overlay.png",
+        "preview": "assets/studio-quad-classic-black/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-06T20:15:46.885Z",
+      "desc": "A clean black frame with a sleek studio feel",
+      "enabled": true,
+      "eventId": null,
+      "id": "studio-quad-classic-black",
+      "layoutId": "studio-quad",
+      "mode": "daily",
+      "name": "Classic Black",
+      "storageMode": "legacy",
+      "type": "Original",
+      "updatedAt": "2026-05-30T09:40:54.569Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/studio-quad-dream/overlay.png",
+        "preview": "assets/studio-quad-dream/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-06-07T04:52:50.109Z",
+      "desc": "",
+      "enabled": true,
+      "eventId": null,
+      "id": "studio-quad-dream",
+      "layoutId": "studio-quad",
+      "mode": "daily",
+      "name": "Dream",
+      "type": "Original",
+      "updatedAt": "2026-06-07T04:52:50.109Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/studio-quad-fruity/overlay.png",
+        "preview": "assets/studio-quad-fruity/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-06-07T04:52:24.823Z",
+      "desc": "",
+      "enabled": true,
+      "eventId": null,
+      "id": "studio-quad-fruity",
+      "layoutId": "studio-quad",
+      "mode": "daily",
+      "name": "Fruity",
+      "type": "Original",
+      "updatedAt": "2026-06-07T04:52:24.823Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/studio-quad-invincible-navy/overlay.png",
+        "preview": "assets/studio-quad-invincible-navy/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-06T20:15:59.684Z",
+      "desc": "Deep navy styling with a bold modern finish",
+      "enabled": true,
+      "eventId": null,
+      "id": "studio-quad-invincible-navy",
+      "layoutId": "studio-quad",
+      "mode": "daily",
+      "name": "Invincible Navy",
+      "storageMode": "legacy",
+      "type": "Themed",
+      "updatedAt": "2026-05-30T09:40:57.650Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/studio-quad-kodak-yellow/overlay.png",
+        "preview": "assets/studio-quad-kodak-yellow/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-06T20:16:06.408Z",
+      "desc": "Bold retro yellow styling inspired by vintage photo stock",
+      "enabled": true,
+      "eventId": null,
+      "id": "studio-quad-kodak-yellow",
+      "layoutId": "studio-quad",
+      "mode": "daily",
+      "name": "Kodak Yellow",
+      "storageMode": "legacy",
+      "type": "Themed",
+      "updatedAt": "2026-05-30T09:41:00.553Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/studio-quad-love-lavender/overlay.png",
+        "preview": "assets/studio-quad-love-lavender/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-06T20:16:14.883Z",
+      "desc": "Soft lavender theme with a sweet romantic mood",
+      "enabled": true,
+      "eventId": null,
+      "id": "studio-quad-love-lavender",
+      "layoutId": "studio-quad",
+      "mode": "daily",
+      "name": "Love Lavender",
+      "storageMode": "legacy",
+      "type": "Themed",
+      "updatedAt": "2026-05-30T09:41:05.190Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/studio-quad-mercury/overlay.png",
+        "preview": "assets/studio-quad-mercury/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-06-07T04:52:06.194Z",
+      "desc": "",
+      "enabled": true,
+      "eventId": null,
+      "id": "studio-quad-mercury",
+      "layoutId": "studio-quad",
+      "mode": "daily",
+      "name": "Mercury",
+      "type": "Original",
+      "updatedAt": "2026-06-07T04:52:06.194Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/studio-quad-omni-red/overlay.png",
+        "preview": "assets/studio-quad-omni-red/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-06T20:16:19.370Z",
+      "desc": "Bold red styling with a vivid high-energy look",
+      "enabled": true,
+      "eventId": null,
+      "id": "studio-quad-omni-red",
+      "layoutId": "studio-quad",
+      "mode": "daily",
+      "name": "Omni Red",
+      "storageMode": "legacy",
+      "type": "Themed",
+      "updatedAt": "2026-05-30T09:41:08.208Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/studio-quad-original/overlay.png",
+        "preview": "assets/studio-quad-original/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-06T20:16:26.323Z",
+      "desc": "The classic Afterimage look with familiar booth styling",
+      "enabled": true,
+      "eventId": null,
+      "id": "studio-quad-original",
+      "layoutId": "studio-quad",
+      "mode": "daily",
+      "name": "Original",
+      "storageMode": "legacy",
+      "type": "Original",
+      "updatedAt": "2026-05-30T09:41:11.183Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/studio-quad-peach/overlay.png",
+        "preview": "assets/studio-quad-peach/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-06T20:16:32.487Z",
+      "desc": "Soft peach palette with a warm, friendly finish",
+      "enabled": true,
+      "eventId": null,
+      "id": "studio-quad-peach",
+      "layoutId": "studio-quad",
+      "mode": "daily",
+      "name": "Peach",
+      "storageMode": "legacy",
+      "type": "Original",
+      "updatedAt": "2026-05-30T09:41:13.737Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/studio-quad-pink/overlay.png",
+        "preview": "assets/studio-quad-pink/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-06T20:16:37.522Z",
+      "desc": "Candy pink backdrop for a fun and playful strip",
+      "enabled": true,
+      "eventId": null,
+      "id": "studio-quad-pink",
+      "layoutId": "studio-quad",
+      "mode": "daily",
+      "name": "Pink",
+      "storageMode": "legacy",
+      "type": "Original",
+      "updatedAt": "2026-05-30T09:41:18.921Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/studio-quad-soft-white/overlay.png",
+        "preview": "assets/studio-quad-soft-white/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-05-06T20:16:45.235Z",
+      "desc": "Bright minimal tones for a crisp timeless strip",
+      "enabled": true,
+      "eventId": null,
+      "id": "studio-quad-soft-white",
+      "layoutId": "studio-quad",
+      "mode": "daily",
+      "name": "Soft White",
+      "storageMode": "legacy",
+      "type": "Original",
+      "updatedAt": "2026-05-30T09:41:22.003Z"
+    },
+    {
+      "assets": {
+        "overlay": "assets/studio-quad-sunrise/overlay.png",
+        "preview": "assets/studio-quad-sunrise/preview.png"
+      },
+      "copiedAssetNames": [
+        "overlay.png",
+        "preview.png"
+      ],
+      "createdAt": "2026-06-07T04:51:41.538Z",
+      "desc": "",
+      "enabled": true,
+      "eventId": null,
+      "id": "studio-quad-sunrise",
+      "layoutId": "studio-quad",
+      "mode": "daily",
+      "name": "Sunrise",
+      "type": "Original",
+      "updatedAt": "2026-06-07T04:51:41.538Z"
+    }
+  ]
+}

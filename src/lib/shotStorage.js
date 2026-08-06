@@ -3,9 +3,15 @@
 // so this is plenty for one session without needing IndexedDB or a DB.
 // If/when we want to keep a permanent archive of past sessions, the right next
 // step is writing real JPEG files to disk via Electron's `fs` module.
+import {
+  DEFAULT_CAMERA_ORIENTATION,
+  normalizeCameraOrientation,
+} from '../constants/cameraSettings';
 import { inspectDataUrl } from './shotImageSource';
 
 const KEY = 'kuku.photobooth.shots';
+const CAMERA_ORIENTATION_KEY = 'kuku.photobooth.cameraOrientation';
+const CAMERA_ORIENTATION_LOCKED_KEY = 'kuku.photobooth.cameraOrientationLocked';
 const IS_DEV = import.meta.env.DEV;
 let pendingSaveHandle = null;
 let pendingUsesIdleCallback = false;
@@ -85,4 +91,39 @@ export function clearShots() {
   cancelPendingSave();
   pendingShots = null;
   try { localStorage.removeItem(KEY); } catch { /* ignore */ }
+}
+
+export function loadCameraOrientationState() {
+  try {
+    return {
+      cameraOrientation: normalizeCameraOrientation(localStorage.getItem(CAMERA_ORIENTATION_KEY)),
+      cameraOrientationLocked: localStorage.getItem(CAMERA_ORIENTATION_LOCKED_KEY) === 'true',
+    };
+  } catch {
+    return {
+      cameraOrientation: DEFAULT_CAMERA_ORIENTATION,
+      cameraOrientationLocked: false,
+    };
+  }
+}
+
+export function saveCameraOrientationState({
+  cameraOrientation = DEFAULT_CAMERA_ORIENTATION,
+  cameraOrientationLocked = false,
+} = {}) {
+  try {
+    localStorage.setItem(CAMERA_ORIENTATION_KEY, normalizeCameraOrientation(cameraOrientation));
+    localStorage.setItem(CAMERA_ORIENTATION_LOCKED_KEY, cameraOrientationLocked === true ? 'true' : 'false');
+  } catch {
+    // Ignore storage failures; App state remains authoritative for this session.
+  }
+}
+
+export function clearCameraOrientationState() {
+  try {
+    localStorage.removeItem(CAMERA_ORIENTATION_KEY);
+    localStorage.removeItem(CAMERA_ORIENTATION_LOCKED_KEY);
+  } catch {
+    // Ignore storage failures; the next in-memory session still resets.
+  }
 }

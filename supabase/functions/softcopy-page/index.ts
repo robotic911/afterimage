@@ -20,6 +20,29 @@ function jsonResponse(body: Record<string, unknown>, status = 200) {
   });
 }
 
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function maskToken(value: string | null | undefined) {
+  const text = String(value || '');
+  if (!text) return null;
+  if (text.length <= 12) return `${text.slice(0, 3)}...`;
+  return `${text.slice(0, 8)}...${text.slice(-4)}`;
+}
+
+function maskStoragePath(value: string | null | undefined) {
+  const text = String(value || '');
+  if (!text) return null;
+  const parts = text.split('/').filter(Boolean);
+  const sessionsIndex = parts.indexOf('sessions');
+  if (sessionsIndex >= 0 && parts[sessionsIndex + 1]) {
+    const fileName = parts[parts.length - 1] || '';
+    return `sessions/${maskToken(parts[sessionsIndex + 1])}/${fileName}`;
+  }
+  return parts.length > 0 ? `.../${parts[parts.length - 1]}` : null;
+}
+
 function getVideoMimeType(path = '') {
   const lowerPath = path.toLowerCase();
   if (lowerPath.endsWith('.mp4')) return 'video/mp4';
@@ -67,7 +90,7 @@ Deno.serve(async (req) => {
 
     const { data: session, error } = await supabase
       .from('softcopy_sessions')
-      .select('session_token, photo_path, gif_path, video_path, expires_at')
+      .select('session_token, photo_path, gif_path, video_path, expires_at, deleted_at, cleanup_status')
       .eq('session_token', token)
       .maybeSingle();
 
@@ -77,7 +100,12 @@ Deno.serve(async (req) => {
     }
 
     const expiresAt = new Date(session.expires_at);
-    if (Number.isNaN(expiresAt.getTime()) || Date.now() > expiresAt.getTime()) {
+    if (
+      session.deleted_at
+      || session.cleanup_status === 'completed'
+      || Number.isNaN(expiresAt.getTime())
+      || Date.now() > expiresAt.getTime()
+    ) {
       return jsonResponse({ ok: false, error: 'expired' }, 410);
     }
 
@@ -89,12 +117,13 @@ Deno.serve(async (req) => {
     const gifPath = normalizeStoredPath(session.session_token, session.gif_path, 'animation.gif');
     const videoPath = normalizeStoredPath(session.session_token, session.video_path, 'video.mp4');
     console.log('[softcopy-page] resolved paths', {
-      sessionToken: session.session_token,
-      photoPath,
-      gifPath,
-      videoPath,
+      sessionToken: maskToken(session.session_token),
+      photoPath: maskStoragePath(photoPath),
+      gifPath: maskStoragePath(gifPath),
+      videoPath: maskStoragePath(videoPath),
       signedUrlTtl,
     });
+
     let photoUrl = null;
     if (photoPath) {
       if (/^https?:\/\//i.test(photoPath)) {
@@ -103,7 +132,14 @@ Deno.serve(async (req) => {
         const { data: photoSigned, error: photoError } = await supabase.storage
           .from(SOFTCOPY_BUCKET)
           .createSignedUrl(photoPath, signedUrlTtl, { download: 'afterimage-photo.jpg' });
-        if (photoError) throw photoError;
+        if (photoError) {
+          console.error('[softcopy-page] signed URL failed', {
+            kind: 'photo',
+            bucket: SOFTCOPY_BUCKET,
+            error: getErrorMessage(photoError),
+          });
+          throw photoError;
+        }
         photoUrl = photoSigned?.signedUrl || null;
       }
     }
@@ -116,7 +152,14 @@ Deno.serve(async (req) => {
         const { data: gifSigned, error: gifError } = await supabase.storage
           .from(SOFTCOPY_BUCKET)
           .createSignedUrl(gifPath, signedUrlTtl, { download: 'afterimage-animation.gif' });
-        if (gifError) throw gifError;
+        if (gifError) {
+          console.error('[softcopy-page] signed URL failed', {
+            kind: 'gif',
+            bucket: SOFTCOPY_BUCKET,
+            error: getErrorMessage(gifError),
+          });
+          throw gifError;
+        }
         gifUrl = gifSigned?.signedUrl || null;
       }
     }
@@ -133,7 +176,14 @@ Deno.serve(async (req) => {
           .createSignedUrl(videoPath, signedUrlTtl, {
             download: getVideoDownloadName(videoPath),
           });
-        if (videoError) throw videoError;
+        if (videoError) {
+          console.error('[softcopy-page] signed URL failed', {
+            kind: 'video',
+            bucket: SOFTCOPY_BUCKET,
+            error: getErrorMessage(videoError),
+          });
+          throw videoError;
+        }
         videoUrl = videoSigned?.signedUrl || null;
       }
     }
@@ -147,7 +197,9 @@ Deno.serve(async (req) => {
       expiresAt: session.expires_at,
     });
   } catch (err) {
-    console.error('[softcopy-page]', err);
+    console.error('[softcopy-page] failed', {
+      error: getErrorMessage(err),
+    });
     return jsonResponse({ ok: false, error: 'server_error' }, 500);
   }
 });

@@ -18,10 +18,20 @@ import { FILTERS, TWEAK_DEFAULTS } from './constants/filters';
 import { findLayout } from './constants/layouts';
 import { getEnabledLayouts, resolveLayoutSettings } from './constants/layoutSettings';
 import { DEFAULT_COUNTDOWN_SECONDS, normalizeCountdownSeconds } from './constants/countdownSettings';
+import {
+  DEFAULT_CAMERA_ORIENTATION,
+  normalizeCameraOrientation,
+} from './constants/cameraSettings';
 import { useAdminConfig } from './hooks/useAdminConfig';
 import { useStageScale } from './hooks/useStageScale';
 import { useTemplates } from './hooks/useTemplates';
-import { loadShots, clearShots } from './lib/shotStorage';
+import {
+  clearCameraOrientationState,
+  clearShots,
+  loadCameraOrientationState,
+  loadShots,
+  saveCameraOrientationState,
+} from './lib/shotStorage';
 import { resolveSoftcopySettings } from './constants/softcopySettings';
 import { clampPrintCopies, DEFAULT_PRINT_COPIES } from './constants/printSettings';
 import { isTemplateVisibleToCustomer } from './lib/templateVisibility';
@@ -48,6 +58,7 @@ export default function App() {
   const [selectedLayout, setSelectedLayout] = useState(null);
   const [selectedTmpl, setSelectedTmpl] = useState(null);
   const [selectedFilter, setSelectedFilter] = useState('none');
+  const [cameraOrientationState, setCameraOrientationState] = useState(() => loadCameraOrientationState());
   const [softcopy, setSoftcopy] = useState({ status: 'idle', qrUrl: null });
   const [sessionVideo, setSessionVideo] = useState(null);
   // Rehydrate any in-progress shots from localStorage on first render
@@ -137,6 +148,8 @@ export default function App() {
     }
     return nextArrangedShots;
   }, [arrangedShotIndexes, shots]);
+  const cameraOrientation = normalizeCameraOrientation(cameraOrientationState.cameraOrientation);
+  const cameraOrientationLocked = cameraOrientationState.cameraOrientationLocked === true;
   const softcopySettings = useMemo(
     () => resolveSoftcopySettings(settings.softcopySettings),
     [settings.softcopySettings],
@@ -145,6 +158,7 @@ export default function App() {
     sessionVideo
       ? {
           ...sessionVideo,
+          cameraOrientation: normalizeCameraOrientation(sessionVideo.cameraOrientation || cameraOrientation),
           shotVideoClips: arrangedShotIndexes
             .map((sourceShotIndex, arrangedIndex) => {
               const clip = sessionVideo.shotVideoClips?.[sourceShotIndex];
@@ -153,7 +167,7 @@ export default function App() {
             .filter(Boolean),
         }
       : null
-  ), [arrangedShotIndexes, sessionVideo]);
+  ), [arrangedShotIndexes, cameraOrientation, sessionVideo]);
   const selectedFilterCss = useMemo(
     () => FILTERS.find(f => f.id === selectedFilter)?.css || '',
     [selectedFilter],
@@ -171,6 +185,39 @@ export default function App() {
     setSelectedFilter(nextFilter);
     if (IS_DEV) console.log('[filter] selected on camera screen', nextFilter);
   }, []);
+  const resetCameraOrientation = useCallback(() => {
+    clearCameraOrientationState();
+    setCameraOrientationState({
+      cameraOrientation: DEFAULT_CAMERA_ORIENTATION,
+      cameraOrientationLocked: false,
+    });
+  }, []);
+  const handleCameraOrientationChange = useCallback((nextOrientation) => {
+    setCameraOrientationState((current) => {
+      if (current.cameraOrientationLocked) return current;
+      const normalizedOrientation = normalizeCameraOrientation(nextOrientation);
+      return current.cameraOrientation === normalizedOrientation
+        ? current
+        : { ...current, cameraOrientation: normalizedOrientation };
+    });
+  }, []);
+  const handleCameraOrientationLock = useCallback(() => {
+    setCameraOrientationState((current) => (
+      current.cameraOrientationLocked
+        ? current
+        : {
+            cameraOrientation: normalizeCameraOrientation(current.cameraOrientation),
+            cameraOrientationLocked: true,
+          }
+    ));
+  }, []);
+
+  useEffect(() => {
+    saveCameraOrientationState({
+      cameraOrientation,
+      cameraOrientationLocked,
+    });
+  }, [cameraOrientation, cameraOrientationLocked]);
 
   // ── Tweaks ──
   const [primaryColor, setPrimaryColor] = useState(TWEAK_DEFAULTS.primaryColor);
@@ -237,10 +284,11 @@ export default function App() {
         setRetakeQueue([]);
         setHasUsedRetakeChance(false);
         setReviewNoticeKey(0);
+        resetCameraOrientation();
         clearShots();
       });
     }
-  }, [enabledLayouts, selectedLayout]);
+  }, [enabledLayouts, resetCameraOrientation, selectedLayout]);
 
   // Ctrl+Shift+A (or Cmd+Shift+A) anywhere → admin PIN screen
   useEffect(() => {
@@ -265,6 +313,7 @@ export default function App() {
     setRetakeQueue([]);
     setHasUsedRetakeChance(false);
     setReviewNoticeKey(0);
+    resetCameraOrientation();
     // Picking a different layout invalidates any in-progress shots —
     // the new layout may need a different number of captures.
     setShots([]);
@@ -300,9 +349,10 @@ export default function App() {
     setReviewNoticeKey(0);
     setCopies(DEFAULT_PRINT_COPIES);
     setRetries(1);
+    resetCameraOrientation();
     sessionStartRef.current = null;
     goTo('s-landing');
-  }, [goTo]);
+  }, [goTo, resetCameraOrientation]);
 
   useEffect(() => {
     if (!window.adminApi?.onSessionReset) return undefined;
@@ -341,7 +391,11 @@ export default function App() {
               nextClips[clip.shotIndex] = clip;
             }
           }
-          return { ...(current || {}), shotVideoClips: nextClips };
+          return {
+            ...(current || {}),
+            cameraOrientation: normalizeCameraOrientation(current?.cameraOrientation || videoResult?.cameraOrientation || cameraOrientation),
+            shotVideoClips: nextClips,
+          };
         });
       }
 
@@ -353,7 +407,12 @@ export default function App() {
     }
 
     if (newShots) setShots(newShots);
-    setSessionVideo(videoResult);
+    setSessionVideo(videoResult
+      ? {
+          ...videoResult,
+          cameraOrientation: normalizeCameraOrientation(videoResult.cameraOrientation || cameraOrientation),
+        }
+      : null);
     setArrangedShotIndexes([]);
     setReviewNoticeKey(0);
     goTo('s-review');
@@ -436,6 +495,10 @@ export default function App() {
           onSelectFilter={handleSelectFilter}
           beautificationSettings={beautificationSettings}
           beautificationPreviewCss={beautificationPreviewCss}
+          cameraOrientation={cameraOrientation}
+          cameraOrientationLocked={cameraOrientationLocked}
+          onCameraOrientationChange={handleCameraOrientationChange}
+          onCameraOrientationLock={handleCameraOrientationLock}
           recordVideo={softcopySettings.videoEnabled}
           retakeQueue={retakeQueue}
           onFlash={handleFlash}
@@ -492,6 +555,7 @@ export default function App() {
           selectedFilterCss={selectedFilterCss}
           shots={arrangedShots}
           arrangedShotIndexes={arrangedShotIndexes}
+          cameraOrientation={cameraOrientation}
           sessionVideo={arrangedSessionVideo}
           copies={copies}
           retries={retries}

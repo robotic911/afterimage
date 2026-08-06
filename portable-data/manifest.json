@@ -1,0 +1,48 @@
+{
+  "app": {
+    "name": "Afterimage",
+    "packageName": "kuku-photobooth-app",
+    "version": "0.1.0"
+  },
+  "counts": {
+    "eventAssets": 0,
+    "events": 0,
+    "keychainSales": 20,
+    "sessions": 708,
+    "settings": 1,
+    "templateAssets": 113,
+    "templates": 62
+  },
+  "excluded": {
+    "adminPinHash": true,
+    "cameraDeviceId": true,
+    "downloadsOutput": true,
+    "electronCache": true,
+    "generatedCustomerMedia": true,
+    "localStorageInProgressShots": true,
+    "selectedPrinterName": true,
+    "supabaseSecrets": true
+  },
+  "exportedAt": "2026-07-20T12:38:46.634Z",
+  "files": {
+    "eventAssets": "events/assets",
+    "events": "events/events.json",
+    "keychainSales": "records/keychain-sales.json",
+    "pricing": "settings/pricing.json",
+    "sessions": "records/sessions.jsonl",
+    "settings": "settings/app-settings.json",
+    "templateAssets": "templates/assets",
+    "templates": "templates/templates.json"
+  },
+  "schemaVersion": 1,
+  "skipped": {
+    "generatedMediaFields": 3201,
+    "machineSpecificFields": 1,
+    "malformedSessions": 0,
+    "secretFields": 0
+  },
+  "source": {
+    "platform": "darwin",
+    "portableTool": "scripts/portable-data.cjs"
+  }
+}

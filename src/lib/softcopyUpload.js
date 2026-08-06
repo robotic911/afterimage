@@ -12,6 +12,99 @@ export const SOFTCOPY_LINK_EXPIRES_IN = 6 * 60 * 60;
 const SOFTCOPY_LINK_EXPIRES_IN_MS = SOFTCOPY_LINK_EXPIRES_IN * 1000;
 const IS_DEV = import.meta.env.DEV;
 
+function compactValue(value) {
+  if (value === undefined) return null;
+  if (value === null) return null;
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return value;
+  return JSON.parse(JSON.stringify(value, (_key, nestedValue) => (
+    typeof nestedValue === 'bigint' ? nestedValue.toString() : nestedValue
+  )));
+}
+
+function describeSupabaseError(error) {
+  if (!error) {
+    return {
+      code: null,
+      message: 'unknown error',
+      httpStatus: null,
+      details: null,
+      hint: null,
+      stack: null,
+    };
+  }
+
+  return {
+    code: error.code || error.error || error.name || null,
+    message: error.message || String(error),
+    httpStatus: error.status || error.statusCode || null,
+    details: compactValue(error.details || null),
+    hint: compactValue(error.hint || null),
+    stack: error.stack || null,
+  };
+}
+
+function createDiagnosticError(message, diagnostics, cause = null) {
+  const error = new Error(message);
+  error.code = cause?.code || cause?.error || cause?.name || null;
+  error.status = cause?.status || cause?.statusCode || null;
+  error.cause = cause || undefined;
+  error.softcopyDiagnostics = Array.isArray(diagnostics) ? diagnostics : [diagnostics];
+  if (cause?.stack) {
+    error.stack = `${error.stack}\nCaused by: ${cause.stack}`;
+  }
+  return error;
+}
+
+function getErrorDiagnostics(error, fallback = null) {
+  if (Array.isArray(error?.softcopyDiagnostics)) return error.softcopyDiagnostics;
+  if (error?.softcopyDiagnostics) return [error.softcopyDiagnostics];
+  return fallback ? [fallback] : [];
+}
+
+function maskToken(value) {
+  const text = String(value || '');
+  if (!text) return null;
+  if (text.length <= 12) return `${text.slice(0, 3)}...`;
+  return `${text.slice(0, 8)}...${text.slice(-4)}`;
+}
+
+function maskStoragePath(value) {
+  const text = String(value || '');
+  if (!text) return null;
+  const parts = text.split('/').filter(Boolean);
+  const sessionsIndex = parts.indexOf('sessions');
+  if (sessionsIndex >= 0 && parts[sessionsIndex + 1]) {
+    const fileName = parts[parts.length - 1] || '';
+    return `sessions/${maskToken(parts[sessionsIndex + 1])}/${fileName}`;
+  }
+  return parts.length > 0 ? `.../${parts[parts.length - 1]}` : null;
+}
+
+function sanitizeDiagnosticForConsole(value, key = '') {
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeDiagnosticForConsole(item));
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([entryKey, entryValue]) => [
+        entryKey,
+        sanitizeDiagnosticForConsole(entryValue, entryKey),
+      ]),
+    );
+  }
+
+  const normalizedKey = key.toLowerCase();
+  if (normalizedKey.includes('token')) return maskToken(value);
+  if (normalizedKey.includes('path')) return maskStoragePath(value);
+  if (normalizedKey === 'requesturl') return '<redacted-url>';
+  return value;
+}
+
+function logSoftcopyDiagnostic(label, diagnostic) {
+  console.error(label, sanitizeDiagnosticForConsole(diagnostic));
+}
+
 function timeStart(label) {
   if (IS_DEV) console.time(label);
 }
@@ -45,14 +138,25 @@ function assertSupabaseReady() {
   }
 }
 
-export async function uploadBlobToStorage(blob, filePath, contentType, { resolvePublicUrl = false } = {}) {
+export async function uploadBlobToStorage(
+  blob,
+  filePath,
+  contentType,
+  {
+    resolvePublicUrl = false,
+    sessionToken = null,
+    fileLabel = null,
+  } = {},
+) {
   assertSupabaseReady();
 
   const bucket = SOFTCOPY_BUCKET;
   console.log('[softcopy] upload attempt', {
     mediaType: contentType,
     bucket,
-    path: filePath,
+    path: maskStoragePath(filePath),
+    fileLabel,
+    sessionToken: maskToken(sessionToken),
     contentType,
     size: blob?.size || 0,
   });
@@ -73,16 +177,35 @@ export async function uploadBlobToStorage(blob, filePath, contentType, { resolve
   console.log('[softcopy] upload result', {
     mediaType: contentType,
     bucket,
-    path: filePath,
+    path: maskStoragePath(filePath),
+    fileLabel,
+    sessionToken: maskToken(sessionToken),
     size: blob?.size || 0,
     contentType,
     uploadOk: !error,
     publicUrl: publicData?.publicUrl || null,
     signedUrlExists: false,
-    error: error?.message || null,
+    error: error ? describeSupabaseError(error) : null,
   });
 
-  if (error) throw error;
+  if (error) {
+    const diagnostic = {
+      step: 'storage_upload',
+      bucket,
+      uploadPath: filePath,
+      fileLabel,
+      sessionToken,
+      contentType,
+      sizeBytes: blob?.size || 0,
+      error: describeSupabaseError(error),
+      code: error.code || error.error || null,
+      message: error.message || String(error),
+      httpStatus: error.status || error.statusCode || null,
+      stack: error.stack || null,
+    };
+    logSoftcopyDiagnostic('[softcopy-diagnostic] storage upload failed', diagnostic);
+    throw createDiagnosticError(`Supabase Storage upload failed for ${fileLabel || filePath}: ${diagnostic.message}`, diagnostic, error);
+  }
 
   return {
     uploadOk: true,
@@ -105,7 +228,7 @@ function logSoftcopyUploadFailure(step, error, extra = {}) {
     code: error?.code || null,
     status: error?.status || error?.statusCode || null,
     details: error?.details || error?.hint || null,
-    ...extra,
+    ...sanitizeDiagnosticForConsole(extra),
   });
 }
 
@@ -117,38 +240,58 @@ export async function createSoftcopySession({
 }) {
   assertSupabaseReady();
 
-  const expiresAtDate = new Date(Date.now() + SOFTCOPY_LINK_EXPIRES_IN_MS);
-  const expiresAt = expiresAtDate.toISOString();
+  const { data, error } = await supabase
+    .rpc('create_softcopy_session', {
+      p_session_token: sessionToken,
+      p_photo_path: photoPath,
+      p_gif_path: gifPath,
+      p_video_path: videoPath,
+    })
+    .single();
 
-  if (Number.isNaN(expiresAtDate.getTime())) {
-    throw new Error('Could not calculate softcopy expiry');
+  if (error) {
+    const diagnostic = {
+      step: 'create_softcopy_session',
+      bucket: SOFTCOPY_BUCKET,
+      sessionToken,
+      photoPath,
+      gifPath,
+      videoPath,
+      error: describeSupabaseError(error),
+      code: error.code || error.error || null,
+      message: error.message || String(error),
+      httpStatus: error.status || error.statusCode || null,
+      stack: error.stack || null,
+    };
+    logSoftcopyDiagnostic('[softcopy-diagnostic] session RPC failed', diagnostic);
+    throw createDiagnosticError(`Supabase session record creation failed: ${diagnostic.message}`, diagnostic, error);
   }
 
-  const baseRecord = {
-    session_token: sessionToken,
-    photo_path: photoPath,
-    gif_path: gifPath,
-    video_path: videoPath,
-    expires_at: expiresAt,
-  };
+  const expiresAt = data?.expires_at;
+  const uploadedAt = data?.uploaded_at || data?.created_at || null;
+  const createdAt = data?.created_at || null;
+  const expiresAtDate = new Date(expiresAt);
 
-  const { error } = await supabase
-    .from('softcopy_sessions')
-    .upsert(baseRecord, { onConflict: 'session_token', ignoreDuplicates: true });
-
-  if (error) throw error;
+  if (!expiresAt || Number.isNaN(expiresAtDate.getTime())) {
+    throw new Error('Supabase did not return a valid softcopy expiry');
+  }
 
   console.log('[softcopy] session record saved', {
-    token: sessionToken,
-    photoPath,
-    gifPath,
-    videoPath,
+    token: maskToken(sessionToken),
+    photoPath: maskStoragePath(photoPath),
+    gifPath: maskStoragePath(gifPath),
+    videoPath: maskStoragePath(videoPath),
     expiresAt,
+    uploadedAt,
+    createdAt,
+    expirationSource: 'supabase server uploaded_at + 6 hours',
   });
 
   return {
     sessionToken,
     expiresAt,
+    uploadedAt,
+    createdAt,
   };
 }
 
@@ -264,7 +407,10 @@ export async function uploadSoftcopyAssets({
     }
     timeStart(timerLabel);
     try {
-      await uploadBlobToStorage(blob, filePath, contentType);
+      await uploadBlobToStorage(blob, filePath, contentType, {
+        sessionToken: resolvedSessionToken,
+        fileLabel: step,
+      });
       return { step, filePath };
     } catch (error) {
       logSoftcopyUploadFailure(step, error, {
@@ -273,6 +419,7 @@ export async function uploadSoftcopyAssets({
         hasGif: Boolean(gifBlob),
         hasVideo: Boolean(videoBlob),
         token: resolvedSessionToken,
+        diagnostics: getErrorDiagnostics(error),
       });
       uploadErrors.push({ step, error });
       return null;
@@ -351,6 +498,9 @@ export async function uploadSoftcopyAssets({
       videoPath: successfulOutputs.videoPath,
       videoMimeType: successfulOutputs.videoPath ? resolvedVideoMimeType : null,
       expiresAt: session.expiresAt,
+      uploadedAt: session.uploadedAt,
+      createdAt: session.createdAt,
+      bucket: SOFTCOPY_BUCKET,
       qrUrl: buildSoftcopyPageUrl(resolvedSessionToken),
       warnings,
       partial: uploadErrors.length > 0,

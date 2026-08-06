@@ -1,5 +1,9 @@
 import { getPrintArea, getPrinterProfile } from '../constants/printers';
 import { PRINT_JPEG_QUALITY, PRINT_PHOTO_FILTER, TOP_DEAD_CUT_PX } from '../constants/printSettings';
+import {
+  DEFAULT_CAMERA_ORIENTATION,
+  normalizeCameraOrientation,
+} from '../constants/cameraSettings';
 import { loadImageCached } from './imageCache';
 import { getShotImageSource } from './shotImageSource';
 import { resolveTemplateRenderAssets } from './templateRenderAssets';
@@ -70,11 +74,12 @@ function resolveTemplateLayers(templateInput) {
  * The layout's `slots` array is the single source of truth for photo
  * position, and is shared with the live preview.
  */
-export async function composePrintCanvas(layout, templateInput, shots, photoFilter = '') {
+export async function composePrintCanvas(layout, templateInput, shots, photoFilter = '', options = {}) {
   const W = layout?.canvas?.w || layout?.canvas?.width || 1200;
   const H = layout?.canvas?.h || layout?.canvas?.height || 1800;
   const slots = layout?.slots || [];
   const { backgroundSrc, overlaySrc } = resolveTemplateLayers(templateInput);
+  const cameraOrientation = normalizeCameraOrientation(options.cameraOrientation || DEFAULT_CAMERA_ORIENTATION);
 
   const canvas = document.createElement('canvas');
   canvas.width = W;
@@ -92,6 +97,9 @@ export async function composePrintCanvas(layout, templateInput, shots, photoFilt
       shotCount: shots.length,
       slotsCount: slots.length,
       selectedFilterCss: photoFilter || '',
+      cameraOrientation,
+      sourceFramesAlreadyOriented: true,
+      extraMirrorApplied: false,
       backgroundSrc: backgroundSrc ? String(backgroundSrc).slice(0, 100) : null,
       overlaySrc: overlaySrc ? String(overlaySrc).slice(0, 100) : null,
       shots: shots.map((shot, index) => {
@@ -120,6 +128,9 @@ export async function composePrintCanvas(layout, templateInput, shots, photoFilt
     console.log('[PHOTO AUDIT final render]', {
       shotsLength: shots.length,
       normalizedSourceCount: shotSources.filter(Boolean).length,
+      cameraOrientation,
+      sourceFramesAlreadyOriented: true,
+      templateMirrorApplied: false,
       sources: shotSources.map((source, shotIndex) => ({
         shotIndex,
         prefix: source ? String(source).slice(0, 100) : null,
@@ -244,10 +255,10 @@ function getCanvasSafeArea(canvasW, canvasH, margin = {}) {
   return safeArea;
 }
 
-export async function buildFinalPrintCanvas(layout, templateSrc, shots, photoFilter = '', printSettings = {}) {
+export async function buildFinalPrintCanvas(layout, templateSrc, shots, photoFilter = '', printSettings = {}, options = {}) {
   const composedLayoutCanvas = normalizePrintOutputCanvas(
     layout,
-    await composePrintCanvas(layout, templateSrc, shots, photoFilter),
+    await composePrintCanvas(layout, templateSrc, shots, photoFilter, options),
   );
   const profile = getPrinterProfile(printSettings?.printerProfileId);
   const profilePrintArea = getPrintArea(profile, printSettings?.safeMarginOverride);

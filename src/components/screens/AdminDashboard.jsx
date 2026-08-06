@@ -586,7 +586,7 @@ export default function AdminDashboard({
           </div>
         </div>
         <div className="dash-keychain-stat-row">
-          <MetricTile label="Units Sold" value={fmtInt(keychainStats.unitsSold)} sub="Sold keychain strip copies" tone="keychain" />
+          <MetricTile label="Units Sold" value={fmtInt(keychainStats.unitsSold)} sub="Sold physical keychains" tone="keychain" />
           <MetricTile label="Revenue" value={peso(keychainStats.revenue)} sub="Stored sale amounts" tone="keychain" />
           <MetricTile label="Sheets Printed" value={fmtInt(keychainStats.sheetsPrinted)} sub="Successful printed sheets" />
           <MetricTile label="Transactions" value={fmtInt(keychainStats.transactions)} sub="Completed keychain sales" />

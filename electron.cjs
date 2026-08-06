@@ -9,6 +9,9 @@ const {
   getKeychainPrice,
   isValidKeychainCopies,
 } = require('./keychainPricing.cjs');
+const {
+  maybeInitializeFromPortableData,
+} = require('./scripts/portable-data.cjs');
 
 const APP_ID = 'com.kennethpatino.kukuphotobooth';
 const SOFTCOPY_SAVE_CHANNEL = 'softcopy-local:save-session-media';
@@ -19,6 +22,13 @@ console.log('[DIAG main] electron.cjs loaded with downloads test handler');
 
 if (process.platform === 'win32') {
   app.setAppUserModelId(APP_ID);
+}
+
+if (process.env.AFTERIMAGE_USER_DATA_DIR) {
+  const overrideUserDataDir = path.resolve(process.env.AFTERIMAGE_USER_DATA_DIR);
+  fs.mkdirSync(overrideUserDataDir, { recursive: true });
+  app.setPath('userData', overrideUserDataDir);
+  console.log('[portable-data] using overridden userData directory', overrideUserDataDir);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -54,6 +64,8 @@ const DEFAULT_SOFTCOPY_SETTINGS = {
   gifEnabled: true,
   videoEnabled: true,
 };
+const DEFAULT_CAMERA_ORIENTATION = 'mirrored';
+const CAMERA_ORIENTATIONS = new Set([DEFAULT_CAMERA_ORIENTATION, 'alternate']);
 const LEGACY_SAFE_MARGIN_OVERRIDE = {
   top: 33,
   right: 33,
@@ -75,6 +87,10 @@ const DEFAULT_BEAUTIFICATION_SETTINGS = Object.freeze({
 });
 const COLOR_THEME_IDS = new Set(['editorialMono', 'champagneNoir', 'roseVelvet', 'oceanMist', 'forestFilm']);
 let templateIndexCache = null;
+
+function normalizeSessionCameraOrientation(value) {
+  return CAMERA_ORIENTATIONS.has(value) ? value : DEFAULT_CAMERA_ORIENTATION;
+}
 
 function cloneTemplateRecords(records = []) {
   return records.map((record) => ({ ...record }));
@@ -764,6 +780,11 @@ function scheduleTodayMonitorWindow() {
 
 app.whenReady().then(async () => {
   resolvePaths();
+  await maybeInitializeFromPortableData({
+    projectRoot: __dirname,
+    userDataDir: app.getPath('userData'),
+    logger: console,
+  });
   configureMediaPermissions();
 
   // Bootstrap filesystem
@@ -2260,6 +2281,7 @@ function sanitizeSession(input = {}) {
     eventName:     typeof input.eventName    === 'string' ? input.eventName.slice(0, 128)   : null,
     templateId:    typeof input.templateId   === 'string' ? input.templateId.slice(0, 64)   : null,
     templateName:  typeof input.templateName === 'string' ? input.templateName.slice(0, 64) : null,
+    cameraOrientation: normalizeSessionCameraOrientation(input.cameraOrientation),
     testMode:      input.testMode === true || input.isTest === true,
     copies,
     printStatus,
@@ -2591,10 +2613,15 @@ function sanitizeSessionSoftcopyPatch(input = {}) {
     'softcopyStatus',
     'finalPrintPath',
     'printImagePath',
+    'cameraOrientation',
   ];
   for (const field of stringFields) {
     if (!Object.prototype.hasOwnProperty.call(input, field)) continue;
-    patch[field] = typeof input[field] === 'string' ? input[field].slice(0, field === 'softcopyStatus' ? 32 : 256) : null;
+    if (field === 'cameraOrientation') {
+      patch[field] = normalizeSessionCameraOrientation(input[field]);
+    } else {
+      patch[field] = typeof input[field] === 'string' ? input[field].slice(0, field === 'softcopyStatus' ? 32 : 256) : null;
+    }
   }
   return patch;
 }
@@ -2898,7 +2925,7 @@ ipcMain.handle('today-monitor:print-extra-session-copy', async (event, payload =
       metadataPath: printImage?.metadataPath || null,
     });
     if (!printImage?.resolvedPath) {
-      return { ok: false, error: 'Extra print unavailable for this session. No saved print image was found.' };
+      return { ok: false, error: 'Media unavailable on this device. No saved print image was found for this session.' };
     }
     if (!fs.existsSync(printImage.resolvedPath)) {
       return { ok: false, error: `Reprint image file does not exist: ${printImage.resolvedPath}` };
@@ -2914,6 +2941,7 @@ ipcMain.handle('today-monitor:print-extra-session-copy', async (event, payload =
     const job = {
       id: `reprint_${sessionId}_${Date.now()}`,
       sessionId,
+      cameraOrientation: normalizeSessionCameraOrientation(session.cameraOrientation),
       finalCopies: 1,
     };
 
@@ -2994,7 +3022,7 @@ ipcMain.handle('today-monitor:generate-and-print-keychain', async (event, payloa
       return { ok: false, error: 'Missing sessionId' };
     }
     if (!keychainCopies) {
-      return { ok: false, error: 'Invalid keychain copy count. Choose 2 or 3 strip copies.' };
+      return { ok: false, error: 'Invalid keychain quantity. Choose 2 or 3 keychains.' };
     }
 
     const allSessions = await readAllSessions();
@@ -3032,6 +3060,7 @@ ipcMain.handle('today-monitor:generate-and-print-keychain', async (event, payloa
         sessionId,
         templateName: session.templateName || null,
         layoutName: session.layoutName || null,
+        cameraOrientation: normalizeSessionCameraOrientation(session.cameraOrientation),
         finalCopies: 1,
         keychainCopies,
       };
@@ -3172,7 +3201,7 @@ ipcMain.handle('today-monitor:generate-and-print-keychain', async (event, payloa
         filename,
       });
       if (!printImage?.resolvedPath) {
-        return { ok: false, error: 'Keychain unavailable for this session. No saved final photo was found.' };
+        return { ok: false, error: 'Media unavailable on this device. No saved final photo was found for this session.' };
       }
       return {
         ok: true,
@@ -3458,6 +3487,7 @@ function serializePrintJob(job) {
     sessionId: job.sessionId || null,
     templateName: job.templateName || null,
     layoutName: job.layoutName || null,
+    cameraOrientation: normalizeSessionCameraOrientation(job.cameraOrientation),
     copies: job.copies,
     printerName: job.printerName || null,
     requestedCopies: job.requestedCopies,
@@ -3625,6 +3655,7 @@ function createPrintJob(payload = {}, requestedCopies, finalCopies) {
     sessionId: safeQueueText(payload.sessionId, 128),
     templateName: safeQueueText(payload.templateName, 128),
     layoutName: safeQueueText(payload.layoutName, 128),
+    cameraOrientation: normalizeSessionCameraOrientation(payload.cameraOrientation),
     copies: finalCopies,
     printerName: null,
     requestedCopies,

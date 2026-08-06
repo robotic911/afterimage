@@ -1,0 +1,13 @@
+{
+  "currency": "PHP",
+  "defaultKeychainCopies": 3,
+  "exportedAt": "2026-07-20T12:38:46.634Z",
+  "keychainPriceSource": "keychainPricing.cjs",
+  "keychainPricing": {
+    "2": 120,
+    "3": 150
+  },
+  "schemaVersion": 1,
+  "stripPricePerCopy": 99,
+  "stripPriceSource": "src/components/screens/PrintScreen.jsx PRICE_PER_COPY"
+}

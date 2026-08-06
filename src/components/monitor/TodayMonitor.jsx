@@ -59,8 +59,8 @@ function fmtInt(value) {
 }
 
 const KEYCHAIN_COPY_OPTIONS = [
-  { copies: 2, label: '2 strip copies', price: getConfiguredKeychainPrice(2) },
-  { copies: 3, label: '3 strip copies', price: getConfiguredKeychainPrice(3) },
+  { copies: 2, label: '2 Keychains', price: getConfiguredKeychainPrice(2) },
+  { copies: 3, label: '3 Keychains', price: getConfiguredKeychainPrice(3) },
 ];
 
 function normalizeKeychainCopies(value) {
@@ -1212,12 +1212,12 @@ export default function TodayMonitor() {
       const unitsSold = getSessionKeychainUnitsSold(result.updatedSession || {});
       const revenue = getSessionKeychainRevenue(result.updatedSession || {});
       const totalSuffix = result.updatedSession && unitsSold > 0
-        ? ` Total: ${fmtInt(unitsSold)} copies • ${fmtMoney(revenue)} across ${fmtInt(printCount)} sheet${printCount === 1 ? '' : 's'}.`
+        ? ` Total: ${fmtInt(unitsSold)} keychains • ${fmtMoney(revenue)} across ${fmtInt(printCount)} sheet${printCount === 1 ? '' : 's'}.`
         : '';
       setKeychainFeedback({
         sessionId: session.id,
         ok: true,
-        message: `${result.reusedExisting ? 'Existing keychain printed.' : 'Keychain generated and printed.'} ${fmtInt(keychainCopies)} copies • ${fmtMoney(keychainAmount)}.${totalSuffix}`,
+        message: `${result.reusedExisting ? 'Existing keychain printed.' : 'Keychain generated and printed.'} ${fmtInt(keychainCopies)} keychains • ${fmtMoney(keychainAmount)}.${totalSuffix}`,
       });
       setKeychainModalSession(null);
     } catch (err) {
@@ -1448,7 +1448,7 @@ export default function TodayMonitor() {
                 ) : (
                   summary.recentKeychainSales.map((sale) => (
                     <div key={sale.id || `${sale.sessionId}-${sale.createdAt}-${sale.copies}`} className="monitor-keychain-sale">
-                      <strong>{fmtInt(sale.copies)} copies • {fmtMoney(sale.amount)}</strong>
+                      <strong>{fmtInt(sale.copies)} keychains • {fmtMoney(sale.amount)}</strong>
                       <span>{sale.templateName} • {fmtShortTime(sale.createdAt)}</span>
                     </div>
                   ))
@@ -1923,7 +1923,7 @@ export default function TodayMonitor() {
                       </div>
                       {keychainUnitsSold > 0 && (
                         <div className="monitor-row-keychain-line">
-                          Keychain: {fmtInt(keychainUnitsSold)} copies • {fmtMoney(keychainRevenue)} • {fmtInt(keychainTransactions)} sheet{keychainTransactions === 1 ? '' : 's'}
+                          Keychain: {fmtInt(keychainUnitsSold)} keychains • {fmtMoney(keychainRevenue)} • {fmtInt(keychainTransactions)} sheet{keychainTransactions === 1 ? '' : 's'}
                         </div>
                       )}
                       {(showExtraPrintButton || showKeychainButton) && (
@@ -2072,7 +2072,7 @@ export default function TodayMonitor() {
           <div className="monitor-modal monitor-modal--keychain" role="dialog" aria-modal="true" aria-labelledby="monitor-keychain-title">
             <div className="monitor-modal-title" id="monitor-keychain-title">Print keychain?</div>
             <div className="monitor-modal-text">
-              Choose how many keychain strip copies to include on one generated 4x6 sheet.
+              Choose the keychain bundle to include on one generated 4x6 sheet.
               <span>
                 Session:
                 {' '}
@@ -2086,7 +2086,7 @@ export default function TodayMonitor() {
                 <span>
                   Keychain sold:
                   {' '}
-                  {fmtInt(keychainModalSession.keychainUnitsSold)} copies • {fmtMoney(keychainModalSession.keychainRevenue)}
+                  {fmtInt(keychainModalSession.keychainUnitsSold)} keychains • {fmtMoney(keychainModalSession.keychainRevenue)}
                   {' '}
                   ({fmtInt(keychainModalSession.keychainTransactions)} sheet{keychainModalSession.keychainTransactions === 1 ? '' : 's'})
                 </span>
@@ -2097,7 +2097,7 @@ export default function TodayMonitor() {
                 {selectedPrinterName || 'Auto-select online Canon SELPHY printer'}
               </span>
             </div>
-            <div className="monitor-keychain-options" role="radiogroup" aria-label="Keychain strip copies">
+            <div className="monitor-keychain-options" role="radiogroup" aria-label="Keychain bundle">
               {KEYCHAIN_COPY_OPTIONS.map((option) => {
                 const checked = keychainCopiesDraft === option.copies;
                 return (

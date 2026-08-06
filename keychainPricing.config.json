@@ -1,0 +1,8 @@
+{
+  "currency": "PHP",
+  "keychainPricing": {
+    "2": 150,
+    "3": 199
+  },
+  "defaultKeychainCopies": 3
+}

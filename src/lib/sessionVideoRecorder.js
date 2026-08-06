@@ -5,7 +5,11 @@ import {
   SESSION_VIDEO_SCALE,
   VIDEO_SOFTCOPY_DURATION_MS,
 } from '../constants/softcopySettings';
-import { MIRROR_CAMERA_OUTPUT } from '../constants/cameraSettings';
+import {
+  DEFAULT_CAMERA_ORIENTATION,
+  isCameraOrientationMirrored,
+  normalizeCameraOrientation,
+} from '../constants/cameraSettings';
 import { getCameraDrawRect } from './cameraFraming';
 import { loadImageCached } from './imageCache';
 
@@ -128,6 +132,7 @@ export async function startShotClipRecording({
   shotIndex,
   durationTargetMs = null,
   photoFilter = '',
+  cameraOrientation = DEFAULT_CAMERA_ORIENTATION,
   fps = SESSION_VIDEO_FPS,
 }) {
   if (typeof MediaRecorder === 'undefined') {
@@ -147,6 +152,8 @@ export async function startShotClipRecording({
 
   const canvasW = Math.round(layout.camera.width * SHOT_CLIP_SCALE);
   const canvasH = Math.round(layout.camera.height * SHOT_CLIP_SCALE);
+  const normalizedCameraOrientation = normalizeCameraOrientation(cameraOrientation);
+  const mirrorCameraContent = isCameraOrientationMirrored(normalizedCameraOrientation);
   const canvas = document.createElement('canvas');
   canvas.width = canvasW;
   canvas.height = canvasH;
@@ -173,7 +180,7 @@ export async function startShotClipRecording({
       ctx.save();
       if (photoFilter) ctx.filter = photoFilter;
       drawHeightLockedCamera(ctx, video, canvasW, canvasH, layout, {
-        mirror: MIRROR_CAMERA_OUTPUT,
+        mirror: mirrorCameraContent,
       });
       ctx.restore();
     }
@@ -205,7 +212,14 @@ export async function startShotClipRecording({
           durationMs,
         });
       }
-      resolve({ blob, mimeType, extension, durationMs, shotIndex });
+      resolve({
+        blob,
+        mimeType,
+        extension,
+        durationMs,
+        shotIndex,
+        cameraOrientation: normalizedCameraOrientation,
+      });
     };
     recorder.onerror = (event) => {
       stream.getTracks().forEach((track) => track.stop());
@@ -243,6 +257,8 @@ export async function startShotClipRecording({
     console.log('[video] shot clip recording started', {
       shotIndex,
       durationTargetMs,
+      cameraOrientation: normalizedCameraOrientation,
+      mirrorApplied: mirrorCameraContent,
       mimeType,
       width: canvasW,
       height: canvasH,
@@ -250,8 +266,9 @@ export async function startShotClipRecording({
     });
     console.log('[mirror] gif/video/keychain', {
       gifMirrorApplied: false,
-      videoMirrorApplied: MIRROR_CAMERA_OUTPUT,
+      videoMirrorApplied: mirrorCameraContent,
       keychainMirrorApplied: false,
+      cameraOrientation: normalizedCameraOrientation,
     });
   }
 
@@ -265,11 +282,13 @@ export async function composeSimultaneousSlotVideo({
   templateSrc = null,
   photoFilter = '',
   selectedFilter = 'none',
+  cameraOrientation = DEFAULT_CAMERA_ORIENTATION,
   fps = SESSION_VIDEO_FPS,
   scale = SESSION_VIDEO_SCALE,
 }) {
   const usableClips = shotVideoClips.filter((clip) => clip?.blob);
   if (!usableClips.length) return null;
+  const normalizedCameraOrientation = normalizeCameraOrientation(cameraOrientation);
 
   const mimeType = pickSupportedVideoMimeType();
   if (!mimeType) {
@@ -293,6 +312,8 @@ export async function composeSimultaneousSlotVideo({
       width,
       height,
       backgroundSelected: Boolean(backgroundSrc),
+      cameraOrientation: normalizedCameraOrientation,
+      sourceClipsAlreadyOriented: true,
     });
   }
 

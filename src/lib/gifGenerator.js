@@ -5,6 +5,10 @@ import {
   MAX_RECOMMENDED_GIF_BYTES,
   MAX_RECOMMENDED_GIF_MB,
 } from '../constants/softcopySettings';
+import {
+  DEFAULT_CAMERA_ORIENTATION,
+  normalizeCameraOrientation,
+} from '../constants/cameraSettings';
 import { loadImageCached } from './imageCache';
 
 const IS_DEV = import.meta.env.DEV;
@@ -96,6 +100,7 @@ export async function generateSessionGif(shots, options = {}) {
   const interval = Number(options.interval ?? GIF_FRAME_INTERVAL) || GIF_FRAME_INTERVAL;
   const quality = Number(options.quality ?? GIF_QUALITY) || GIF_QUALITY;
   const frames = safeShots.length;
+  const cameraOrientation = normalizeCameraOrientation(options.cameraOrientation || DEFAULT_CAMERA_ORIENTATION);
   const gifFrames = await applyFilterToFrames(safeShots, options.photoFilter || '');
 
   if (IS_DEV) {
@@ -112,6 +117,9 @@ export async function generateSessionGif(shots, options = {}) {
       quality,
       frames,
       source: dimensions.source,
+      cameraOrientation,
+      sourceFramesAlreadyOriented: true,
+      extraMirrorApplied: false,
     });
   }
 

@@ -14,7 +14,10 @@ import {
 import { versionTemplateAssetSrc } from '../../lib/templateAssetUrl';
 import { resolveTemplateRenderAssets } from '../../lib/templateRenderAssets';
 import { DEFAULT_PRINTER_PROFILE_ID, DEFAULT_SAFE_MARGIN_OVERRIDE } from '../../constants/printers';
-import { createSoftcopySessionToken, uploadSoftcopyAssets } from '../../lib/softcopyUpload';
+import {
+  createSoftcopySessionToken,
+  uploadSoftcopyAssets,
+} from '../../lib/softcopyUpload';
 import { DEFAULT_SOFTCOPY_SETTINGS, resolveSoftcopySettings } from '../../constants/softcopySettings';
 import {
   clampPrintCopies,
@@ -22,6 +25,10 @@ import {
   MAX_PRINT_COPIES,
   MIN_PRINT_COPIES,
 } from '../../constants/printSettings';
+import {
+  DEFAULT_CAMERA_ORIENTATION,
+  normalizeCameraOrientation,
+} from '../../constants/cameraSettings';
 
 const PRICE_PER_COPY = 99; // PHP
 const FINAL_PRINT_STATUSES = new Set(['completed', 'failed', 'cancelled', 'partial']);
@@ -81,6 +88,7 @@ function getSoftcopyErrorMessage(error = '') {
 function createEmptySoftcopyPayload() {
   return {
     sessionToken: null,
+    cameraOrientation: DEFAULT_CAMERA_ORIENTATION,
     photoDataUrl: null,
     gifBlob: null,
     videoBlob: null,
@@ -109,12 +117,13 @@ function timeEnd(label) {
   if (IS_DEV) console.timeEnd(label);
 }
 
-function makeSoftcopyCacheKey({ layout, template, shots, selectedFilterCss, softcopySettings, sessionVideo }) {
+function makeSoftcopyCacheKey({ layout, template, shots, selectedFilterCss, softcopySettings, sessionVideo, cameraOrientation }) {
   return JSON.stringify({
     layoutId: layout?.id || null,
     templateId: template?.id || null,
     templateUpdatedAt: template?.updatedAt || template?.createdAt || null,
     selectedFilterCss,
+    cameraOrientation: normalizeCameraOrientation(cameraOrientation),
     shots: (shots || []).map((shot) => {
       const source = getShotImageSource(shot);
       return source ? `${source.length}:${source.slice(0, 96)}` : null;
@@ -134,12 +143,13 @@ function makeSoftcopyCacheKey({ layout, template, shots, selectedFilterCss, soft
   });
 }
 
-function makeFinalPrintCacheKey({ layout, template, shots, selectedFilterCss, settings }) {
+function makeFinalPrintCacheKey({ layout, template, shots, selectedFilterCss, settings, cameraOrientation }) {
   return JSON.stringify({
     layoutId: layout?.id || null,
     templateId: template?.id || null,
     templateUpdatedAt: template?.updatedAt || template?.createdAt || null,
     selectedFilterCss,
+    cameraOrientation: normalizeCameraOrientation(cameraOrientation),
     printerProfileId: settings?.printerProfileId || null,
     safeMarginOverride: settings?.safeMarginOverride || null,
     shots: (shots || []).map((shot) => {
@@ -327,6 +337,7 @@ export default function PrintScreen({
   selectedFilterCss = '',
   shots,
   arrangedShotIndexes = [],
+  cameraOrientation = DEFAULT_CAMERA_ORIENTATION,
   sessionVideo = null,
   copies = DEFAULT_PRINT_COPIES,
   retries,
@@ -363,13 +374,15 @@ export default function PrintScreen({
     () => resolveSoftcopySettings(settings.softcopySettings),
     [settings.softcopySettings],
   );
+  const normalizedCameraOrientation = normalizeCameraOrientation(cameraOrientation);
   const finalPrintCacheKey = useMemo(() => makeFinalPrintCacheKey({
     layout,
     template,
     shots,
     selectedFilterCss,
     settings,
-  }), [layout, selectedFilterCss, settings, shots, template]);
+    cameraOrientation: normalizedCameraOrientation,
+  }), [layout, normalizedCameraOrientation, selectedFilterCss, settings, shots, template]);
   const requestedCopies = clampPrintCopies(copies);
   const selectedCopies = printCopiesEnabled ? requestedCopies : DEFAULT_PRINT_COPIES;
   const normalizedShotSources = useMemo(
@@ -478,6 +491,7 @@ export default function PrintScreen({
         shots,
         selectedFilterCss,
         settings,
+        { cameraOrientation: normalizedCameraOrientation },
       );
       const pngBlob = await canvasToBlobAsync(canvas, 'image/png', 1);
       const previewUrl = URL.createObjectURL(pngBlob);
@@ -507,6 +521,7 @@ export default function PrintScreen({
   }, [
     finalPrintCacheKey,
     layout,
+    normalizedCameraOrientation,
     releaseFinalPrintArtifact,
     selectedFilterCss,
     settings,
@@ -686,7 +701,8 @@ export default function PrintScreen({
     selectedFilterCss,
     softcopySettings,
     sessionVideo,
-  }), [layout, template, shots, selectedFilterCss, softcopySettings, sessionVideo]);
+    cameraOrientation: normalizedCameraOrientation,
+  }), [layout, normalizedCameraOrientation, template, shots, selectedFilterCss, softcopySettings, sessionVideo]);
 
   const generateSoftcopyMotionMedia = useCallback(async ({ cacheKey = softcopyCacheKey } = {}) => {
     const cached = softcopyMotionCacheRef.current;
@@ -712,6 +728,7 @@ export default function PrintScreen({
         return {
           cacheKey,
           status: 'disabled',
+          cameraOrientation: normalizedCameraOrientation,
           gifBlob,
           videoBlob,
           videoMimeType,
@@ -726,6 +743,7 @@ export default function PrintScreen({
           qrEnabled: softcopySettings.qrEnabled !== false,
           gifEnabled: enabled.gif,
           videoEnabled: enabled.video,
+          cameraOrientation: normalizedCameraOrientation,
         });
       }
 
@@ -740,6 +758,7 @@ export default function PrintScreen({
               height: layout?.camera?.height,
               photoFilter: selectedFilterCss,
               selectedFilter,
+              cameraOrientation: normalizedCameraOrientation,
             });
             gifBlob = gif?.blob || null;
           } catch (error) {
@@ -760,6 +779,7 @@ export default function PrintScreen({
               templateSrc: templateOverlaySrc,
               photoFilter: selectedFilterCss,
               selectedFilter,
+              cameraOrientation: normalizedCameraOrientation,
             });
             if (finalVideo?.blob) {
               videoBlob = finalVideo.blob;
@@ -785,6 +805,8 @@ export default function PrintScreen({
           videoSourceType: videoBlob ? 'blob' : 'none',
         });
         console.log('[mirror] gif/video/keychain', {
+          cameraOrientation: normalizedCameraOrientation,
+          sourceFramesAlreadyOriented: true,
           gifMirrorApplied: false,
           videoMirrorApplied: false,
           keychainMirrorApplied: false,
@@ -794,6 +816,7 @@ export default function PrintScreen({
       const result = {
         cacheKey,
         status: 'ready',
+        cameraOrientation: normalizedCameraOrientation,
         gifBlob,
         videoBlob,
         videoMimeType,
@@ -815,6 +838,7 @@ export default function PrintScreen({
     }
   }, [
     layout,
+    normalizedCameraOrientation,
     selectedFilter,
     selectedFilterCss,
     sessionVideo,
@@ -949,6 +973,7 @@ export default function PrintScreen({
         photoEnabled: enabled.photo,
         gifEnabled: enabled.gif,
         videoEnabled: enabled.video,
+        cameraOrientation: normalizedCameraOrientation,
       });
     }
     const photoDataUrl = enabled.photo ? jpegUrl : null;
@@ -969,6 +994,7 @@ export default function PrintScreen({
     if (!Object.values(enabled).some(Boolean)) {
       return {
         sessionToken,
+        cameraOrientation: normalizedCameraOrientation,
         photoDataUrl,
         localPhotoDataUrl,
         localPhotoBlob,
@@ -998,6 +1024,7 @@ export default function PrintScreen({
 
     return {
       sessionToken,
+      cameraOrientation: normalizedCameraOrientation,
       photoDataUrl,
       localPhotoDataUrl,
       localPhotoBlob,
@@ -1057,6 +1084,7 @@ export default function PrintScreen({
       templateId: template?.id || null,
       backgroundId: template?.id || null,
       selectedFilter: selectedFilter || 'none',
+      cameraOrientation: normalizeCameraOrientation(payload.cameraOrientation || normalizedCameraOrientation),
       qrEnabled,
       qrUploadAttempted,
       qrUploadSucceeded: qrUploadAttempted ? upload.status === 'ready' : null,
@@ -1085,6 +1113,10 @@ export default function PrintScreen({
       localFiles,
       localFileErrors: payload.localSave?.fileErrors || [],
       qrUrl: upload.qrUrl || null,
+      supabaseBucket: upload.bucket || null,
+      supabaseCreatedAt: upload.createdAt || null,
+      supabaseUploadedAt: upload.uploadedAt || null,
+      supabaseExpiresAt: upload.expiresAt || null,
       uploadError: upload.status === 'error' ? (upload.error || 'Softcopy upload failed.') : null,
     };
   };
@@ -1203,6 +1235,7 @@ export default function PrintScreen({
           console.log('[softcopy-local] saving enabled media regardless of QR', {
             sessionId: payload.sessionToken,
             qrEnabled: softcopySettings.qrEnabled !== false,
+            cameraOrientation: payload.cameraOrientation || normalizedCameraOrientation,
             files: localMediaFiles.map(file => ({ kind: file.kind, name: file.name })),
           });
         }
@@ -1211,8 +1244,8 @@ export default function PrintScreen({
           sessionId: payload.sessionToken,
           date: payload.createdAt.slice(0, 10),
           files: localMediaFiles,
-          metadata: buildLocalMetadata(payload),
-        });
+        metadata: buildLocalMetadata(payload),
+      });
       } catch (error) {
         console.error('[DIAG local-save ERROR]', error);
         result = { ok: false, error: error?.message || String(error) };
@@ -1221,12 +1254,14 @@ export default function PrintScreen({
         if (result?.ok) {
           console.log('[softcopy-local] saved', {
             sessionId: payload.sessionToken,
+            cameraOrientation: payload.cameraOrientation || normalizedCameraOrientation,
             folderPath: result.folderPath,
             savedFiles: result.savedFiles,
           });
         } else {
           console.log('[softcopy-local] save failed', {
             sessionId: payload.sessionToken,
+            cameraOrientation: payload.cameraOrientation || normalizedCameraOrientation,
             error: result?.error || 'unknown',
           });
         }
@@ -1478,7 +1513,11 @@ export default function PrintScreen({
           ].filter(Boolean),
         });
       }
-      const nextLog = { status: 'ready', ...uploaded };
+      const nextLog = {
+        status: 'ready',
+        cameraOrientation: payload.cameraOrientation || normalizedCameraOrientation,
+        ...uploaded,
+      };
       softcopyArtifactRef.current = {
         ...payload,
         ...uploaded,
@@ -1497,6 +1536,7 @@ export default function PrintScreen({
       if (IS_DEV) {
         console.log('[softcopy-upload] upload result', {
           sessionId: payload.sessionToken,
+          cameraOrientation: payload.cameraOrientation || normalizedCameraOrientation,
           uploadSucceeded: true,
           localSaveSucceeded: payload.localSave?.ok === true,
         });
@@ -1505,6 +1545,12 @@ export default function PrintScreen({
     } catch (softcopyErr) {
       const message = softcopyErr?.message || String(softcopyErr);
       const successfulOutputs = softcopyErr?.successfulOutputs || {};
+      const diagnostics = softcopyErr?.softcopyDiagnostics || [];
+      const diagnosticSummary = diagnostics.map((diagnostic) => ({
+        step: diagnostic.step || null,
+        code: diagnostic.code || diagnostic.error?.code || null,
+        httpStatus: diagnostic.httpStatus || diagnostic.error?.httpStatus || null,
+      }));
       console.warn('[softcopy] upload failed', {
         reason: message,
         step: 'upload_softcopy_assets',
@@ -1512,7 +1558,9 @@ export default function PrintScreen({
         hasPhoto: Boolean(payload?.photoDataUrl),
         hasGif: Boolean(payload?.gifBlob),
         hasVideo: Boolean(payload?.videoBlob),
-        sessionToken: payload?.sessionToken || null,
+        hasSessionToken: Boolean(payload?.sessionToken),
+        diagnostics: diagnosticSummary,
+        hasStack: Boolean(softcopyErr?.stack),
       });
       softcopyArtifactRef.current = {
         ...payload,
@@ -1523,17 +1571,26 @@ export default function PrintScreen({
           videoPath: successfulOutputs.videoPath || payload.uploadedPaths?.videoPath || null,
         },
       };
-      softcopyLogRef.current = { status: 'error', error: message, sessionToken: payload.sessionToken || null };
+      softcopyLogRef.current = {
+        status: 'error',
+        error: message,
+        sessionToken: payload.sessionToken || null,
+      };
       setSoftcopyState({
         status: 'error',
         qrUrl: null,
         error: message,
       });
-      const failedResult = { status: 'error', error: message };
+      const failedResult = {
+        status: 'error',
+        error: message,
+        cameraOrientation: payload.cameraOrientation || normalizedCameraOrientation,
+      };
       await updateLocalSoftcopyMetadata(payload, failedResult);
       if (IS_DEV) {
         console.log('[softcopy-upload] upload result', {
           sessionId: payload.sessionToken,
+          cameraOrientation: payload.cameraOrientation || normalizedCameraOrientation,
           uploadSucceeded: false,
           localSaveSucceeded: payload.localSave?.ok === true,
         });
@@ -1555,6 +1612,7 @@ export default function PrintScreen({
     try {
       const payload = await buildSoftcopyPayload(pngUrl, jpegUrl, softcopyCacheKey, pngBlob);
       payload.createdAt = payload.createdAt || new Date().toISOString();
+      payload.cameraOrientation = normalizeCameraOrientation(payload.cameraOrientation || normalizedCameraOrientation);
       setSoftcopyPreviewAssets({
         cacheKey: payload.cacheKey || softcopyCacheKey,
         status: payload.gifBlob || payload.videoBlob ? 'ready' : 'idle',
@@ -1587,7 +1645,10 @@ export default function PrintScreen({
 
       if (!payload.canUpload) {
         if (IS_DEV) console.log('[softcopy] skipped disabled media', payload.enabled);
-        const disabledResult = { status: 'disabled' };
+        const disabledResult = {
+          status: 'disabled',
+          cameraOrientation: payload.cameraOrientation || normalizedCameraOrientation,
+        };
         softcopyLogRef.current = disabledResult;
         setSoftcopyState({ status: 'idle', qrUrl: null });
         return completeLocalSaveOrder(disabledResult);
@@ -1601,6 +1662,7 @@ export default function PrintScreen({
         }
         const disabledResult = {
           status: 'disabled',
+          cameraOrientation: payload.cameraOrientation || normalizedCameraOrientation,
           sessionToken: payload.sessionToken,
           localSave: payload.localSave,
         };
@@ -1624,9 +1686,16 @@ export default function PrintScreen({
         status: 'error',
         error: uploaded.error || 'Softcopy upload failed.',
         sessionToken: payload.sessionToken || null,
+        cameraOrientation: payload.cameraOrientation || normalizedCameraOrientation,
       });
     } catch (softcopyErr) {
       const message = softcopyErr?.message || String(softcopyErr);
+      const diagnostics = softcopyErr?.softcopyDiagnostics || [];
+      const diagnosticSummary = diagnostics.map((diagnostic) => ({
+        step: diagnostic.step || null,
+        code: diagnostic.code || diagnostic.error?.code || null,
+        httpStatus: diagnostic.httpStatus || diagnostic.error?.httpStatus || null,
+      }));
       console.warn('[softcopy] failure summary', {
         step: 'printscreen_softcopy_upload',
         qrEnabled: softcopySettings.qrEnabled,
@@ -1637,8 +1706,15 @@ export default function PrintScreen({
         hasGifBlob: Boolean(softcopyArtifactRef.current?.gifBlob),
         hasVideoBlob: Boolean(softcopyArtifactRef.current?.videoBlob),
         errorMessage: message,
+        diagnostics: diagnosticSummary,
+        hasStack: Boolean(softcopyErr?.stack),
       });
-      const nextLog = { status: 'error', error: message, sessionToken: softcopyArtifactRef.current?.sessionToken || null };
+      const nextLog = {
+        status: 'error',
+        error: message,
+        sessionToken: softcopyArtifactRef.current?.sessionToken || null,
+        cameraOrientation: normalizedCameraOrientation,
+      };
       softcopyLogRef.current = nextLog;
       softcopyArtifactRef.current = softcopyArtifactRef.current || createEmptySoftcopyPayload();
       setSoftcopyState({
@@ -1776,6 +1852,7 @@ export default function PrintScreen({
         finalShots,
         selectedFilterCss,
         settings,
+        { cameraOrientation: normalizedCameraOrientation },
       );
       const finalArtworkDataUrl = finalArtworkCanvas.toDataURL('image/png');
 
@@ -1786,6 +1863,7 @@ export default function PrintScreen({
         hasFinalArtwork: Boolean(finalArtworkDataUrl),
         finalArtworkLength: finalArtworkDataUrl.length,
         finalArtworkPrefix: finalArtworkDataUrl.slice(0, 80),
+        cameraOrientation: normalizedCameraOrientation,
       });
 
       const keychain = await generateKeychain4x6Png({
@@ -1947,7 +2025,8 @@ export default function PrintScreen({
         finalArtifact = await getFinalPrintArtifact();
         if (IS_DEV) {
           console.log('[mirror] final render', {
-            usesCapturedMirroredSource: true,
+            cameraOrientation: normalizedCameraOrientation,
+            usesCapturedOrientedSource: true,
             extraMirrorApplied: false,
           });
         }
@@ -1964,6 +2043,7 @@ export default function PrintScreen({
         finalDataUrlLength: pngUrl?.length,
         sessionId: softcopyArtifactRef.current?.sessionToken || null,
         layoutId: layout?.id || '',
+        cameraOrientation: normalizedCameraOrientation,
       });
       console.log('[LOCAL SAVE AUDIT PNG]', {
         filename: 'afterimage-strip-*.png',
@@ -1988,6 +2068,7 @@ export default function PrintScreen({
         copies: selectedCopies,
         templateName: template.name || null,
         layoutName: layout?.name || layout?.id || null,
+        cameraOrientation: normalizedCameraOrientation,
       };
 
       if (window.printApi?.printStrip) {
@@ -1999,6 +2080,7 @@ export default function PrintScreen({
             sessionId: sessionRecordId,
             templateName: template.name,
             layoutName: layout?.name || layout?.id || null,
+            cameraOrientation: normalizedCameraOrientation,
           });
         } finally {
           timeEnd('[print] send job');
@@ -2091,6 +2173,7 @@ export default function PrintScreen({
             eventName:    settings.mode === 'event' ? (activeEvent?.name || null) : null,
             templateId:   template.id,
             templateName: template.name,
+            cameraOrientation: normalizedCameraOrientation,
             copies:       printCopiesCompleted,
             printStatus,
             printCopiesRequested,
@@ -2119,6 +2202,7 @@ export default function PrintScreen({
                 softcopyLog = result || { status: 'idle' };
                 const savedPhotoFile = getSavedPhotoFile(softcopyArtifactRef.current?.localSave?.savedFiles);
                 await window.adminApi.updateSessionSoftcopy(loggedSessionId, {
+                  cameraOrientation: normalizedCameraOrientation,
                   softcopySessionToken: softcopyLog.sessionToken || null,
                   softcopyPhotoPath: softcopyLog.photoPath || null,
                   softcopyGifPath: softcopyLog.gifPath || null,
@@ -2132,6 +2216,7 @@ export default function PrintScreen({
               .catch(async (softcopyErr) => {
                 const message = softcopyErr?.message || String(softcopyErr);
                 await window.adminApi.updateSessionSoftcopy(loggedSessionId, {
+                  cameraOrientation: normalizedCameraOrientation,
                   softcopyStatus: 'error',
                   finalPrintPath: null,
                   printImagePath: null,

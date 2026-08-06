@@ -160,6 +160,76 @@
   color: #ffffff;
 }
 
+.camera-orientation-control {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: clamp(8px, 1vh, 12px);
+  padding-bottom: clamp(8px, 1vh, 12px);
+  border-bottom: 1px solid rgba(255, 255, 255, .12);
+}
+
+.camera-orientation-label {
+  color: rgba(255, 255, 255, .78);
+  font-size: clamp(12px, .78vw, 14px);
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.camera-orientation-segmented {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid rgba(255, 255, 255, .18);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, .07);
+}
+
+.camera-orientation-option {
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 8px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: rgba(255, 255, 255, .68);
+  font: inherit;
+  font-size: clamp(12px, .75vw, 14px);
+  font-weight: 800;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background .16s ease, color .16s ease, box-shadow .16s ease;
+}
+
+.camera-orientation-option:hover:not(:disabled) {
+  background: rgba(255, 255, 255, .1);
+  color: #ffffff;
+}
+
+.camera-orientation-option.is-selected {
+  background: #ffffff;
+  color: #000000;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, .22);
+}
+
+.camera-orientation-option:focus-visible {
+  outline: 3px solid var(--secondary);
+  outline-offset: 2px;
+}
+
+.camera-orientation-option:disabled {
+  cursor: not-allowed;
+  opacity: .52;
+}
+
+.camera-orientation-option.is-selected:disabled {
+  opacity: 1;
+}
+
 .camera-filter-grid {
   flex: 1;
   min-height: 0;
@@ -301,6 +371,12 @@
   height: 100%;
   max-width: none;
   display: block;
+  transform: translateX(-50%);
+  -webkit-transform: translateX(-50%);
+}
+
+#camera-video.is-preview-mirrored,
+.camera-preview-frame video.is-preview-mirrored {
   transform: translateX(-50%) scaleX(-1);
   -webkit-transform: translateX(-50%) scaleX(-1);
 }
@@ -631,6 +707,16 @@
     gap: 3px;
     margin-bottom: 8px;
     padding-bottom: 8px;
+  }
+
+  .camera-orientation-control {
+    gap: 6px;
+    margin-bottom: 8px;
+    padding-bottom: 8px;
+  }
+
+  .camera-orientation-option {
+    min-height: 38px;
   }
 
   .camera-filter-heading strong {

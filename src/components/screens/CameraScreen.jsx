@@ -3,7 +3,12 @@ import './CameraScreen.css';
 import { useCamera } from '../../hooks/useCamera';
 import { FILTERS } from '../../constants/filters';
 import { getBeautificationFilterCss } from '../../constants/beautificationSettings';
-import { MIRROR_CAMERA_OUTPUT } from '../../constants/cameraSettings';
+import {
+  CAMERA_ORIENTATIONS,
+  DEFAULT_CAMERA_ORIENTATION,
+  isCameraOrientationMirrored,
+  normalizeCameraOrientation,
+} from '../../constants/cameraSettings';
 import { getCameraDrawRect } from '../../lib/cameraFraming';
 import { saveShots } from '../../lib/shotStorage';
 import {
@@ -17,6 +22,10 @@ const CAPTURE_SCALE = 2;
 const CAPTURE_MIME = 'image/png';
 const CAPTURE_JPEG_QUALITY = 0.98;
 const IS_DEV = import.meta.env.DEV;
+const CAMERA_ORIENTATION_OPTIONS = [
+  { value: CAMERA_ORIENTATIONS.MIRRORED, label: 'Mirrored' },
+  { value: CAMERA_ORIENTATIONS.ALTERNATE, label: 'Alternate' },
+];
 
 /**
  * Auto-runs the shooting sequence once the user clicks "Start Session".
@@ -36,6 +45,10 @@ export default function CameraScreen({
   onSelectFilter,
   beautificationSettings,
   beautificationPreviewCss = '',
+  cameraOrientation = DEFAULT_CAMERA_ORIENTATION,
+  cameraOrientationLocked = false,
+  onCameraOrientationChange,
+  onCameraOrientationLock,
   recordVideo = true,
   retakeQueue = [],
   onFlash,
@@ -60,6 +73,8 @@ export default function CameraScreen({
   ));
   const isRetakingShot = safeRetakeQueue.length > 0;
   const activeRetakeShotIndex = isRetakingShot ? safeRetakeQueue[0] : null;
+  const normalizedCameraOrientation = normalizeCameraOrientation(cameraOrientation);
+  const isCameraMirrored = isCameraOrientationMirrored(normalizedCameraOrientation);
 
   const cntIntervalRef = useRef(null);
   const nextShotTimerRef = useRef(null);
@@ -211,6 +226,7 @@ export default function CameraScreen({
         framing.zoom,
         framing.offsetX,
         framing.offsetY,
+        normalizedCameraOrientation,
       ].join(':');
       if (previewLogKeyRef.current === logKey) return;
       previewLogKeyRef.current = logKey;
@@ -233,7 +249,8 @@ export default function CameraScreen({
         drawY: drawRect.drawY,
       });
       console.log('[mirror] live preview', {
-        mirrored: MIRROR_CAMERA_OUTPUT,
+        mirrored: isCameraMirrored,
+        cameraOrientation: normalizedCameraOrientation,
         method: 'css',
       });
     };
@@ -244,8 +261,10 @@ export default function CameraScreen({
   }, [
     active,
     hasSignal,
+    isCameraMirrored,
     layout?.cameraFraming,
     layout?.id,
+    normalizedCameraOrientation,
     previewSize.height,
     previewSize.width,
     videoRef,
@@ -275,7 +294,10 @@ export default function CameraScreen({
   async function finishSession(newShots) {
     finishTimerRef.current = setTimeout(() => {
       finishTimerRef.current = null;
-      onDone(newShots, { shotVideoClips: shotVideoClipsRef.current.filter(Boolean) });
+      onDone(newShots, {
+        cameraOrientation: normalizedCameraOrientation,
+        shotVideoClips: shotVideoClipsRef.current.filter(Boolean),
+      });
     }, 300);
   }
 
@@ -377,14 +399,15 @@ export default function CameraScreen({
       if (captureBeautificationCss) ctx.filter = captureBeautificationCss;
       if (IS_DEV) {
         console.log('[mirror] capture output', {
-          mirrorApplied: MIRROR_CAMERA_OUTPUT,
+          cameraOrientation: normalizedCameraOrientation,
+          mirrorApplied: isCameraMirrored,
           sourceWidth,
           sourceHeight,
           targetWidth: outputWidth,
           targetHeight: outputHeight,
         });
       }
-      if (MIRROR_CAMERA_OUTPUT) {
+      if (isCameraMirrored) {
         ctx.save();
         ctx.translate(outputWidth, 0);
         ctx.scale(-1, 1);
@@ -400,7 +423,7 @@ export default function CameraScreen({
         drawWidth,
         drawHeight,
       );
-      if (MIRROR_CAMERA_OUTPUT) {
+      if (isCameraMirrored) {
         ctx.restore();
       }
       ctx.filter = 'none';
@@ -521,6 +544,7 @@ export default function CameraScreen({
           shotIndex: idx,
           durationTargetMs: countdown * 1000,
           photoFilter: beautificationPreviewCss,
+          cameraOrientation: normalizedCameraOrientation,
         });
       } catch (error) {
         console.warn('[video] shot clip recording start failed:', error);
@@ -546,6 +570,7 @@ export default function CameraScreen({
 
   async function startSession() {
     if (cntIntervalRef.current) return;
+    onCameraOrientationLock?.();
     setCounting(true);
     setCaptureLabel(null);
     shotVideoClipsRef.current = [];
@@ -561,6 +586,12 @@ export default function CameraScreen({
   const showCameraRecovery = Boolean(cameraError);
   const showNoSignalPlaceholder = active && !hasSignal && !cameraError;
   const filterLocked = counting || showCountdown || shotIndex > 0 || hasCapturedShots;
+  const cameraOrientationLockedForUi = cameraOrientationLocked
+    || counting
+    || showCountdown
+    || shotIndex > 0
+    || hasCapturedShots
+    || isRetakingShot;
   const cameraRecoveryMessage = cameraError || 'Camera preview will appear here';
   const retakeProgressLabel = isRetakingShot
     ? `${currentRetakePosition + 1} of ${safeRetakeQueue.length} retake${safeRetakeQueue.length === 1 ? '' : 's'}`
@@ -572,6 +603,11 @@ export default function CameraScreen({
       : counting
         ? (isRetakingShot ? `Retaking Photo ${shotIndex + 1} — Look at the camera` : `Photo ${Math.min(shotIndex + 1, totalShots)} of ${totalShots}`)
         : 'Get ready for your photos';
+
+  function handleCameraOrientationSelect(nextOrientation) {
+    if (cameraOrientationLockedForUi) return;
+    onCameraOrientationChange?.(nextOrientation);
+  }
 
   function auditCapturedPreview(event, index) {
     if (!IS_DEV) return;
@@ -622,6 +658,33 @@ export default function CameraScreen({
           <div className="camera-filter-heading">
             <strong>Choose Filter</strong>
             <span>{filterLocked ? 'Filter locked while taking photos' : 'Pick a photo look before we start'}</span>
+          </div>
+          <div className={`camera-orientation-control ${cameraOrientationLockedForUi ? 'is-locked' : ''}`}>
+            <span className="camera-orientation-label" id="camera-preview-orientation-label">
+              Camera Preview
+            </span>
+            <div
+              className="camera-orientation-segmented"
+              role="radiogroup"
+              aria-labelledby="camera-preview-orientation-label"
+            >
+              {CAMERA_ORIENTATION_OPTIONS.map((option) => {
+                const isSelected = normalizedCameraOrientation === option.value;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    role="radio"
+                    className={`camera-orientation-option ${isSelected ? 'is-selected' : ''}`}
+                    aria-checked={isSelected}
+                    disabled={cameraOrientationLockedForUi}
+                    onClick={() => handleCameraOrientationSelect(option.value)}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
           <div
             className="camera-filter-grid"
@@ -674,6 +737,7 @@ export default function CameraScreen({
               autoPlay
               playsInline
               muted
+              className={isCameraMirrored ? 'is-preview-mirrored' : 'is-preview-alternate'}
               style={livePhotoFilter ? { filter: livePhotoFilter } : undefined}
             />
             {showCameraRecovery && (

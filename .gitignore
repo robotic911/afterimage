@@ -3,8 +3,12 @@ dist/
 release/
 out/
 .DS_Store
+logs/
+temp/
+tmp/
 
 .env
+.env.*
 .env.local
 .env.*.local
 
@@ -19,8 +23,48 @@ pnpm-debug.log*
 *.sqlite
 *.db
 
+# Build output, while keeping intentionally tracked build resources.
+build/*
+!build/icon.png
+
+# Local runtime data and backups must not be committed.
+userData/
+electron-user-data/
+runtime-data/
+backups/
+data-import-*/
+*.bak
+
+# Generated customer media / Downloads output.
+Afterimage-*.png
+Afterimage-*.jpg
+Afterimage-*.jpeg
+Afterimage-*.gif
+Afterimage-*.mp4
+Afterimage-*.webm
+Afterimage-*.mov
+Afterimage-DIAG-*.txt
+
+# Electron/Chromium runtime cache files.
+Cache/
+Code Cache/
+GPUCache/
+DawnGraphiteCache/
+DawnWebGPUCache/
+Session Storage/
+Local Storage/
+blob_storage/
+shared_proto_db/
+Cookies
+Cookies-journal
+Preferences
+Local State
+
 # Electron build artifacts
 *.dmg
 *.exe
 *.AppImage
 *.blockmap
+
+# portable-data/ is intentionally not ignored; it is the curated,
+# scrubbed app-data export meant for Git transfer.

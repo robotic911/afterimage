@@ -1,0 +1,207 @@
+{
+  "exportedAt": "2026-07-20T12:38:46.634Z",
+  "schemaVersion": 1,
+  "settings": {
+    "activeEventId": null,
+    "beautificationSettings": {
+      "enabled": true,
+      "intensity": 85
+    },
+    "bundledTemplateOverrides": {
+      "default-classic-strip-3-blue-stripes": {
+        "deleted": true,
+        "enabled": false,
+        "type": "Themed"
+      },
+      "default-classic-strip-3-dark-maroon": {
+        "deleted": true,
+        "enabled": false,
+        "type": "Original"
+      },
+      "default-classic-strip-3-dark-teal": {
+        "deleted": true,
+        "enabled": false,
+        "type": "Original"
+      },
+      "default-classic-strip-3-pop-pink": {
+        "deleted": true,
+        "enabled": false,
+        "type": "Themed"
+      },
+      "default-classic-strip-3-rainbow-kiddo": {
+        "deleted": true,
+        "enabled": false,
+        "type": "Themed"
+      },
+      "default-classic-strip-3-soft-white": {
+        "enabled": false,
+        "type": "Original"
+      },
+      "default-classic-strip-3-warm-blush": {
+        "deleted": true,
+        "enabled": false,
+        "type": "Original"
+      },
+      "default-classic-strip-4-blue-stripes": {
+        "deleted": true,
+        "enabled": false,
+        "type": "Themed"
+      },
+      "default-classic-strip-4-classic-black": {
+        "deleted": true
+      },
+      "default-classic-strip-4-dark-maroon": {
+        "deleted": true,
+        "enabled": false,
+        "type": "Original"
+      },
+      "default-classic-strip-4-dark-teal": {
+        "deleted": true,
+        "enabled": false,
+        "type": "Original"
+      },
+      "default-classic-strip-4-invincible-navy": {
+        "deleted": true,
+        "enabled": false,
+        "type": "Themed"
+      },
+      "default-classic-strip-4-kodak-yellow": {
+        "deleted": true,
+        "enabled": false,
+        "type": "Themed"
+      },
+      "default-classic-strip-4-love-lavender": {
+        "deleted": true
+      },
+      "default-classic-strip-4-omni-red": {
+        "deleted": true,
+        "enabled": false,
+        "type": "Themed"
+      },
+      "default-classic-strip-4-original": {
+        "deleted": true,
+        "enabled": false,
+        "type": "Original"
+      },
+      "default-classic-strip-4-peach": {
+        "deleted": true,
+        "enabled": false,
+        "type": "Original"
+      },
+      "default-classic-strip-4-pink": {
+        "deleted": true,
+        "enabled": false,
+        "type": "Original"
+      },
+      "default-classic-strip-4-pop-pink": {
+        "deleted": true,
+        "enabled": false,
+        "type": "Themed"
+      },
+      "default-classic-strip-4-rainbow-kiddo": {
+        "deleted": true,
+        "enabled": false,
+        "type": "Themed"
+      },
+      "default-classic-strip-4-soft-white": {
+        "deleted": true,
+        "enabled": false,
+        "type": "Original"
+      },
+      "default-classic-strip-4-warm-blush": {
+        "deleted": true,
+        "enabled": false,
+        "type": "Original"
+      },
+      "default-portrait-grid-blue-stripes": {
+        "deleted": true,
+        "enabled": false,
+        "type": "Themed"
+      },
+      "default-portrait-grid-dark-maroon": {
+        "deleted": true,
+        "enabled": false,
+        "type": "Original"
+      },
+      "default-portrait-grid-dark-teal": {
+        "deleted": true,
+        "enabled": false,
+        "type": "Original"
+      },
+      "default-portrait-grid-pop-pink": {
+        "deleted": true,
+        "enabled": false,
+        "type": "Themed"
+      },
+      "default-portrait-grid-rainbow-kiddo": {
+        "deleted": true,
+        "enabled": false,
+        "type": "Themed"
+      },
+      "default-portrait-grid-warm-blush": {
+        "deleted": true,
+        "enabled": false,
+        "type": "Original"
+      },
+      "default-studio-quad-blue-stripes": {
+        "deleted": true,
+        "enabled": false,
+        "type": "Themed"
+      },
+      "default-studio-quad-dark-maroon": {
+        "deleted": true
+      },
+      "default-studio-quad-dark-teal": {
+        "deleted": true
+      },
+      "default-studio-quad-pop-pink": {
+        "deleted": true,
+        "enabled": false,
+        "type": "Themed"
+      },
+      "default-studio-quad-rainbow-kiddo": {
+        "deleted": true,
+        "enabled": false,
+        "type": "Themed"
+      },
+      "default-studio-quad-warm-blush": {
+        "deleted": true,
+        "enabled": false,
+        "type": "Original"
+      }
+    },
+    "countdownSeconds": 10,
+    "layoutSettings": {
+      "classic-strip-3": {
+        "enabled": true
+      },
+      "classic-strip-4": {
+        "enabled": true
+      },
+      "portrait-grid": {
+        "enabled": true
+      },
+      "studio-quad": {
+        "enabled": true
+      }
+    },
+    "mode": "daily",
+    "printCopiesEnabled": false,
+    "printEnabled": true,
+    "printerProfileId": "selphy_cp1500",
+    "safeMarginOverride": {
+      "bottom": 76,
+      "left": 32,
+      "right": 33,
+      "top": 33
+    },
+    "selectedPrinterName": null,
+    "softcopySettings": {
+      "gifEnabled": true,
+      "photoEnabled": true,
+      "qrEnabled": true,
+      "videoEnabled": true
+    },
+    "testModeEnabled": false
+  }
+}

@@ -1,9 +1,14 @@
-const KEYCHAIN_PRICING = Object.freeze({
-  2: 120,
-  3: 150,
-});
+const pricingConfig = require('./keychainPricing.config.json');
 
-const DEFAULT_KEYCHAIN_COPIES = 3;
+const KEYCHAIN_PRICING = Object.freeze(
+  Object.fromEntries(
+    Object.entries(pricingConfig.keychainPricing || {})
+      .map(([copies, price]) => [Number(copies), Number(price)])
+      .filter(([copies, price]) => Number.isFinite(copies) && Number.isFinite(price) && price > 0),
+  ),
+);
+
+const DEFAULT_KEYCHAIN_COPIES = Number(pricingConfig.defaultKeychainCopies) || 3;
 
 function isValidKeychainCopies(value) {
   const count = Number(value);
