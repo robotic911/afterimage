@@ -21,6 +21,7 @@
     "data:validate": "node scripts/portable-data.cjs validate",
     "pack": "vite build && electron-builder --dir",
     "pack:win": "vite build && electron-builder --win --x64 --dir",
+    "build:win": "vite build && electron-builder --win --x64",
     "dist": "vite build && electron-builder",
     "dist:win": "vite build && electron-builder --win --x64",
     "postinstall": "electron-builder install-app-deps"
@@ -69,6 +70,15 @@
       "package.json"
     ],
     "asar": true,
+    "extraResources": [
+      {
+        "from": "portable-data",
+        "to": "portable-data",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
     "mac": {
       "target": "dmg",
       "category": "public.app-category.photography",
@@ -82,11 +92,17 @@
           "arch": [
             "x64"
           ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
         }
-      ],
-      "artifactName": "Afterimage-Setup-${version}.${ext}"
+      ]
     },
     "nsis": {
+      "artifactName": "Afterimage Setup ${version}.${ext}",
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
@@ -96,6 +112,9 @@
       "shortcutName": "Afterimage",
       "uninstallDisplayName": "Afterimage ${version}",
       "deleteAppDataOnUninstall": false
+    },
+    "portable": {
+      "artifactName": "Afterimage Portable ${version}.${ext}"
     },
     "linux": {
       "target": "AppImage",

@@ -679,6 +679,12 @@
   transform: translate(-50%, -50%) scale(1.03);
 }
 
+.camera-start-overlay:disabled {
+  cursor: wait;
+  opacity: .72;
+  transform: translate(-50%, -50%);
+}
+
 .camera-start-overlay:focus-visible {
   outline: 3px solid var(--secondary);
   outline-offset: 4px;
@@ -782,5 +788,54 @@
   .cam-topbar {
     left: calc(clamp(208px, 15vw, 226px) + 20px);
     right: calc(clamp(122px, 9vw, 148px) + 20px);
+  }
+}
+
+@media (max-width: 1400px), (max-height: 800px) {
+  .cam-main {
+    grid-template-columns:
+      clamp(188px, 14vw, 202px)
+      minmax(0, 1fr)
+      clamp(108px, 8vw, 128px);
+    gap: 6px;
+    padding: 8px;
+  }
+
+  .cam-topbar {
+    left: calc(clamp(188px, 14vw, 202px) + 16px);
+    right: calc(clamp(108px, 8vw, 128px) + 16px);
+  }
+
+  .cam-live {
+    min-height: 40px;
+    padding: 7px 13px;
+    font-size: 17px;
+  }
+
+  .camera-filter-panel {
+    padding: 8px;
+  }
+
+  .camera-filter-heading span,
+  .camera-filter-desc {
+    display: none;
+  }
+
+  .camera-filter-grid {
+    gap: 5px;
+  }
+
+  .camera-filter-option {
+    padding-inline: 7px;
+  }
+
+  .camera-filter-swatch {
+    width: 32px;
+    height: 32px;
+  }
+
+  .camera-side-strip,
+  .camera-bottom-strip {
+    padding: 5px;
   }
 }

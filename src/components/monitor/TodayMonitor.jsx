@@ -32,6 +32,7 @@ import {
   getTotalRevenue,
   isRevenueEligibleSession,
 } from '../../lib/salesMetrics';
+import { TODAY_MONITOR_POLL_MS } from '../../constants/performanceSettings';
 
 const IS_DEV = import.meta.env.DEV;
 const SHOW_DIAGNOSTIC_UI = false;
@@ -342,6 +343,8 @@ export default function TodayMonitor() {
   const requestSeqRef = useRef(0);
   const activeRequestRef = useRef(false);
   const loadingRef = useRef(true);
+  const settingsRef = useRef(null);
+  const eventsRef = useRef([]);
   const sessionActionAuditRef = useRef(new Map());
 
   const activeEvent = settings?.activeEventId
@@ -435,6 +438,14 @@ export default function TodayMonitor() {
   }, [loading]);
 
   useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
+
+  useEffect(() => {
+    eventsRef.current = events;
+  }, [events]);
+
+  useEffect(() => {
     if (!window.adminApi?.onMonitorExitRequest) return undefined;
     const unsub = window.adminApi.onMonitorExitRequest(() => {
       console.log('[monitor] exit requested');
@@ -491,6 +502,7 @@ export default function TodayMonitor() {
     const requestId = ++requestSeqRef.current;
     const todayYmd = toLocalYmd(new Date());
     const shouldRefreshPrinters = ['initial', 'manual', 'shortcut'].includes(source);
+    const shouldRefreshConfig = source !== 'poll' || !settingsRef.current;
     if (source === 'manual' || source === 'shortcut') {
       console.log('[monitor] refresh triggered');
     }
@@ -498,8 +510,12 @@ export default function TodayMonitor() {
     if (!loadingRef.current) setRefreshing(true);
     try {
       const [settingsRes, eventsRes, sessionsRes, queueRes, printersRes] = await Promise.all([
-        window.adminApi.getSettings(),
-        window.adminApi.listEvents(),
+        shouldRefreshConfig
+          ? window.adminApi.getSettings()
+          : Promise.resolve({ ok: true, settings: settingsRef.current }),
+        shouldRefreshConfig
+          ? window.adminApi.listEvents()
+          : Promise.resolve({ ok: true, events: eventsRef.current }),
         window.adminApi.listSessions({
           limit: 500,
           offset: 0,
@@ -655,7 +671,7 @@ export default function TodayMonitor() {
   }, [applySessionRecordUpdate, refresh]);
 
   useEffect(() => {
-    const timer = setInterval(() => refresh('poll'), 5000);
+    const timer = setInterval(() => refresh('poll'), TODAY_MONITOR_POLL_MS);
     return () => clearInterval(timer);
   }, [refresh]);
 

@@ -29,6 +29,10 @@ import {
   DEFAULT_CAMERA_ORIENTATION,
   normalizeCameraOrientation,
 } from '../../constants/cameraSettings';
+import {
+  MOTION_MEDIA_TASK_YIELD_MS,
+  MOTION_PREVIEW_DELAY_MS,
+} from '../../constants/performanceSettings';
 
 const PRICE_PER_COPY = 99; // PHP
 const FINAL_PRINT_STATUSES = new Set(['completed', 'failed', 'cancelled', 'partial']);
@@ -317,6 +321,19 @@ function blobToDataUrl(blob) {
   });
 }
 
+function delay(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function scheduleIdleWork(callback, timeout = 1500) {
+  if (typeof window.requestIdleCallback === 'function') {
+    const handle = window.requestIdleCallback(callback, { timeout });
+    return () => window.cancelIdleCallback?.(handle);
+  }
+  const handle = window.setTimeout(callback, 0);
+  return () => window.clearTimeout(handle);
+}
+
 export default function PrintScreen({
   active,
   layout,
@@ -442,6 +459,7 @@ export default function PrintScreen({
   const softcopyLogRef = useRef(null);
   const softcopyMotionCacheRef = useRef(null);
   const softcopyMotionPromiseRef = useRef(null);
+  const softcopyMotionGenerationRef = useRef(0);
   const keychainSaveInFlightRef = useRef(KEYCHAIN_AUTO_SAVE_IN_FLIGHT_KEYS);
   const keychainSavedRef = useRef(KEYCHAIN_AUTO_SAVE_SAVED_KEYS);
   const keychainAttemptedRef = useRef(KEYCHAIN_AUTO_SAVE_ATTEMPTED_KEYS);
@@ -551,6 +569,9 @@ export default function PrintScreen({
       releaseFinalPrintArtifact();
       softcopyArtifactRef.current = null;
       softcopyLogRef.current = null;
+      softcopyMotionGenerationRef.current += 1;
+      softcopyMotionCacheRef.current = null;
+      softcopyMotionPromiseRef.current = null;
       setSoftcopyWarnings([]);
       setUploadRetrying(false);
       setStep4KeychainSaving(false);
@@ -713,6 +734,8 @@ export default function PrintScreen({
       return softcopyMotionPromiseRef.current.promise;
     }
 
+    const generationId = softcopyMotionGenerationRef.current + 1;
+    softcopyMotionGenerationRef.current = generationId;
     const promise = (async () => {
       const enabled = {
         gif: softcopySettings.gifEnabled !== false,
@@ -747,55 +770,49 @@ export default function PrintScreen({
         });
       }
 
-      const mediaTasks = [];
       if (enabled.gif) {
-        mediaTasks.push((async () => {
-          try {
-            const { generateSessionGif } = await import('../../lib/gifGenerator');
-            const gif = await generateSessionGif(shots, {
-              layoutId: layout?.id,
-              width: layout?.camera?.width,
-              height: layout?.camera?.height,
-              photoFilter: selectedFilterCss,
-              selectedFilter,
-              cameraOrientation: normalizedCameraOrientation,
-            });
-            gifBlob = gif?.blob || null;
-          } catch (error) {
-            console.warn('[gif] generation failed', error);
-            warnings.push('GIF could not be generated.');
-          }
-        })());
+        try {
+          const { generateSessionGif } = await import('../../lib/gifGenerator');
+          const gif = await generateSessionGif(shots, {
+            layoutId: layout?.id,
+            width: layout?.camera?.width,
+            height: layout?.camera?.height,
+            photoFilter: selectedFilterCss,
+            selectedFilter,
+            cameraOrientation: normalizedCameraOrientation,
+          });
+          gifBlob = gif?.blob || null;
+        } catch (error) {
+          console.warn('[gif] generation failed', error);
+          warnings.push('GIF could not be generated.');
+        }
       }
 
       if (enabled.video) {
-        mediaTasks.push((async () => {
-          try {
-            const { composeSimultaneousSlotVideo } = await import('../../lib/sessionVideoRecorder');
-            const finalVideo = await composeSimultaneousSlotVideo({
-              layout,
-              shotVideoClips: sessionVideo?.shotVideoClips || [],
-              backgroundSrc: templatePreviewBackgroundSrc,
-              templateSrc: templateOverlaySrc,
-              photoFilter: selectedFilterCss,
-              selectedFilter,
-              cameraOrientation: normalizedCameraOrientation,
-            });
-            if (finalVideo?.blob) {
-              videoBlob = finalVideo.blob;
-              videoMimeType = finalVideo.mimeType || '';
-              videoExtension = finalVideo.extension || '';
-            } else {
-              warnings.push('Video could not be generated.');
-            }
-          } catch (error) {
-            console.warn('[video] generation failed', error);
+        if (enabled.gif) await delay(MOTION_MEDIA_TASK_YIELD_MS);
+        try {
+          const { composeSimultaneousSlotVideo } = await import('../../lib/sessionVideoRecorder');
+          const finalVideo = await composeSimultaneousSlotVideo({
+            layout,
+            shotVideoClips: sessionVideo?.shotVideoClips || [],
+            backgroundSrc: templatePreviewBackgroundSrc,
+            templateSrc: templateOverlaySrc,
+            photoFilter: selectedFilterCss,
+            selectedFilter,
+            cameraOrientation: normalizedCameraOrientation,
+          });
+          if (finalVideo?.blob) {
+            videoBlob = finalVideo.blob;
+            videoMimeType = finalVideo.mimeType || '';
+            videoExtension = finalVideo.extension || '';
+          } else {
             warnings.push('Video could not be generated.');
           }
-        })());
+        } catch (error) {
+          console.warn('[video] generation failed', error);
+          warnings.push('Video could not be generated.');
+        }
       }
-
-      await Promise.all(mediaTasks);
 
       if (IS_DEV) {
         console.log('[softcopy preview] media ready', {
@@ -824,7 +841,9 @@ export default function PrintScreen({
         enabled,
         warnings,
       };
-      softcopyMotionCacheRef.current = result;
+      if (activeRef.current && softcopyMotionGenerationRef.current === generationId) {
+        softcopyMotionCacheRef.current = result;
+      }
       return result;
     })();
 
@@ -866,8 +885,12 @@ export default function PrintScreen({
       }, 0);
       return () => window.clearTimeout(timer);
     }
+    if (!['ready', 'error'].includes(finalPreviewPngStatus)) {
+      return undefined;
+    }
 
     let cancelled = false;
+    let cancelIdle = null;
     const primeTimer = window.setTimeout(() => {
       setSoftcopyPreviewAssets((current) => (
         current.cacheKey === softcopyCacheKey && current.status === 'ready'
@@ -882,43 +905,52 @@ export default function PrintScreen({
               warnings: [],
             }
       ));
-    }, 0);
-
-    generateSoftcopyMotionMedia({ cacheKey: softcopyCacheKey })
-      .then((motionMedia) => {
-        if (cancelled) return;
-        setSoftcopyPreviewAssets({
-          cacheKey: motionMedia.cacheKey || softcopyCacheKey,
-          status: motionMedia.status || 'ready',
-          gifBlob: motionMedia.gifBlob || null,
-          videoBlob: motionMedia.videoBlob || null,
-          gifError: motionMedia.gifBlob ? null : (softcopySettings.gifEnabled !== false ? 'GIF preview unavailable' : null),
-          videoError: motionMedia.videoBlob ? null : (softcopySettings.videoEnabled !== false ? 'Video preview unavailable' : null),
-          warnings: motionMedia.warnings || [],
-        });
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        console.error('[softcopy preview] failed', {
-          type: 'media',
-          error: error?.message || String(error),
-        });
-        setSoftcopyPreviewAssets({
-          cacheKey: softcopyCacheKey,
-          status: 'error',
-          gifBlob: null,
-          videoBlob: null,
-          gifError: softcopySettings.gifEnabled !== false ? 'GIF preview unavailable' : null,
-          videoError: softcopySettings.videoEnabled !== false ? 'Video preview unavailable' : null,
-          warnings: [],
-        });
+      cancelIdle = scheduleIdleWork(() => {
+        generateSoftcopyMotionMedia({ cacheKey: softcopyCacheKey })
+          .then((motionMedia) => {
+            if (cancelled) return;
+            setSoftcopyPreviewAssets({
+              cacheKey: motionMedia.cacheKey || softcopyCacheKey,
+              status: motionMedia.status || 'ready',
+              gifBlob: motionMedia.gifBlob || null,
+              videoBlob: motionMedia.videoBlob || null,
+              gifError: motionMedia.gifBlob ? null : (softcopySettings.gifEnabled !== false ? 'GIF preview unavailable' : null),
+              videoError: motionMedia.videoBlob ? null : (softcopySettings.videoEnabled !== false ? 'Video preview unavailable' : null),
+              warnings: motionMedia.warnings || [],
+            });
+          })
+          .catch((error) => {
+            if (cancelled) return;
+            console.error('[softcopy preview] failed', {
+              type: 'media',
+              error: error?.message || String(error),
+            });
+            setSoftcopyPreviewAssets({
+              cacheKey: softcopyCacheKey,
+              status: 'error',
+              gifBlob: null,
+              videoBlob: null,
+              gifError: softcopySettings.gifEnabled !== false ? 'GIF preview unavailable' : null,
+              videoError: softcopySettings.videoEnabled !== false ? 'Video preview unavailable' : null,
+              warnings: [],
+            });
+          });
       });
+    }, MOTION_PREVIEW_DELAY_MS);
 
     return () => {
       cancelled = true;
       window.clearTimeout(primeTimer);
+      cancelIdle?.();
     };
-  }, [active, generateSoftcopyMotionMedia, softcopyCacheKey, softcopySettings.gifEnabled, softcopySettings.videoEnabled]);
+  }, [
+    active,
+    finalPreviewPngStatus,
+    generateSoftcopyMotionMedia,
+    softcopyCacheKey,
+    softcopySettings.gifEnabled,
+    softcopySettings.videoEnabled,
+  ]);
 
   useEffect(() => {
     let gifUrl = null;

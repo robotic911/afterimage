@@ -428,20 +428,17 @@ export async function uploadSoftcopyAssets({
     }
   };
 
-  const uploadResults = await Promise.all([
-    uploadTask('photo', photoBlob, photoPath, photoContentType, '[softcopy] photo upload'),
-    uploadTask('gif', gifBlob, gifPath, 'image/gif', '[softcopy] gif upload'),
-    (async () => {
-      if (videoBlob && videoPath && IS_DEV) {
-        console.log('[softcopy] uploading final composited video', {
-          size: videoBlob.size,
-          mimeType: resolvedVideoMimeType,
-          extension: resolvedVideoExtension,
-        });
-      }
-      return uploadTask('video', videoBlob, videoPath, resolvedVideoMimeType || 'video/webm', '[softcopy] video upload');
-    })(),
-  ]);
+  const uploadResults = [];
+  uploadResults.push(await uploadTask('photo', photoBlob, photoPath, photoContentType, '[softcopy] photo upload'));
+  uploadResults.push(await uploadTask('gif', gifBlob, gifPath, 'image/gif', '[softcopy] gif upload'));
+  if (videoBlob && videoPath && IS_DEV) {
+    console.log('[softcopy] uploading final composited video', {
+      size: videoBlob.size,
+      mimeType: resolvedVideoMimeType,
+      extension: resolvedVideoExtension,
+    });
+  }
+  uploadResults.push(await uploadTask('video', videoBlob, videoPath, resolvedVideoMimeType || 'video/webm', '[softcopy] video upload'));
 
   for (const result of uploadResults) {
     if (!result) continue;

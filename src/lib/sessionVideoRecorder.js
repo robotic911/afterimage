@@ -346,6 +346,27 @@ export async function composeSimultaneousSlotVideo({
   const chunks = [];
   let stopped = false;
   let frameRequest = null;
+  let stopTimer = null;
+
+  const cleanupFinalVideoResources = () => {
+    if (frameRequest) {
+      cancelAnimationFrame(frameRequest);
+      frameRequest = null;
+    }
+    if (stopTimer) {
+      window.clearTimeout(stopTimer);
+      stopTimer = null;
+    }
+    stream.getTracks().forEach((track) => track.stop());
+    videoItems.forEach(({ loaded }) => {
+      loaded.video.pause();
+      loaded.video.removeAttribute('src');
+      loaded.video.load();
+      URL.revokeObjectURL(loaded.url);
+    });
+    canvas.width = 0;
+    canvas.height = 0;
+  };
 
   recorder.ondataavailable = (event) => {
     if (event.data?.size) chunks.push(event.data);
@@ -384,15 +405,11 @@ export async function composeSimultaneousSlotVideo({
   const resultPromise = new Promise((resolve, reject) => {
     recorder.onstop = () => {
       stopped = true;
-      if (frameRequest) cancelAnimationFrame(frameRequest);
-      stream.getTracks().forEach((track) => track.stop());
-      videoItems.forEach(({ loaded }) => URL.revokeObjectURL(loaded.url));
+      cleanupFinalVideoResources();
 
       const blob = new Blob(chunks, { type: mimeType });
       const extension = extensionFromMimeType(mimeType);
       chunks.length = 0;
-      canvas.width = 0;
-      canvas.height = 0;
       if (blob.size > MAX_RECOMMENDED_VIDEO_BYTES) {
         console.warn('[video] video is large for Supabase Free plan', {
           sizeMb: Number((blob.size / 1024 / 1024).toFixed(2)),
@@ -409,12 +426,8 @@ export async function composeSimultaneousSlotVideo({
     };
     recorder.onerror = (event) => {
       stopped = true;
-      if (frameRequest) cancelAnimationFrame(frameRequest);
-      stream.getTracks().forEach((track) => track.stop());
-      videoItems.forEach(({ loaded }) => URL.revokeObjectURL(loaded.url));
+      cleanupFinalVideoResources();
       chunks.length = 0;
-      canvas.width = 0;
-      canvas.height = 0;
       reject(event.error || new Error('Final video composition failed'));
     };
   });
@@ -430,7 +443,7 @@ export async function composeSimultaneousSlotVideo({
 
   render();
   recorder.start(1000);
-  window.setTimeout(() => {
+  stopTimer = window.setTimeout(() => {
     stopped = true;
     if (recorder.state !== 'inactive') recorder.stop();
     videoItems.forEach(({ loaded }) => loaded.video.pause());

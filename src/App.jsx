@@ -36,6 +36,7 @@ import { resolveSoftcopySettings } from './constants/softcopySettings';
 import { clampPrintCopies, DEFAULT_PRINT_COPIES } from './constants/printSettings';
 import { isTemplateVisibleToCustomer } from './lib/templateVisibility';
 import { describeShotForAudit, getShotImageSource, inspectDataUrl } from './lib/shotImageSource';
+import { clearSessionImageCache } from './lib/imageCache';
 import {
   getBeautificationFilterCss,
   normalizeBeautificationSettings,
@@ -286,6 +287,7 @@ export default function App() {
         setReviewNoticeKey(0);
         resetCameraOrientation();
         clearShots();
+        clearSessionImageCache();
       });
     }
   }, [enabledLayouts, resetCameraOrientation, selectedLayout]);
@@ -319,6 +321,7 @@ export default function App() {
     setShots([]);
     setArrangedShotIndexes([]);
     clearShots();
+    clearSessionImageCache();
     // Stamp session start on layout pick. Carries through retries so
     // durationMs reflects the full customer journey.
     sessionStartRef.current = Date.now();
@@ -339,6 +342,7 @@ export default function App() {
     setShots([]);
     setArrangedShotIndexes([]);
     clearShots();
+    clearSessionImageCache();
     setSelectedLayout(null);
     setSelectedTmpl(null);
     setSelectedFilter('none');

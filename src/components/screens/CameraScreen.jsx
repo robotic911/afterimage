@@ -68,6 +68,7 @@ export default function CameraScreen({
   const [countdownCycleKey, setCountdownCycleKey] = useState(0);
   const [captureLabel, setCaptureLabel] = useState(null);
   const [previewSize, setPreviewSize] = useState({ width: 0, height: 0 });
+  const [sessionStarting, setSessionStarting] = useState(false);
   const safeRetakeQueue = retakeQueue.filter((shotIndex) => (
     Number.isInteger(shotIndex) && shotIndex >= 0 && shotIndex < totalShots
   ));
@@ -84,6 +85,7 @@ export default function CameraScreen({
   const shotVideoClipsRef = useRef([]);
   const previewLogKeyRef = useRef('');
   const currentRetakePositionRef = useRef(0);
+  const sessionStartingRef = useRef(false);
   const [currentRetakePosition, setCurrentRetakePosition] = useState(0);
   const livePhotoFilter = [beautificationPreviewCss, selectedFilterCss].filter(Boolean).join(' ');
   const captureBeautificationCss = getBeautificationFilterCss(
@@ -108,6 +110,8 @@ export default function CameraScreen({
         setCurrentRetakePosition(0);
         setShotIndex(isRetakingShot ? activeRetakeShotIndex : shots.length);
         setCounting(false);
+        setSessionStarting(false);
+        sessionStartingRef.current = false;
         setShowCountdown(false);
         setCaptureLabel(null);
       });
@@ -132,6 +136,7 @@ export default function CameraScreen({
           .catch((error) => console.warn('[video] cleanup stop failed:', error));
         shotVideoRecorderRef.current = null;
       }
+      sessionStartingRef.current = false;
     };
   }, [active]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -569,14 +574,23 @@ export default function CameraScreen({
   }
 
   async function startSession() {
-    if (cntIntervalRef.current) return;
+    if (cntIntervalRef.current || sessionStartingRef.current) return;
+    sessionStartingRef.current = true;
+    setSessionStarting(true);
     onCameraOrientationLock?.();
     setCounting(true);
     setCaptureLabel(null);
     shotVideoClipsRef.current = [];
     currentRetakePositionRef.current = 0;
     setCurrentRetakePosition(0);
-    shootNext(isRetakingShot ? activeRetakeShotIndex : shotIndex);
+    try {
+      await shootNext(isRetakingShot ? activeRetakeShotIndex : shotIndex);
+    } catch (error) {
+      sessionStartingRef.current = false;
+      setSessionStarting(false);
+      setCounting(false);
+      console.warn('[camera] start session failed:', error);
+    }
   }
 
   const hasCapturedShots = shots.some(Boolean);
@@ -767,6 +781,7 @@ export default function CameraScreen({
                 type="button"
                 className="camera-start-overlay"
                 onClick={startSession}
+                disabled={sessionStarting}
               >
                 {isRetakingShot ? `Retake Photo ${activeRetakeShotIndex + 1}` : 'Start Photos'}
               </button>

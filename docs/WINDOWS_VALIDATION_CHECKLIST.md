@@ -2,9 +2,9 @@
 
 ## Package And Startup
 
-- Run `npm run pack -- --win`.
+- Run `npm run pack:win` for an unpacked smoke build.
 - Confirm `release/win-unpacked/Afterimage.exe` starts.
-- Confirm the NSIS installer builds with `npm run dist:win`.
+- Confirm the NSIS installer and portable exe build with `npm run build:win`.
 - Install and restart Afterimage.
 - Confirm Admin and Today Monitor open normally.
 
@@ -20,6 +20,7 @@
 - Allow camera access in Windows Settings under Privacy & security > Camera.
 - Enable camera access for desktop apps.
 - Confirm the intended camera is selected and reconnect recovery works.
+- Confirm live preview prefers 1920x1080 at 30 fps, then 1920x1080 at 24 fps, then 1280x720 fallbacks.
 - Confirm capture resolution, framing, and saved-photo quality are unchanged.
 
 ## Canon SELPHY CP1500

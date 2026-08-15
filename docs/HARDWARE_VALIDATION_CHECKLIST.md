@@ -4,7 +4,8 @@ Use this checklist when testing the packaged booth on the real hardware setup.
 
 ## 1. Packaged App Test
 
-- [ ] Open the packaged app from `release/mac-arm64`
+- [ ] Install the Windows package from `release/Afterimage Setup *.exe`
+- [ ] Or run the portable Windows build from `release/Afterimage Portable *.exe`
 - [ ] Confirm the main customer window opens
 - [ ] Confirm Today Monitor opens
 - [ ] Confirm Admin opens
@@ -13,7 +14,7 @@ Use this checklist when testing the packaged booth on the real hardware setup.
 ## 2. Camera Test With Insta360
 
 - [ ] Camera is detected
-- [ ] 4K stream is used if available
+- [ ] 1080p preview is used if available
 - [ ] Live preview works
 - [ ] Countdown works
 - [ ] Capture completes successfully

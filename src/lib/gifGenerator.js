@@ -159,7 +159,6 @@ export async function generateSessionGif(shots, options = {}) {
         }
 
         resolve({
-          dataUrl: result.image,
           blob,
         });
       },

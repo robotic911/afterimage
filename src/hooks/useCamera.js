@@ -1,13 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { CAMERA_PREVIEW_PROFILES } from '../constants/performanceSettings';
 
 const IS_DEV = import.meta.env.DEV;
 const WIDESCREEN_ASPECT_RATIO = 16 / 9;
-const CAMERA_QUALITY_PROFILES = [
-  { label: '4k-24', width: 3840, height: 2160, frameRate: 24 },
-  { label: '1440p-30', width: 2560, height: 1440, frameRate: 30 },
-  { label: '1440p-24', width: 2560, height: 1440, frameRate: 24 },
-  { label: '1080p-30', width: 1920, height: 1080, frameRate: 30 },
-];
 let cachedPreferredCameraDeviceId = null;
 
 function formatCameraError(error) {
@@ -115,7 +110,7 @@ export function useCamera(active, preferredWidth, preferredHeight) {
     const openBestStream = async (deviceId) => {
       let lastError = null;
 
-      for (const profile of CAMERA_QUALITY_PROFILES) {
+      for (const profile of CAMERA_PREVIEW_PROFILES) {
         try {
           const stream = await navigator.mediaDevices.getUserMedia(
             buildConstraints(profile, deviceId),

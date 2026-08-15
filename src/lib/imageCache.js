@@ -1,5 +1,7 @@
 const imagePromises = new Map();
 const MAX_CACHEABLE_IMAGES = 96;
+const sessionImagePromises = new Map();
+const MAX_SESSION_IMAGES = 16;
 
 function isCacheableImageSrc(src) {
   return typeof src === 'string'
@@ -8,10 +10,18 @@ function isCacheableImageSrc(src) {
     && !src.startsWith('blob:');
 }
 
+function isSessionImageSrc(src) {
+  return typeof src === 'string'
+    && src.startsWith('data:image/')
+    && src.includes('base64,');
+}
+
 export function loadImageCached(src, { crossOrigin = 'auto', nullable = false } = {}) {
   if (!src) return nullable ? Promise.resolve(null) : Promise.reject(new Error('Missing image source'));
   const cacheable = isCacheableImageSrc(src);
+  const sessionCacheable = isSessionImageSrc(src);
   if (cacheable && imagePromises.has(src)) return imagePromises.get(src);
+  if (sessionCacheable && sessionImagePromises.has(src)) return sessionImagePromises.get(src);
 
   const promise = new Promise((resolve, reject) => {
     const img = new Image();
@@ -21,6 +31,7 @@ export function loadImageCached(src, { crossOrigin = 'auto', nullable = false } 
     img.onload = () => resolve(img);
     img.onerror = () => {
       if (cacheable) imagePromises.delete(src);
+      if (sessionCacheable) sessionImagePromises.delete(src);
       const error = new Error('Failed to load image');
       if (nullable) resolve(null);
       else reject(error);
@@ -35,6 +46,13 @@ export function loadImageCached(src, { crossOrigin = 'auto', nullable = false } 
       if (oldestKey) imagePromises.delete(oldestKey);
     }
   }
+  if (sessionCacheable) {
+    sessionImagePromises.set(src, promise);
+    if (sessionImagePromises.size > MAX_SESSION_IMAGES) {
+      const oldestKey = sessionImagePromises.keys().next().value;
+      if (oldestKey) sessionImagePromises.delete(oldestKey);
+    }
+  }
   return promise;
 }
 
@@ -44,6 +62,11 @@ export function preloadImageCached(src, options = {}) {
 
 export function clearImageCache() {
   imagePromises.clear();
+  sessionImagePromises.clear();
+}
+
+export function clearSessionImageCache() {
+  sessionImagePromises.clear();
 }
 
 export function invalidateImageCache(src) {
@@ -54,8 +77,9 @@ export function invalidateImageCache(src) {
       imagePromises.delete(key);
     }
   }
+  sessionImagePromises.delete(src);
 }
 
 export function getImageCacheSize() {
-  return imagePromises.size;
+  return imagePromises.size + sessionImagePromises.size;
 }

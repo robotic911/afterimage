@@ -16,7 +16,59 @@ const {
 const APP_ID = 'com.kennethpatino.kukuphotobooth';
 const SOFTCOPY_SAVE_CHANNEL = 'softcopy-local:save-session-media';
 const KEYCHAIN_SAVE_CHANNEL = 'keychain:save-4x6-to-downloads';
+const mainProcessStartedAt = Date.now();
 let localSoftcopyIpcRegistered = false;
+let diagnosticsDir = null;
+
+function getBundledResourceRoot() {
+  return app.isPackaged ? process.resourcesPath : __dirname;
+}
+
+function getDiagnosticsDir() {
+  if (diagnosticsDir) return diagnosticsDir;
+  try {
+    diagnosticsDir = path.join(app.getPath('userData'), 'diagnostics');
+  } catch {
+    diagnosticsDir = path.join(__dirname, 'diagnostics');
+  }
+  return diagnosticsDir;
+}
+
+function compactDiagnosticValue(value) {
+  if (value == null) return value;
+  if (value instanceof Error) {
+    return {
+      name: value.name,
+      message: value.message,
+      stack: value.stack,
+    };
+  }
+  if (typeof value !== 'object') return value;
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return String(value);
+  }
+}
+
+async function writeDiagnosticEvent(type, details = {}) {
+  try {
+    const dir = getDiagnosticsDir();
+    await fsp.mkdir(dir, { recursive: true });
+    const filePath = path.join(dir, `afterimage-${timestampForFilename(new Date())}.log`);
+    const payload = {
+      at: new Date().toISOString(),
+      type,
+      platform: process.platform,
+      version: app.getVersion?.() || null,
+      isPackaged: app.isPackaged,
+      details: compactDiagnosticValue(details),
+    };
+    await fsp.appendFile(filePath, `${JSON.stringify(payload)}\n`, 'utf8');
+  } catch (error) {
+    console.warn('[diagnostics] failed to write event', error?.message || String(error));
+  }
+}
 
 console.log('[DIAG main] electron.cjs loaded with downloads test handler');
 
@@ -30,6 +82,32 @@ if (process.env.AFTERIMAGE_USER_DATA_DIR) {
   app.setPath('userData', overrideUserDataDir);
   console.log('[portable-data] using overridden userData directory', overrideUserDataDir);
 }
+
+process.on('uncaughtException', (error) => {
+  console.error('[diagnostics] uncaught exception', error);
+  writeDiagnosticEvent('main:uncaught-exception', error);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[diagnostics] unhandled rejection', reason);
+  writeDiagnosticEvent('main:unhandled-rejection', reason);
+});
+
+app.on('render-process-gone', (_event, webContents, details) => {
+  const owner = BrowserWindow.fromWebContents(webContents);
+  console.error('[diagnostics] renderer process gone', details);
+  writeDiagnosticEvent('electron:render-process-gone', {
+    windowTitle: owner?.getTitle?.() || null,
+    windowBounds: owner?.getBounds?.() || null,
+    url: webContents?.getURL?.() || null,
+    details,
+  });
+});
+
+app.on('child-process-gone', (_event, details) => {
+  console.error('[diagnostics] child process gone', details);
+  writeDiagnosticEvent('electron:child-process-gone', details);
+});
 
 // ─────────────────────────────────────────────────────────────────────────
 // Paths
@@ -666,6 +744,62 @@ function loadRendererWindow(win, windowType = null) {
   return win.loadURL(target);
 }
 
+function attachWindowDiagnostics(win, label) {
+  const createdAt = Date.now();
+  win.webContents.once('did-finish-load', () => {
+    const payload = {
+      label,
+      sinceMainStartMs: Date.now() - mainProcessStartedAt,
+      loadMs: Date.now() - createdAt,
+      url: win.webContents.getURL(),
+    };
+    console.log('[perf] renderer ready', payload);
+    writeDiagnosticEvent('perf:renderer-ready', payload);
+  });
+
+  win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+    console.error('[diagnostics] renderer load failed', {
+      label,
+      errorCode,
+      errorDescription,
+      validatedURL,
+    });
+    writeDiagnosticEvent('renderer:did-fail-load', {
+      label,
+      errorCode,
+      errorDescription,
+      validatedURL,
+    });
+  });
+
+  win.webContents.on('render-process-gone', (_event, details) => {
+    writeDiagnosticEvent('window:render-process-gone', {
+      label,
+      title: win.getTitle(),
+      bounds: win.getBounds(),
+      url: win.webContents.getURL(),
+      details,
+    });
+  });
+
+  win.on('unresponsive', () => {
+    console.warn('[diagnostics] window unresponsive', { label });
+    writeDiagnosticEvent('window:unresponsive', {
+      label,
+      title: win.getTitle(),
+      bounds: win.getBounds(),
+      url: win.webContents.getURL(),
+    });
+  });
+
+  win.on('responsive', () => {
+    writeDiagnosticEvent('window:responsive', {
+      label,
+      title: win.getTitle(),
+    });
+  });
+}
+
 function configureMediaPermissions() {
   const defaultSession = session.defaultSession;
   defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
@@ -694,8 +828,11 @@ function broadcastToAllWindows(channel, payload) {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    width: 1366,
+    height: 768,
+    minWidth: 1024,
+    minHeight: 720,
+    backgroundColor: '#000000',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -705,12 +842,13 @@ function createWindow() {
 
   mainWindow.on('close', () => {
     if (todayMonitorWindow && !todayMonitorWindow.isDestroyed()) {
-      todayMonitorWindow.close();
+      todayMonitorWindow.destroy();
     }
   });
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
+  attachWindowDiagnostics(mainWindow, 'main');
 
   loadRendererWindow(mainWindow);
   return mainWindow;
@@ -738,6 +876,7 @@ function createTodayMonitorWindow() {
     title: 'Afterimage Today Monitor',
     resizable: true,
     alwaysOnTop: false,
+    backgroundColor: '#ffffff',
     webPreferences: {
       preload: todayMonitorPreloadPath,
       contextIsolation: true,
@@ -755,6 +894,7 @@ function createTodayMonitorWindow() {
   todayMonitorWindow.on('closed', () => {
     todayMonitorWindow = null;
   });
+  attachWindowDiagnostics(todayMonitorWindow, 'today-monitor');
 
   loadRendererWindow(todayMonitorWindow, 'today-monitor');
   console.log('[monitor] today monitor window created');
@@ -770,7 +910,7 @@ function scheduleTodayMonitorWindow() {
       if (app.isQuitting || !mainWindow || mainWindow.isDestroyed()) return;
       if (todayMonitorWindow && !todayMonitorWindow.isDestroyed()) return;
       createTodayMonitorWindow();
-    }, 750);
+    }, 2000);
   };
 
   if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -779,9 +919,14 @@ function scheduleTodayMonitorWindow() {
 }
 
 app.whenReady().then(async () => {
+  console.log('[perf] electron ready', {
+    readyMs: Date.now() - mainProcessStartedAt,
+    platform: process.platform,
+    isPackaged: app.isPackaged,
+  });
   resolvePaths();
   await maybeInitializeFromPortableData({
-    projectRoot: __dirname,
+    projectRoot: getBundledResourceRoot(),
     userDataDir: app.getPath('userData'),
     logger: console,
   });
@@ -2178,6 +2323,14 @@ function invalidateSessionsCache() {
   };
 }
 
+async function setSessionsCacheFromRecords(records = []) {
+  const signature = await getSessionsFileSignature();
+  sessionsCache = {
+    ...signature,
+    records: Array.isArray(records) ? records : [],
+  };
+}
+
 async function getSessionsFileSignature() {
   try {
     const stats = await fsp.stat(sessionsFile);
@@ -2404,12 +2557,12 @@ async function readAllSessions() {
 async function writeAllSessions(records = []) {
   if (!Array.isArray(records) || records.length === 0) {
     if (fs.existsSync(sessionsFile)) await fsp.unlink(sessionsFile);
-    invalidateSessionsCache();
+    sessionsCache = { size: 0, mtimeMs: 0, records: [] };
     return;
   }
   const nextContents = `${records.map((record) => JSON.stringify(record)).join('\n')}\n`;
   await fsp.writeFile(sessionsFile, nextContents, 'utf8');
-  invalidateSessionsCache();
+  await setSessionsCacheFromRecords(records);
 }
 
 function getIntegerField(value, fallback = 0) {
@@ -2588,7 +2741,11 @@ ipcMain.handle('sessions:log', async (_ev, payload = {}) => {
   try {
     const record = sanitizeSession(payload);
     await fsp.appendFile(sessionsFile, JSON.stringify(record) + '\n', 'utf8');
-    invalidateSessionsCache();
+    if (Array.isArray(sessionsCache.records)) {
+      await setSessionsCacheFromRecords([...sessionsCache.records, record]);
+    } else {
+      invalidateSessionsCache();
+    }
     // Broadcast to every renderer so any open admin dashboard refreshes
     // immediately — no need for the admin to click refresh.
     for (const win of BrowserWindow.getAllWindows()) {
@@ -3321,6 +3478,11 @@ const FINAL_PRINT_JOB_STATUSES = new Set(['completed', 'failed', 'cancelled', 'p
 const printQueue = [];
 const pendingPrintJobs = new Map();
 let activePrintJobId = null;
+const PRINTER_DISCOVERY_CACHE_MS = 10_000;
+let printerDiscoveryCache = {
+  expiresAt: 0,
+  printers: null,
+};
 
 function normalizePrinterStatus(status) {
   if (status == null || status === '') {
@@ -3367,7 +3529,11 @@ function normalizePrinterInfo(printer = {}) {
   };
 }
 
-async function getDetectedPrinters(webContents) {
+async function getDetectedPrinters(webContents, { force = false } = {}) {
+  const now = Date.now();
+  if (!force && printerDiscoveryCache.printers && printerDiscoveryCache.expiresAt > now) {
+    return printerDiscoveryCache.printers.map((printer) => ({ ...printer }));
+  }
   const printers = await webContents.getPrintersAsync();
   console.log('[printers] detected', printers.map((printer) => ({
     name: printer.name,
@@ -3375,11 +3541,16 @@ async function getDetectedPrinters(webContents) {
     status: printer.status,
     isDefault: printer.isDefault,
   })));
-  return printers.map(normalizePrinterInfo).filter((printer) => printer.name);
+  const normalized = printers.map(normalizePrinterInfo).filter((printer) => printer.name);
+  printerDiscoveryCache = {
+    expiresAt: now + PRINTER_DISCOVERY_CACHE_MS,
+    printers: normalized,
+  };
+  return normalized.map((printer) => ({ ...printer }));
 }
 
-async function getPrinterListForRenderer(webContents) {
-  const printers = await getDetectedPrinters(webContents);
+async function getPrinterListForRenderer(webContents, options = {}) {
+  const printers = await getDetectedPrinters(webContents, options);
   const selphyPrinters = printers.filter((printer) => printer.isSelphy);
   const defaultPrinter = printers.find((printer) => printer.isDefault) || null;
   const defaultSelphyOffline = defaultPrinter?.isSelphy && defaultPrinter.isAvailable === false;
@@ -3777,7 +3948,7 @@ async function submitSinglePrintCopy({
     }
     return result;
   } finally {
-    if (!printWin.isDestroyed()) printWin.close();
+    if (!printWin.isDestroyed()) printWin.destroy();
   }
 }
 
@@ -3989,7 +4160,7 @@ function processNextPrintJob() {
 ipcMain.handle('printers:list', async (event) => {
   try {
     const settings = await readSettings();
-    const printerList = await getPrinterListForRenderer(event.sender);
+    const printerList = await getPrinterListForRenderer(event.sender, { force: true });
     return {
       ok: true,
       selectedPrinterName: settings.selectedPrinterName || null,
