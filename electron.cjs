@@ -707,11 +707,11 @@ function resolvePaths() {
 protocol.registerSchemesAsPrivileged([
   {
     scheme: 'kuku-template',
-    privileges: { standard: true, secure: true, supportFetchAPI: true, bypassCSP: true },
+    privileges: { standard: true, secure: true, supportFetchAPI: true, bypassCSP: true, corsEnabled: true },
   },
   {
     scheme: 'kuku-event',
-    privileges: { standard: true, secure: true, supportFetchAPI: true, bypassCSP: true },
+    privileges: { standard: true, secure: true, supportFetchAPI: true, bypassCSP: true, corsEnabled: true },
   },
 ]);
 
@@ -736,6 +736,15 @@ function buildRendererUrl(entry, windowType = null) {
     return `${entry.target}${suffix}`;
   }
   return `${pathToFileURL(entry.target).toString()}${suffix}`;
+}
+
+function buildLocalAssetHeaders(contentType) {
+  return {
+    'Content-Type': contentType || 'application/octet-stream',
+    'Cache-Control': 'no-store, max-age=0',
+    'Access-Control-Allow-Origin': '*',
+    'Cross-Origin-Resource-Policy': 'cross-origin',
+  };
 }
 
 function loadRendererWindow(win, windowType = null) {
@@ -956,10 +965,7 @@ app.whenReady().then(async () => {
       const filePath = resolveTemplateAssetPath(record, requestedName);
       const data = await fsp.readFile(filePath);
       return new Response(data, {
-        headers: {
-          'Content-Type': 'image/png',
-          'Cache-Control': 'no-store, max-age=0',
-        },
+        headers: buildLocalAssetHeaders('image/png'),
       });
     } catch {
       return new Response('not found', { status: 404 });
@@ -990,7 +996,7 @@ app.whenReady().then(async () => {
         '.webm': 'video/webm',
         '.mov': 'video/quicktime',
       }[ext] || 'application/octet-stream';
-      return new Response(data, { headers: { 'Content-Type': contentType } });
+      return new Response(data, { headers: buildLocalAssetHeaders(contentType) });
     } catch {
       return new Response('not found', { status: 404 });
     }
@@ -2392,6 +2398,29 @@ function summarizeKeychainSales(sales = []) {
   });
 }
 
+function sanitizeLocalSoftcopyAsset(input = {}) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  const pathValue = input.path || input.targetPath || input.filePath;
+  const filenameValue = input.filename || input.name;
+  const sizeBytes = Number(input.sizeBytes);
+  return {
+    path: typeof pathValue === 'string' ? pathValue.slice(0, 512) : null,
+    filename: typeof filenameValue === 'string' ? safeLocalMediaFilename(filenameValue, '').slice(0, 180) : null,
+    savedAt: typeof input.savedAt === 'string' ? input.savedAt.slice(0, 64) : null,
+    sizeBytes: Number.isFinite(sizeBytes) && sizeBytes >= 0 ? Math.floor(sizeBytes) : null,
+  };
+}
+
+function sanitizeLocalSoftcopies(input = {}) {
+  const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  const normalized = {};
+  for (const key of ['png', 'gif', 'video']) {
+    const asset = sanitizeLocalSoftcopyAsset(source[key]);
+    if (asset?.path || asset?.filename) normalized[key] = asset;
+  }
+  return Object.keys(normalized).length ? normalized : null;
+}
+
 function sanitizeSession(input = {}) {
   const now = new Date();
   const ts  = typeof input.timestamp === 'string' ? input.timestamp : now.toISOString();
@@ -2459,6 +2488,7 @@ function sanitizeSession(input = {}) {
     softcopyStatus: typeof input.softcopyStatus === 'string' ? input.softcopyStatus.slice(0, 32) : null,
     finalPrintPath: typeof input.finalPrintPath === 'string' ? input.finalPrintPath.slice(0, 256) : null,
     printImagePath: typeof input.printImagePath === 'string' ? input.printImagePath.slice(0, 256) : null,
+    localSoftcopies: sanitizeLocalSoftcopies(input.localSoftcopies),
     keychainPath: typeof input.keychainPath === 'string' ? input.keychainPath.slice(0, 256) : null,
     keychainFilename: typeof input.keychainFilename === 'string' ? input.keychainFilename.slice(0, 180) : null,
     keychainGeneratedAt: typeof input.keychainGeneratedAt === 'string' ? input.keychainGeneratedAt.slice(0, 64) : null,
@@ -2779,6 +2809,9 @@ function sanitizeSessionSoftcopyPatch(input = {}) {
     } else {
       patch[field] = typeof input[field] === 'string' ? input[field].slice(0, field === 'softcopyStatus' ? 32 : 256) : null;
     }
+  }
+  if (Object.prototype.hasOwnProperty.call(input, 'localSoftcopies')) {
+    patch.localSoftcopies = sanitizeLocalSoftcopies(input.localSoftcopies);
   }
   return patch;
 }
@@ -3770,17 +3803,25 @@ async function resolveReprintImagePath(session) {
         continue;
       }
       const filePrefix = metadataName.replace(/-(data|metadata)\.json$/i, '');
-      const photoName = metadata.photoSaved === false ? null : `${filePrefix}-photo.png`;
-      const candidatePath = photoName ? path.join(downloadsDir, photoName) : null;
-      if (candidatePath && fs.existsSync(candidatePath)) {
-        const candidate = {
-          source: 'metadata',
-          expectedImagePath: candidatePath,
-          resolvedPath: candidatePath,
-          metadataPath,
-        };
-        if (!bestMatch) {
-          bestMatch = candidate;
+      const localFiles = Array.isArray(metadata.localFiles) ? metadata.localFiles.filter(Boolean) : [];
+      const photoNames = metadata.photoSaved === false ? [] : Array.from(new Set([
+        `${filePrefix}.png`,
+        `${filePrefix}-photo.png`,
+        ...localFiles.filter(isLocalPhotoFilename),
+      ]));
+      for (const photoName of photoNames) {
+        const candidatePath = path.join(downloadsDir, path.basename(photoName));
+        if (fs.existsSync(candidatePath)) {
+          const candidate = {
+            source: 'metadata',
+            expectedImagePath: candidatePath,
+            resolvedPath: candidatePath,
+            metadataPath,
+          };
+          if (!bestMatch) {
+            bestMatch = candidate;
+          }
+          break;
         }
       }
     } catch {
@@ -4268,15 +4309,16 @@ function softcopyTimestamp(value) {
 }
 
 function buildSoftcopyFilePrefix(payload = {}) {
-  const safeSessionId = sanitizeSoftcopySegment(payload.sessionId, 'session');
-  const shortSessionId = safeSessionId.replace(/-/g, '').slice(0, 8) || 'session';
+  const safeSessionId = sanitizeSoftcopySegment(payload.sessionId, 'session')
+    .replace(/^session-+/i, '')
+    .slice(0, 64) || 'session';
   const createdAt = payload.metadata?.createdAt || payload.createdAt;
-  return `Afterimage-${softcopyTimestamp(createdAt)}-${shortSessionId}`;
+  return `Afterimage-${softcopyTimestamp(createdAt)}-session-${safeSessionId}`;
 }
 
 function normalizeSoftcopyFilePrefix(value) {
   const prefix = String(value || '');
-  return /^Afterimage-\d{8}-\d{6}-[A-Za-z0-9_-]{1,16}(?:-\d+)?$/.test(prefix)
+  return /^Afterimage-\d{8}-\d{6}-session-[A-Za-z0-9_-]{1,64}(?:-\d+)?$/.test(prefix)
     ? prefix
     : null;
 }
@@ -4287,6 +4329,32 @@ function safeLocalMediaFilename(value, fallback = '') {
     .replace(/^-+|-+$/g, '')
     .slice(0, 180);
   return name || fallback;
+}
+
+function getLocalSoftcopyOutputName(filePrefix, spec = {}) {
+  if (spec.preserveName) return spec.name;
+  if (spec.kind === 'photo') return `${filePrefix}.png`;
+  if (spec.kind === 'gif') return `${filePrefix}.gif`;
+  if (spec.kind === 'video') {
+    const ext = path.extname(spec.name || '').toLowerCase().replace(/^\./, '');
+    return `${filePrefix}.${['mp4', 'webm', 'mov'].includes(ext) ? ext : 'webm'}`;
+  }
+  return `${filePrefix}-${spec.name}`;
+}
+
+function isLocalPhotoFilename(name = '') {
+  return /-photo\.png$/i.test(name)
+    || /^Afterimage-\d{8}-\d{6}-session-[A-Za-z0-9_-]+(?:-\d+)?\.png$/i.test(name);
+}
+
+function isLocalGifFilename(name = '') {
+  return /-animation\.gif$/i.test(name)
+    || /^Afterimage-\d{8}-\d{6}-session-[A-Za-z0-9_-]+(?:-\d+)?\.gif$/i.test(name);
+}
+
+function isLocalVideoFilename(name = '') {
+  return /-video\.(mp4|webm|mov)$/i.test(name)
+    || /^Afterimage-\d{8}-\d{6}-session-[A-Za-z0-9_-]+(?:-\d+)?\.(mp4|webm|mov)$/i.test(name);
 }
 
 function normalizeLocalSoftcopyFile(file = {}) {
@@ -4357,10 +4425,16 @@ async function pathExists(filePath) {
   }
 }
 
-async function findAvailableSoftcopyPrefix(downloadsDir, basePrefix, fileNames) {
+async function findAvailableSoftcopyPrefix(downloadsDir, basePrefix, normalizedFiles) {
   for (let suffix = 0; suffix < 10000; suffix += 1) {
     const prefix = suffix === 0 ? basePrefix : `${basePrefix}-${suffix}`;
-    const targetNames = [...fileNames, 'data.json', 'metadata.json'].map(name => `${prefix}-${name}`);
+    const targetNames = [
+      ...normalizedFiles
+        .map(({ spec }) => (spec?.ok ? getLocalSoftcopyOutputName(prefix, spec) : null))
+        .filter(Boolean),
+      `${prefix}-data.json`,
+      `${prefix}-metadata.json`,
+    ];
     const collisions = await Promise.all(
       targetNames.map(name => pathExists(path.join(downloadsDir, name))),
     );
@@ -4597,22 +4671,20 @@ async function handleSaveSessionMedia(_event, payload = {}) {
     console.log('[softcopy-local] Electron downloads path resolved', {
       downloadsDir,
     });
+    console.log('[LOCAL SOFTCOPY] Downloads directory:', downloadsDir);
     await fsp.mkdir(downloadsDir, { recursive: true });
     const files = Array.isArray(payload.files) ? payload.files : [];
     const normalizedFiles = files.map(file => ({
       original: file,
       spec: normalizeLocalSoftcopyFile(file),
     }));
-    const requestedNames = normalizedFiles
-      .map(({ spec }) => spec.ok && !spec.preserveName ? spec.name : null)
-      .filter(Boolean);
     const requestedPrefix = normalizeSoftcopyFilePrefix(payload.filePrefix);
-    const filePrefix = payload.metadataOnly === true && requestedPrefix
+    const filePrefix = requestedPrefix
       ? requestedPrefix
       : await findAvailableSoftcopyPrefix(
         downloadsDir,
         buildSoftcopyFilePrefix(payload),
-        requestedNames,
+        normalizedFiles,
       );
 
     if (!app.isPackaged) {
@@ -4646,7 +4718,7 @@ async function handleSaveSessionMedia(_event, payload = {}) {
         });
         continue;
       }
-      const savedName = spec.preserveName ? spec.name : `${filePrefix}-${spec.name}`;
+      const savedName = getLocalSoftcopyOutputName(filePrefix, spec);
       validRecords.push({
         file,
         spec,
@@ -4667,13 +4739,28 @@ async function handleSaveSessionMedia(_event, payload = {}) {
     const buildMetadataContents = () => {
       const localFiles = getLocalFilesForMetadata();
       const savedKeychainFile = getSavedKeychainFile();
+      const localSoftcopies = {
+        ...(metadata.localSoftcopies && typeof metadata.localSoftcopies === 'object' && !Array.isArray(metadata.localSoftcopies)
+          ? metadata.localSoftcopies
+          : {}),
+      };
+      for (const file of savedFiles) {
+        const key = file.kind === 'photo' ? 'png' : file.kind;
+        if (!['png', 'gif', 'video'].includes(key) || localSoftcopies[key]) continue;
+        localSoftcopies[key] = {
+          path: file.path,
+          filename: file.name,
+          savedAt: file.savedAt || new Date().toISOString(),
+          sizeBytes: file.sizeBytes,
+        };
+      }
       return JSON.stringify({
         ...metadata,
         sessionId: safeSessionId,
         savedAt: new Date().toISOString(),
-        photoSaved: localFiles.some(name => name.endsWith('-photo.png')),
-        gifSaved: localFiles.some(name => name.endsWith('-animation.gif')),
-        videoSaved: localFiles.some(name => /-video\.(mp4|webm|mov)$/.test(name)),
+        photoSaved: localFiles.some(isLocalPhotoFilename),
+        gifSaved: localFiles.some(isLocalGifFilename),
+        videoSaved: localFiles.some(isLocalVideoFilename),
         keychain4x6Generated: metadata.keychain4x6Generated === true,
         keychain4x6Saved: metadata.keychain4x6Saved === true || Boolean(savedKeychainFile),
         keychain4x6Filename: savedKeychainFile?.name || localFiles.find(name => name.endsWith('-keychain-4x6.png')) || metadata.keychain4x6Filename || null,
@@ -4688,6 +4775,7 @@ async function handleSaveSessionMedia(_event, payload = {}) {
         keychain4x6LocalOnly: true,
         keychain4x6Uploaded: false,
         keychain4x6Error: metadata.keychain4x6Error || null,
+        localSoftcopies: sanitizeLocalSoftcopies(localSoftcopies),
         localFiles,
         localFileErrors: [
           ...(Array.isArray(metadata.localFileErrors) ? metadata.localFileErrors : []),
@@ -4699,7 +4787,7 @@ async function handleSaveSessionMedia(_event, payload = {}) {
       await fsp.writeFile(
         metadataPath,
         buildMetadataContents(),
-        payload.metadataOnly === true ? undefined : { flag: 'wx' },
+        payload.metadataOnly === true || requestedPrefix ? undefined : { flag: 'wx' },
       );
       const verification = verifyWrittenFile(metadataPath);
       const logPayload = {
@@ -4718,7 +4806,20 @@ async function handleSaveSessionMedia(_event, payload = {}) {
     const writeMediaRecord = async (record, orderNumber, orderType) => {
       if (!record) return;
       const { file, spec, buffer, savedName, filePath } = record;
+      const logType = spec.kind === 'photo'
+        ? 'PNG'
+        : spec.kind === 'gif'
+          ? 'GIF'
+          : spec.kind === 'video'
+            ? 'VIDEO'
+            : String(spec.kind || 'MEDIA').toUpperCase();
       try {
+        console.log(`[LOCAL SOFTCOPY] ${logType} save started`, {
+          type: spec.kind || file.kind || null,
+          filename: savedName,
+          path: filePath,
+          bytes: buffer.length,
+        });
         console.log('[LOCAL SAVE AUDIT] saving media file', {
           type: spec.kind || file.kind || null,
           filename: savedName,
@@ -4730,7 +4831,7 @@ async function handleSaveSessionMedia(_event, payload = {}) {
           console.log('[LOCAL SAVE AUDIT PNG]', {
             filename: savedName,
             isKeychain: savedName.includes('keychain-4x6'),
-            isNormalPhoto: savedName.includes('photo') || savedName.includes('strip'),
+            isNormalPhoto: isLocalPhotoFilename(savedName) || savedName.includes('strip'),
             caller: 'electron softcopy-local:save-session-media',
           });
         }
@@ -4762,12 +4863,18 @@ async function handleSaveSessionMedia(_event, payload = {}) {
         if (!verification.exists || verification.sizeBytes <= 0) {
           throw new Error(`Local file verification failed for ${savedName}`);
         }
+        console.log(`[LOCAL SOFTCOPY] ${logType} saved`, {
+          type: spec.kind || file.kind || null,
+          path: filePath,
+          bytes: verification.sizeBytes,
+        });
         savedFiles.push({
           kind: spec.kind || null,
           name: savedName,
           path: filePath,
           sizeBytes: verification.sizeBytes,
           exists: verification.exists,
+          savedAt: new Date().toISOString(),
         });
         if (orderNumber && orderType) {
           console.log(`[LOCAL SAVE ORDER] ${orderNumber} ${orderType} saved`, {
@@ -4776,6 +4883,27 @@ async function handleSaveSessionMedia(_event, payload = {}) {
           });
         }
       } catch (error) {
+        if (error?.code === 'EEXIST') {
+          const verification = verifyWrittenFile(filePath);
+          if (verification.exists && verification.sizeBytes > 0) {
+            savedFiles.push({
+              kind: spec.kind || null,
+              name: savedName,
+              path: filePath,
+              sizeBytes: verification.sizeBytes,
+              exists: verification.exists,
+              savedAt: new Date().toISOString(),
+              alreadyExisted: true,
+            });
+            console.log('[LOCAL SOFTCOPY] existing file reused', {
+              type: spec.kind || file.kind || null,
+              filename: savedName,
+              targetPath: filePath,
+              bytes: verification.sizeBytes,
+            });
+            return;
+          }
+        }
         fileErrors.push({
           kind: spec.kind || null,
           name: spec.name,
@@ -4796,16 +4924,15 @@ async function handleSaveSessionMedia(_event, payload = {}) {
     } else {
       const findRecord = kind => validRecords.find(record => record.spec.kind === kind);
       const orderedRecords = new Set();
-      const gifRecord = findRecord('gif');
       const photoRecord = findRecord('photo');
+      const gifRecord = findRecord('gif');
       const videoRecord = findRecord('video');
 
-      await writeMediaRecord(gifRecord, 1, 'gif');
-      if (gifRecord) orderedRecords.add(gifRecord);
-      await writeMetadataFile();
-      await writeMediaRecord(photoRecord, 3, 'png');
+      await writeMediaRecord(photoRecord, 1, 'png');
       if (photoRecord) orderedRecords.add(photoRecord);
-      await writeMediaRecord(videoRecord, 4, 'video');
+      await writeMediaRecord(gifRecord, 2, 'gif');
+      if (gifRecord) orderedRecords.add(gifRecord);
+      await writeMediaRecord(videoRecord, 3, 'video');
       if (videoRecord) orderedRecords.add(videoRecord);
 
       for (const record of validRecords) {
@@ -4813,6 +4940,7 @@ async function handleSaveSessionMedia(_event, payload = {}) {
           await writeMediaRecord(record);
         }
       }
+      await writeMetadataFile();
     }
 
     console.log(payload.metadataOnly === true ? '[LOCAL SAVE ORDER] metadata update complete' : '[LOCAL SAVE ORDER] normal softcopy complete', {
@@ -4850,6 +4978,19 @@ async function handleSaveSessionMedia(_event, payload = {}) {
       filePrefix,
       savedFiles,
       fileErrors,
+      mediaResults: [
+        ...savedFiles.map(file => ({
+          ok: true,
+          type: file.kind || null,
+          targetPath: file.path,
+          sizeBytes: file.sizeBytes,
+        })),
+        ...fileErrors.map(error => ({
+          ok: false,
+          type: error.kind || null,
+          error: error.error,
+        })),
+      ],
       metadataPath,
       error: fileErrors.length ? 'One or more local softcopy files could not be saved.' : null,
     };

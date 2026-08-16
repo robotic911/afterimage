@@ -47,6 +47,7 @@ const KEYCHAIN_AUTO_SAVE_SAVED_KEYS = new Set();
 const KEYCHAIN_AUTO_SAVE_ATTEMPTED_KEYS = new Set();
 const LOCAL_SOFTCOPY_SAVE_IN_FLIGHT_KEYS = new Map();
 const LOCAL_SOFTCOPY_SAVE_SAVED_KEYS = new Map();
+const LOCAL_SOFTCOPY_MEDIA_KINDS = Object.freeze(['photo', 'gif', 'video']);
 
 function normalizePrintApiResult(result, fallbackCopies) {
   const copiesRequested = clampPrintCopies(result?.copiesRequested ?? result?.requestedCopies ?? fallbackCopies);
@@ -258,6 +259,80 @@ function createLocalSoftcopySaveKey({ sessionStartValue = null, sessionToken = '
   return `local-softcopy-${Date.now()}`;
 }
 
+function getLocalSoftcopyFileKind(file = {}) {
+  const kind = typeof file === 'string' ? '' : file?.kind;
+  const name = typeof file === 'string' ? file : file?.name;
+  if (kind === 'photo' || (/\.png$/i.test(name || '') && !/keychain-4x6/i.test(name || ''))) return 'photo';
+  if (kind === 'gif' || /\.gif$/i.test(name || '')) return 'gif';
+  if (kind === 'video' || /\.(mp4|webm|mov)$/i.test(name || '')) return 'video';
+  return kind || null;
+}
+
+function getPayloadLocalMediaKinds(payload = {}) {
+  const kinds = [];
+  if (payload.localPhotoDataUrl || payload.localPhotoBlob) kinds.push('photo');
+  if (payload.gifBlob) kinds.push('gif');
+  if (payload.videoBlob) kinds.push('video');
+  return kinds;
+}
+
+function getSavedLocalMediaKinds(result = {}) {
+  const savedKinds = new Set();
+  for (const file of result?.savedFiles || []) {
+    const kind = getLocalSoftcopyFileKind(file);
+    if (LOCAL_SOFTCOPY_MEDIA_KINDS.includes(kind)) savedKinds.add(kind);
+  }
+  return savedKinds;
+}
+
+function mergeLocalSaveResults(previous = null, next = null) {
+  if (!previous?.ok) return next || previous;
+  if (!next) return previous;
+  const savedFiles = [];
+  const seenFiles = new Set();
+  for (const file of [...(previous.savedFiles || []), ...(next.savedFiles || [])]) {
+    const key = `${file?.kind || ''}:${file?.path || file?.name || ''}`;
+    if (!file || seenFiles.has(key)) continue;
+    seenFiles.add(key);
+    savedFiles.push(file);
+  }
+  return {
+    ...previous,
+    ...next,
+    ok: previous.ok === true || next.ok === true,
+    partial: previous.partial === true || next.partial === true,
+    folderPath: next.folderPath || previous.folderPath || null,
+    filePrefix: next.filePrefix || previous.filePrefix || null,
+    savedFiles,
+    fileErrors: [
+      ...(previous.fileErrors || []),
+      ...(next.fileErrors || []),
+    ],
+    mediaResults: [
+      ...(previous.mediaResults || []),
+      ...(next.mediaResults || []),
+    ],
+    metadataPath: next.metadataPath || previous.metadataPath || null,
+    error: next.error || previous.error || null,
+  };
+}
+
+function getLocalSoftcopiesFromSavedFiles(savedFiles = []) {
+  const localSoftcopies = {};
+  for (const file of savedFiles || []) {
+    const kind = getLocalSoftcopyFileKind(file);
+    const key = kind === 'photo' ? 'png' : kind;
+    if (!['png', 'gif', 'video'].includes(key) || localSoftcopies[key]) continue;
+    localSoftcopies[key] = {
+      path: file.path || file.targetPath || null,
+      filename: file.name || file.filename || null,
+      savedAt: file.savedAt || null,
+      sizeBytes: Number.isFinite(Number(file.sizeBytes)) ? Number(file.sizeBytes) : null,
+    };
+  }
+  return localSoftcopies;
+}
+
 function isKeychainSaveSuccessful(result) {
   return result?.ok === true
     && result?.exists === true
@@ -299,10 +374,14 @@ function testImageDecode(src, label) {
 
 function canvasToBlobAsync(canvas, mimeType, quality) {
   return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => {
-      if (blob) resolve(blob);
-      else reject(new Error(`Could not encode ${mimeType || 'image'} blob.`));
-    }, mimeType, quality);
+    try {
+      canvas.toBlob((blob) => {
+        if (blob) resolve(blob);
+        else reject(new Error(`Could not encode ${mimeType || 'image'} blob.`));
+      }, mimeType, quality);
+    } catch (error) {
+      reject(error);
+    }
   });
 }
 
@@ -455,6 +534,7 @@ export default function PrintScreen({
   const printArtifactRef = useRef(null);
   const finalPrintArtifactRef = useRef(null);
   const finalPrintArtifactPromiseRef = useRef(null);
+  const finalPreviewObjectUrlRef = useRef(null);
   const softcopyArtifactRef = useRef(null);
   const softcopyLogRef = useRef(null);
   const softcopyMotionCacheRef = useRef(null);
@@ -479,6 +559,13 @@ export default function PrintScreen({
     if (!activeRef.current) return;
     onSoftcopyChange?.(nextState);
   }, [onSoftcopyChange]);
+
+  const releaseFinalPreviewUrl = useCallback(() => {
+    if (finalPreviewObjectUrlRef.current) {
+      URL.revokeObjectURL(finalPreviewObjectUrlRef.current);
+      finalPreviewObjectUrlRef.current = null;
+    }
+  }, []);
 
   const releaseFinalPrintArtifact = useCallback((artifact = finalPrintArtifactRef.current) => {
     if (!artifact) return;
@@ -512,12 +599,10 @@ export default function PrintScreen({
         { cameraOrientation: normalizedCameraOrientation },
       );
       const pngBlob = await canvasToBlobAsync(canvas, 'image/png', 1);
-      const previewUrl = URL.createObjectURL(pngBlob);
       const artifact = {
         cacheKey: finalPrintCacheKey,
         canvas,
         pngBlob,
-        previewUrl,
         pngDataUrl: null,
         jpegDataUrl: null,
       };
@@ -566,6 +651,7 @@ export default function PrintScreen({
       uploadInFlightRef.current = false;
       printArtifactRef.current = null;
       finalPrintArtifactPromiseRef.current = null;
+      releaseFinalPreviewUrl();
       releaseFinalPrintArtifact();
       softcopyArtifactRef.current = null;
       softcopyLogRef.current = null;
@@ -581,16 +667,17 @@ export default function PrintScreen({
         finishReadyTimerRef.current = null;
       }
     }
-  }, [active, releaseFinalPrintArtifact]);
+  }, [active, releaseFinalPreviewUrl, releaseFinalPrintArtifact]);
 
   useEffect(() => {
     return () => {
       if (finishReadyTimerRef.current) {
         clearTimeout(finishReadyTimerRef.current);
       }
+      releaseFinalPreviewUrl();
       releaseFinalPrintArtifact();
     };
-  }, [releaseFinalPrintArtifact]);
+  }, [releaseFinalPreviewUrl, releaseFinalPrintArtifact]);
 
   useEffect(() => {
     if (!active || !window.printApi?.onPrintProgress) return undefined;
@@ -642,34 +729,50 @@ export default function PrintScreen({
     let cancelled = false;
     const run = async () => {
       if (!layout || !template || !shots?.length) {
+        releaseFinalPreviewUrl();
         setFinalPreviewPngUrl(null);
         setFinalPreviewPngStatus('idle');
         return;
       }
 
       setFinalPreviewPngStatus('generating');
+      let artifact = null;
       try {
-        const artifact = await getFinalPrintArtifact();
+        artifact = await getFinalPrintArtifact();
         if (cancelled) return;
-        if (!artifact?.pngBlob || !artifact.previewUrl) {
+        if (!artifact?.pngBlob) {
           throw new Error('Final preview PNG blob could not be created.');
         }
-        setFinalPreviewPngUrl(artifact.previewUrl);
+        const previewUrl = URL.createObjectURL(artifact.pngBlob);
+        if (cancelled) {
+          URL.revokeObjectURL(previewUrl);
+          return;
+        }
+        releaseFinalPreviewUrl();
+        finalPreviewObjectUrlRef.current = previewUrl;
+        setFinalPreviewPngUrl(previewUrl);
         setFinalPreviewPngStatus('ready');
         console.log('[FINAL PNG PREVIEW GENERATED]', {
           layoutId: layout?.id || null,
           templateId: template?.id || null,
           shotCount: shots?.length || 0,
           blobSize: artifact.pngBlob.size,
-          objectUrlLength: artifact.previewUrl.length,
+          objectUrlLength: previewUrl.length,
         });
       } catch (error) {
         if (cancelled) return;
-        console.error('[FINAL PNG PREVIEW FAILED]', {
+        console.error('[PNG PREVIEW ERROR]', {
+          sessionId: sessionStartRef?.current ? `session-${sessionStartRef.current}` : null,
           layoutId: layout?.id || null,
           templateId: template?.id || null,
+          sourceType: artifact?.pngBlob ? 'blob' : 'final-artwork',
+          blobType: artifact?.pngBlob?.type || null,
+          blobSize: artifact?.pngBlob?.size || 0,
+          objectUrlAvailable: Boolean(finalPreviewObjectUrlRef.current),
+          finalArtworkAvailable: Boolean(artifact?.canvas),
           error: error?.message || String(error),
         });
+        releaseFinalPreviewUrl();
         setFinalPreviewPngUrl(null);
         setFinalPreviewPngStatus('error');
       }
@@ -684,8 +787,10 @@ export default function PrintScreen({
     active,
     getFinalPrintArtifact,
     layout,
+    releaseFinalPreviewUrl,
     selectedFilterCss,
     settings,
+    sessionStartRef,
     shots,
     template,
   ]);
@@ -979,25 +1084,21 @@ export default function PrintScreen({
     };
   }, [softcopyPreviewAssets]);
 
-  const buildSoftcopyPayload = async (pngUrl, jpegUrl, cacheKey = softcopyCacheKey, pngBlob = null) => {
+  const buildSoftcopyBasePayload = (pngUrl, jpegUrl, cacheKey = softcopyCacheKey, pngBlob = null) => {
     const cachedPayload = softcopyArtifactRef.current;
-    if (
-      cachedPayload?.cacheKey === cacheKey
-      && (cachedPayload.canUpload || cachedPayload.localSave?.ok || cachedPayload.keychain4x6Generated || cachedPayload.keychain4x6Error)
-    ) {
-      if (IS_DEV) console.log('[softcopy] generated media cache reused', { sessionToken: cachedPayload.sessionToken });
-      return cachedPayload;
-    }
-
+    const canReuseCachedPayload = cachedPayload?.cacheKey === cacheKey;
     const enabled = {
       photo: softcopySettings.photoEnabled !== false,
       gif: softcopySettings.gifEnabled !== false,
       video: softcopySettings.videoEnabled !== false,
     };
     const warnings = [];
-    const sessionToken = cachedPayload?.cacheKey === cacheKey && cachedPayload.sessionToken
+    const sessionToken = canReuseCachedPayload && cachedPayload.sessionToken
       ? cachedPayload.sessionToken
       : createSoftcopySessionToken();
+    const createdAt = canReuseCachedPayload && cachedPayload.createdAt
+      ? cachedPayload.createdAt
+      : new Date().toISOString();
     if (IS_DEV) {
       console.log('[softcopy] media generation plan', {
         sessionId: sessionToken,
@@ -1008,14 +1109,10 @@ export default function PrintScreen({
         cameraOrientation: normalizedCameraOrientation,
       });
     }
-    const photoDataUrl = enabled.photo ? jpegUrl : null;
+    const photoDataUrl = enabled.photo ? pngUrl : null;
     const localPhotoDataUrl = enabled.photo ? pngUrl : null;
     const localPhotoBlob = enabled.photo ? pngBlob : null;
-    let gifBlob = null;
-    let videoBlob = null;
-    let videoMimeType = '';
-    let videoExtension = '';
-    const uploadedPaths = cachedPayload?.cacheKey === cacheKey
+    const uploadedPaths = canReuseCachedPayload
       ? {
           photoPath: cachedPayload.photoPath || cachedPayload.uploadedPaths?.photoPath || null,
           gifPath: cachedPayload.gifPath || cachedPayload.uploadedPaths?.gifPath || null,
@@ -1023,52 +1120,87 @@ export default function PrintScreen({
         }
       : {};
 
-    if (!Object.values(enabled).some(Boolean)) {
-      return {
-        sessionToken,
-        cameraOrientation: normalizedCameraOrientation,
-        photoDataUrl,
-        localPhotoDataUrl,
-        localPhotoBlob,
-        gifBlob: null,
-        videoBlob: null,
-        videoMimeType: '',
-        videoExtension: '',
-        enabled,
-        warnings,
-        canUpload: false,
-        cacheKey,
-        uploadedPaths,
-      };
-    }
-
-    timeStart('[softcopy] generate media');
-    try {
-      const motionMedia = await generateSoftcopyMotionMedia({ cacheKey });
-      gifBlob = motionMedia.gifBlob || null;
-      videoBlob = motionMedia.videoBlob || null;
-      videoMimeType = motionMedia.videoMimeType || '';
-      videoExtension = motionMedia.videoExtension || '';
-      warnings.push(...(motionMedia.warnings || []));
-    } finally {
-      timeEnd('[softcopy] generate media');
-    }
-
     return {
       sessionToken,
+      createdAt,
       cameraOrientation: normalizedCameraOrientation,
       photoDataUrl,
       localPhotoDataUrl,
       localPhotoBlob,
+      gifBlob: canReuseCachedPayload ? cachedPayload.gifBlob || null : null,
+      videoBlob: canReuseCachedPayload ? cachedPayload.videoBlob || null : null,
+      videoMimeType: canReuseCachedPayload ? cachedPayload.videoMimeType || '' : '',
+      videoExtension: canReuseCachedPayload ? cachedPayload.videoExtension || '' : '',
+      enabled,
+      warnings: canReuseCachedPayload ? cachedPayload.warnings || warnings : warnings,
+      canUpload: Boolean(photoDataUrl || (canReuseCachedPayload && (cachedPayload.gifBlob || cachedPayload.videoBlob))),
+      cacheKey,
+      uploadedPaths,
+      localSave: canReuseCachedPayload ? cachedPayload.localSave || null : null,
+      motionGenerated: canReuseCachedPayload && cachedPayload.motionGenerated === true,
+    };
+  };
+
+  const buildSoftcopyPayload = async (pngUrl, jpegUrl, cacheKey = softcopyCacheKey, pngBlob = null) => {
+    const cachedPayload = softcopyArtifactRef.current;
+    if (
+      cachedPayload?.cacheKey === cacheKey
+      && (
+        cachedPayload.motionGenerated === true
+        || (
+          softcopySettings.gifEnabled === false
+          && softcopySettings.videoEnabled === false
+          && (cachedPayload.canUpload || cachedPayload.localSave?.ok)
+        )
+      )
+    ) {
+      if (IS_DEV) console.log('[softcopy] generated media cache reused', { sessionToken: cachedPayload.sessionToken });
+      return cachedPayload;
+    }
+
+    const basePayload = buildSoftcopyBasePayload(pngUrl, jpegUrl, cacheKey, pngBlob);
+    const enabled = basePayload.enabled;
+    const warnings = [...(basePayload.warnings || [])];
+    let gifBlob = null;
+    let videoBlob = null;
+    let videoMimeType = '';
+    let videoExtension = '';
+
+    if (!Object.values(enabled).some(Boolean)) {
+      return {
+        ...basePayload,
+        gifBlob: null,
+        videoBlob: null,
+        videoMimeType: '',
+        videoExtension: '',
+        canUpload: false,
+        motionGenerated: true,
+      };
+    }
+
+    if (enabled.gif || enabled.video) {
+      timeStart('[softcopy] generate media');
+      try {
+        const motionMedia = await generateSoftcopyMotionMedia({ cacheKey });
+        gifBlob = motionMedia.gifBlob || null;
+        videoBlob = motionMedia.videoBlob || null;
+        videoMimeType = motionMedia.videoMimeType || '';
+        videoExtension = motionMedia.videoExtension || '';
+        warnings.push(...(motionMedia.warnings || []));
+      } finally {
+        timeEnd('[softcopy] generate media');
+      }
+    }
+
+    return {
+      ...basePayload,
       gifBlob,
       videoBlob,
       videoMimeType,
       videoExtension,
-      enabled,
       warnings,
-      canUpload: Boolean(photoDataUrl || gifBlob || videoBlob),
-      cacheKey,
-      uploadedPaths,
+      canUpload: Boolean(basePayload.photoDataUrl || gifBlob || videoBlob),
+      motionGenerated: true,
     };
   };
 
@@ -1080,7 +1212,7 @@ export default function PrintScreen({
     .find(file => {
       const name = typeof file === 'string' ? file : file?.name;
       const kind = typeof file === 'string' ? '' : file?.kind;
-      return kind === 'photo' || String(name || '').endsWith('-photo.png');
+      return kind === 'photo' || (/\.png$/i.test(String(name || '')) && !/keychain-4x6/i.test(String(name || '')));
     });
 
   const getSavedKeychainFile = (savedFiles = []) => savedFiles
@@ -1094,7 +1226,7 @@ export default function PrintScreen({
     const savedPhotoFile = getSavedPhotoFile(payload.localSave?.savedFiles);
     const savedKeychainFile = getSavedKeychainFile(payload.localSave?.savedFiles);
     const photoFilename = savedPhotoFile?.name
-      || payload.localSave?.savedFiles?.find?.((file) => String(file?.name || '').endsWith('-photo.png'))?.name
+      || payload.localSave?.savedFiles?.find?.((file) => /\.png$/i.test(String(file?.name || '')) && !/keychain-4x6/i.test(String(file?.name || '')))?.name
       || null;
     const finalPrintPath = savedPhotoFile?.path || null;
     const keychain4x6Filename = savedKeychainFile?.name
@@ -1125,9 +1257,9 @@ export default function PrintScreen({
       videoEnabled: payload.enabled?.video === true,
       finalPrintPath,
       finalPrintFilename: photoFilename,
-      photoSaved: localFiles.some(name => name.endsWith('-photo.png')),
-      gifSaved: localFiles.some(name => name.endsWith('-animation.gif')),
-      videoSaved: localFiles.some(name => /-video\.(mp4|webm|mov)$/.test(name)),
+      photoSaved: localFiles.some(name => /\.png$/i.test(name) && !/keychain-4x6/i.test(name)),
+      gifSaved: localFiles.some(name => /\.gif$/i.test(name)),
+      videoSaved: localFiles.some(name => /\.(mp4|webm|mov)$/i.test(name)),
       keychain4x6Generated: payload.keychain4x6Generated === true,
       keychain4x6Saved: payload.keychain4x6Save?.ok === true,
       keychain4x6Filename,
@@ -1142,6 +1274,7 @@ export default function PrintScreen({
       keychain4x6LocalOnly: true,
       keychain4x6Uploaded: false,
       keychain4x6Error: payload.keychain4x6Error || null,
+      localSoftcopies: getLocalSoftcopiesFromSavedFiles(payload.localSave?.savedFiles),
       localFiles,
       localFileErrors: payload.localSave?.fileErrors || [],
       qrUrl: upload.qrUrl || null,
@@ -1153,8 +1286,7 @@ export default function PrintScreen({
     };
   };
 
-  const saveLocalSoftcopy = async (payload) => {
-    if (payload.localSave?.ok) return payload.localSave;
+  const saveLocalSoftcopy = async (payload, { kinds = null } = {}) => {
     if (!window.softcopyApi?.saveSessionMedia) {
       return {
         ok: false,
@@ -1163,13 +1295,26 @@ export default function PrintScreen({
       };
     }
 
+    const availableKinds = getPayloadLocalMediaKinds(payload);
+    const requestedKindSet = Array.isArray(kinds) ? new Set(kinds) : null;
+    const requestedKinds = availableKinds.filter(kind => !requestedKindSet || requestedKindSet.has(kind));
+    if (!requestedKinds.length) {
+      return payload.localSave || {
+        ok: false,
+        skipped: true,
+        error: 'No generated local softcopy media is available.',
+      };
+    }
+
     const sessionKey = createLocalSoftcopySaveKey({
       sessionStartValue: sessionStartRef?.current,
       sessionToken: payload.sessionToken,
       cacheKey: payload.cacheKey || softcopyCacheKey,
     });
-    if (localSoftcopySavedRef.current.has(sessionKey)) {
-      const savedResult = localSoftcopySavedRef.current.get(sessionKey);
+    let savedResult = payload.localSave || localSoftcopySavedRef.current.get(sessionKey) || null;
+    let savedKinds = getSavedLocalMediaKinds(savedResult);
+    let missingKinds = requestedKinds.filter(kind => !savedKinds.has(kind));
+    if (!missingKinds.length && savedResult?.ok) {
       console.log('[LOCAL SAVE AUDIT] skipped duplicate local softcopy save', {
         sessionKey,
         reason: 'already-saved',
@@ -1177,19 +1322,26 @@ export default function PrintScreen({
       });
       return savedResult;
     }
+
     if (localSoftcopySaveInFlightRef.current.has(sessionKey)) {
       console.log('[LOCAL SAVE AUDIT] skipped duplicate local softcopy save', {
         sessionKey,
         reason: 'already-in-flight',
       });
-      return localSoftcopySaveInFlightRef.current.get(sessionKey);
+      const inFlightResult = await localSoftcopySaveInFlightRef.current.get(sessionKey);
+      savedResult = mergeLocalSaveResults(savedResult, inFlightResult);
+      payload.localSave = savedResult;
+      if (savedResult?.ok) localSoftcopySavedRef.current.set(sessionKey, savedResult);
+      savedKinds = getSavedLocalMediaKinds(savedResult);
+      missingKinds = requestedKinds.filter(kind => !savedKinds.has(kind));
+      if (!missingKinds.length && savedResult?.ok) return savedResult;
     }
 
     const savePromise = (async () => {
       let result;
       try {
         const localMediaFiles = [];
-        if (payload.localPhotoDataUrl) {
+        if (missingKinds.includes('photo') && payload.localPhotoDataUrl) {
           const photoBuffer = payload.localPhotoBlob
             ? await payload.localPhotoBlob.arrayBuffer()
             : await fetch(payload.localPhotoDataUrl).then((response) => response.arrayBuffer());
@@ -1200,7 +1352,7 @@ export default function PrintScreen({
             data: photoBuffer,
           });
         }
-        if (payload.gifBlob) {
+        if (missingKinds.includes('gif') && payload.gifBlob) {
           localMediaFiles.push({
             kind: 'gif',
             name: 'animation.gif',
@@ -1208,7 +1360,7 @@ export default function PrintScreen({
             data: await payload.gifBlob.arrayBuffer(),
           });
         }
-        if (payload.videoBlob) {
+        if (missingKinds.includes('video') && payload.videoBlob) {
           const extension = ['mp4', 'webm', 'mov'].includes(payload.videoExtension)
             ? payload.videoExtension
             : (payload.videoMimeType?.includes('mp4') ? 'mp4' : 'webm');
@@ -1219,8 +1371,15 @@ export default function PrintScreen({
             data: await payload.videoBlob.arrayBuffer(),
           });
         }
+        if (!localMediaFiles.length) {
+          return savedResult || {
+            ok: false,
+            skipped: true,
+            error: 'No missing generated local softcopy media is available.',
+          };
+        }
         const uploadMediaFiles = [
-          payload.photoDataUrl ? { kind: 'photo', name: 'photo.jpg' } : null,
+          payload.photoDataUrl ? { kind: 'photo', name: 'photo.png' } : null,
           payload.gifBlob ? { kind: 'gif', name: 'animation.gif' } : null,
           payload.videoBlob ? { kind: 'video', name: `video.${payload.videoExtension || 'webm'}` } : null,
         ].filter(Boolean);
@@ -1269,39 +1428,47 @@ export default function PrintScreen({
             qrEnabled: softcopySettings.qrEnabled !== false,
             cameraOrientation: payload.cameraOrientation || normalizedCameraOrientation,
             files: localMediaFiles.map(file => ({ kind: file.kind, name: file.name })),
+            requestedKinds,
+            missingKinds,
           });
         }
 
         result = await window.softcopyApi.saveSessionMedia({
           sessionId: payload.sessionToken,
           date: payload.createdAt.slice(0, 10),
+          filePrefix: savedResult?.filePrefix || payload.localSave?.filePrefix || null,
           files: localMediaFiles,
-        metadata: buildLocalMetadata(payload),
-      });
+          metadata: buildLocalMetadata({
+            ...payload,
+            localSave: savedResult || payload.localSave || null,
+          }),
+        });
       } catch (error) {
         console.error('[DIAG local-save ERROR]', error);
         result = { ok: false, error: error?.message || String(error) };
       }
+      const mergedResult = mergeLocalSaveResults(savedResult, result);
       if (IS_DEV) {
-        if (result?.ok) {
+        if (mergedResult?.ok) {
           console.log('[softcopy-local] saved', {
             sessionId: payload.sessionToken,
             cameraOrientation: payload.cameraOrientation || normalizedCameraOrientation,
-            folderPath: result.folderPath,
-            savedFiles: result.savedFiles,
+            folderPath: mergedResult.folderPath,
+            savedFiles: mergedResult.savedFiles,
           });
         } else {
           console.log('[softcopy-local] save failed', {
             sessionId: payload.sessionToken,
             cameraOrientation: payload.cameraOrientation || normalizedCameraOrientation,
-            error: result?.error || 'unknown',
+            error: mergedResult?.error || result?.error || 'unknown',
           });
         }
       }
-      if (result?.ok) {
-        localSoftcopySavedRef.current.set(sessionKey, result);
+      if (mergedResult?.ok) {
+        payload.localSave = mergedResult;
+        localSoftcopySavedRef.current.set(sessionKey, mergedResult);
       }
-      return result;
+      return mergedResult || result;
     })();
 
     localSoftcopySaveInFlightRef.current.set(sessionKey, savePromise);
@@ -1530,7 +1697,7 @@ export default function PrintScreen({
         videoBlob: payload.videoBlob,
         videoMimeType: payload.videoMimeType || '',
         videoExtension: payload.videoExtension || '',
-        photoContentType: 'image/jpeg',
+        photoContentType: 'image/png',
         enabled: payload.enabled,
         sessionToken: payload.sessionToken,
         existingPaths: payload.uploadedPaths || {},
@@ -1539,7 +1706,7 @@ export default function PrintScreen({
         console.log('[keychain] excluded from QR upload', {
           sessionId: payload.sessionToken,
           uploadFileNames: [
-            payload.photoDataUrl ? 'photo.jpg' : null,
+            payload.photoDataUrl ? 'photo.png' : null,
             payload.gifBlob ? 'animation.gif' : null,
             payload.videoBlob ? `video.${payload.videoExtension || 'webm'}` : null,
           ].filter(Boolean),
@@ -1642,9 +1809,27 @@ export default function PrintScreen({
 
     timeStart('[softcopy] generate/upload');
     try {
+      const basePayload = buildSoftcopyBasePayload(pngUrl, jpegUrl, softcopyCacheKey, pngBlob);
+      basePayload.createdAt = basePayload.createdAt || new Date().toISOString();
+      basePayload.cameraOrientation = normalizeCameraOrientation(basePayload.cameraOrientation || normalizedCameraOrientation);
+      softcopyArtifactRef.current = basePayload;
+      const pngSavePromise = saveLocalSoftcopy(basePayload, { kinds: ['photo'] })
+        .then((result) => {
+          basePayload.localSave = result;
+          const currentPayload = softcopyArtifactRef.current || basePayload;
+          if (currentPayload.cacheKey === basePayload.cacheKey) {
+            softcopyArtifactRef.current = {
+              ...currentPayload,
+              localSave: mergeLocalSaveResults(currentPayload.localSave, result),
+            };
+          }
+          return result;
+        });
+
       const payload = await buildSoftcopyPayload(pngUrl, jpegUrl, softcopyCacheKey, pngBlob);
       payload.createdAt = payload.createdAt || new Date().toISOString();
       payload.cameraOrientation = normalizeCameraOrientation(payload.cameraOrientation || normalizedCameraOrientation);
+      payload.localSave = await pngSavePromise;
       setSoftcopyPreviewAssets({
         cacheKey: payload.cacheKey || softcopyCacheKey,
         status: payload.gifBlob || payload.videoBlob ? 'ready' : 'idle',
@@ -1654,7 +1839,7 @@ export default function PrintScreen({
         videoError: payload.enabled?.video !== false && !payload.videoBlob ? 'Video preview unavailable' : null,
         warnings: payload.warnings || [],
       });
-      payload.localSave = await saveLocalSoftcopy(payload);
+      payload.localSave = await saveLocalSoftcopy(payload, { kinds: ['gif', 'video'] });
       softcopyArtifactRef.current = payload;
       setSoftcopyWarnings(softcopySettings.qrEnabled ? (payload.warnings || []) : []);
       const completeLocalSaveOrder = async (result) => {
@@ -2067,7 +2252,7 @@ export default function PrintScreen({
       }
 
       // This PNG data URL is the shared final artwork source. The canonical
-      // local photo file is saved by softcopy-local as Afterimage-...-photo.png.
+      // local photo file is saved by softcopy-local as Afterimage-...session-....png.
       const pngUrl = finalArtifact.pngDataUrl || await blobToDataUrl(finalArtifact.pngBlob);
       finalArtifact.pngDataUrl = pngUrl;
       console.log('[DIAG local-save 1] final PNG ready', {
@@ -2083,7 +2268,7 @@ export default function PrintScreen({
         isNormalPhoto: true,
         caller: 'PrintScreen.handlePrint',
         action: 'legacy-afterimage-strip-autosave-disabled',
-        canonical: 'softcopy-local:save-session-media photo.png',
+        canonical: 'softcopy-local:save-session-media final PNG Blob',
       });
 
       // Print via Electron (JPEG to keep IPC payload small)
@@ -2224,6 +2409,7 @@ export default function PrintScreen({
             softcopyStatus: softcopyStarted ? 'uploading' : softcopyLog.status,
             finalPrintPath: null,
             printImagePath: null,
+            localSoftcopies: null,
             testMode: testModeEnabled,
           });
           console.log('[sessions] saved print status', { printStatus, printCopiesCompleted, printCopiesRequested, testMode: testModeEnabled });
@@ -2233,6 +2419,7 @@ export default function PrintScreen({
               .then(async (result) => {
                 softcopyLog = result || { status: 'idle' };
                 const savedPhotoFile = getSavedPhotoFile(softcopyArtifactRef.current?.localSave?.savedFiles);
+                const localSoftcopies = getLocalSoftcopiesFromSavedFiles(softcopyArtifactRef.current?.localSave?.savedFiles);
                 await window.adminApi.updateSessionSoftcopy(loggedSessionId, {
                   cameraOrientation: normalizedCameraOrientation,
                   softcopySessionToken: softcopyLog.sessionToken || null,
@@ -2243,6 +2430,7 @@ export default function PrintScreen({
                   softcopyStatus: softcopyLog.status || null,
                   finalPrintPath: savedPhotoFile?.path || null,
                   printImagePath: savedPhotoFile?.path || null,
+                  localSoftcopies,
                 });
               })
               .catch(async (softcopyErr) => {
@@ -2427,9 +2615,15 @@ export default function PrintScreen({
                         });
                       }}
                       onError={(event) => {
-                        console.error('[FINAL PREVIEW PNG LOAD FAILED]', {
+                        console.error('[PNG PREVIEW ERROR]', {
+                          sessionId: sessionStartRef?.current ? `session-${sessionStartRef.current}` : null,
+                          sourceType: 'object-url',
                           currentSrc: event.currentTarget?.currentSrc,
                           srcLength: finalPreviewPngUrl?.length || 0,
+                          objectUrlAvailable: Boolean(finalPreviewObjectUrlRef.current),
+                          finalArtworkAvailable: Boolean(finalPrintArtifactRef.current?.pngBlob),
+                          blobType: finalPrintArtifactRef.current?.pngBlob?.type || null,
+                          blobSize: finalPrintArtifactRef.current?.pngBlob?.size || 0,
                         });
                       }}
                     />

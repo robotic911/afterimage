@@ -16,6 +16,12 @@ function isSessionImageSrc(src) {
     && src.includes('base64,');
 }
 
+function shouldUseAnonymousCors(src) {
+  return /^https?:\/\//i.test(src)
+    || /^kuku-template:\/\//i.test(src)
+    || /^kuku-event:\/\//i.test(src);
+}
+
 export function loadImageCached(src, { crossOrigin = 'auto', nullable = false } = {}) {
   if (!src) return nullable ? Promise.resolve(null) : Promise.reject(new Error('Missing image source'));
   const cacheable = isCacheableImageSrc(src);
@@ -25,7 +31,7 @@ export function loadImageCached(src, { crossOrigin = 'auto', nullable = false } 
 
   const promise = new Promise((resolve, reject) => {
     const img = new Image();
-    if (crossOrigin === 'anonymous' || (crossOrigin === 'auto' && /^https?:\/\//i.test(src))) {
+    if (crossOrigin === 'anonymous' || (crossOrigin === 'auto' && shouldUseAnonymousCors(src))) {
       img.crossOrigin = 'anonymous';
     }
     img.onload = () => resolve(img);
