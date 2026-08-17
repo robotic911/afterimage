@@ -4,10 +4,35 @@
 // React app can trigger native operations without nodeIntegration.
 const { contextBridge, ipcRenderer } = require('electron');
 
+const WINDOWS_SUPABASE_PUBLIC_CONFIG = Object.freeze({
+  platform: 'win32',
+  supabaseUrl: 'https://byzeayfrbhqzsbgewaqi.supabase.co',
+  supabaseAnonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ5emVheWZyYmhxenNiZ2V3YXFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgxMzUxMzIsImV4cCI6MjA5MzcxMTEzMn0.OqD_XGuz3ShPqcv90J8mWB_WdY7vpyCK1tn2Udf01Q8',
+  storageBucket: 'softcopies',
+  edgeBaseUrl: 'https://byzeayfrbhqzsbgewaqi.functions.supabase.co',
+  softcopyPageBaseUrl: 'https://afterimageevents.vercel.app',
+});
+
+function safeKeyPrefix(value) {
+  const text = String(value || '');
+  return text ? text.slice(0, 8) : null;
+}
+
 console.log('[DIAG preload] preload loaded', {
   hasContextBridge: true,
   href: window.location.href,
 });
+
+if (process.platform === 'win32') {
+  contextBridge.exposeInMainWorld('afterimageWindowsSupabaseConfig', WINDOWS_SUPABASE_PUBLIC_CONFIG);
+  console.log('[SUPABASE CONFIG WINDOWS FALLBACK]', {
+    urlPresent: Boolean(WINDOWS_SUPABASE_PUBLIC_CONFIG.supabaseUrl),
+    anonKeyPresent: Boolean(WINDOWS_SUPABASE_PUBLIC_CONFIG.supabaseAnonKey),
+    anonKeyPrefix: safeKeyPrefix(WINDOWS_SUPABASE_PUBLIC_CONFIG.supabaseAnonKey),
+    bucket: WINDOWS_SUPABASE_PUBLIC_CONFIG.storageBucket,
+    hasSoftcopyPageBaseUrl: Boolean(WINDOWS_SUPABASE_PUBLIC_CONFIG.softcopyPageBaseUrl),
+  });
+}
 
 // ── Hardware printing ──────────────────────────────────────────────────
 contextBridge.exposeInMainWorld('printApi', {
