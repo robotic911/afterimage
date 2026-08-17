@@ -12,6 +12,7 @@ console.log('[DIAG preload] preload loaded', {
 // ── Hardware printing ──────────────────────────────────────────────────
 contextBridge.exposeInMainWorld('printApi', {
   platform: process.platform,
+  isPackaged: !process.defaultApp,
   canOpenPrintCenter: process.platform === 'darwin',
   /**
    * Send a pre-composed photobooth strip (JPEG/PNG data URL) to the main
@@ -60,6 +61,8 @@ contextBridge.exposeInMainWorld('softcopyApi', {
     });
     return ipcRenderer.invoke('softcopy-local:save-session-media', payload);
   },
+  readSavedMediaFile: (payload) =>
+    ipcRenderer.invoke('softcopy-local:read-saved-media-file', payload),
 });
 
 contextBridge.exposeInMainWorld('keychainApi', {
@@ -93,6 +96,7 @@ const onTodayMonitorSessionsUpdated = (cb) => {
 };
 
 contextBridge.exposeInMainWorld('diagApi', {
+  logEvent: (payload) => ipcRenderer.invoke('diag:log-event', payload),
   writeDownloadsTextFile: () => ipcRenderer.invoke('diag:write-downloads-text-file'),
   writeDownloadsPngFile: (payload) => {
     console.log('[DIAG STEP 2 preload] writeDownloadsPngFile called', {

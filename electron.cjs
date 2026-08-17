@@ -15,6 +15,7 @@ const {
 
 const APP_ID = 'com.kennethpatino.kukuphotobooth';
 const SOFTCOPY_SAVE_CHANNEL = 'softcopy-local:save-session-media';
+const SOFTCOPY_READ_CHANNEL = 'softcopy-local:read-saved-media-file';
 const KEYCHAIN_SAVE_CHANNEL = 'keychain:save-4x6-to-downloads';
 const mainProcessStartedAt = Date.now();
 let localSoftcopyIpcRegistered = false;
@@ -4469,6 +4470,95 @@ function verifyWrittenFile(filePath) {
   return { exists, sizeBytes };
 }
 
+function isPathInsideDirectory(parentDir, childPath) {
+  const parent = path.resolve(parentDir);
+  const child = path.resolve(childPath);
+  const relative = path.relative(parent, child);
+  return relative && !relative.startsWith('..') && !path.isAbsolute(relative);
+}
+
+function getMimeTypeForSavedSoftcopy(kind, filename) {
+  const lowerName = String(filename || '').toLowerCase();
+  if (kind === 'photo' && isLocalPhotoFilename(lowerName)) return 'image/png';
+  if (kind === 'gif' && isLocalGifFilename(lowerName)) return 'image/gif';
+  if (kind === 'video' && isLocalVideoFilename(lowerName)) {
+    if (lowerName.endsWith('.mp4')) return 'video/mp4';
+    if (lowerName.endsWith('.mov')) return 'video/quicktime';
+    return 'video/webm';
+  }
+  return null;
+}
+
+async function handleReadSavedSoftcopyMediaFile(_event, payload = {}) {
+  const downloadsDir = app.getPath('downloads');
+  const requestedPath = typeof payload.path === 'string' ? payload.path : '';
+  const requestedKind = typeof payload.kind === 'string' ? payload.kind : '';
+  const safeKind = ['photo', 'gif', 'video'].includes(requestedKind) ? requestedKind : '';
+  const targetPath = path.resolve(requestedPath);
+  const filename = path.basename(targetPath);
+  try {
+    if (!safeKind) {
+      throw new Error('invalid saved media kind');
+    }
+    if (!requestedPath || !isPathInsideDirectory(downloadsDir, targetPath)) {
+      throw new Error('saved media path is outside Downloads');
+    }
+    const mimeType = getMimeTypeForSavedSoftcopy(safeKind, filename);
+    if (!mimeType) {
+      throw new Error('saved media filename does not match its kind');
+    }
+    const buffer = await fsp.readFile(targetPath);
+    if (!buffer.length) {
+      throw new Error('saved media file is empty');
+    }
+    const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+    console.log('[QR DEBUG] read saved media for retry', {
+      kind: safeKind,
+      filename,
+      path: targetPath,
+      sizeBytes: buffer.length,
+      mimeType,
+    });
+    await writeDiagnosticEvent('QR read saved media for retry', {
+      kind: safeKind,
+      filename,
+      path: targetPath,
+      sizeBytes: buffer.length,
+      mimeType,
+    });
+    return {
+      ok: true,
+      kind: safeKind,
+      filename,
+      path: targetPath,
+      sizeBytes: buffer.length,
+      mimeType,
+      arrayBuffer,
+    };
+  } catch (error) {
+    const message = error?.message || String(error);
+    console.warn('[QR DEBUG] read saved media failed', {
+      kind: requestedKind || null,
+      filename,
+      path: requestedPath || null,
+      error: message,
+    });
+    await writeDiagnosticEvent('QR read saved media failed', {
+      kind: requestedKind || null,
+      filename,
+      path: requestedPath || null,
+      error: message,
+    });
+    return {
+      ok: false,
+      kind: requestedKind || null,
+      filename,
+      path: requestedPath || null,
+      error: message,
+    };
+  }
+}
+
 async function handleWriteDownloadsTextFile() {
   console.log('[DIAG main] diag:write-downloads-text-file handler called');
   const downloadsDir = app.getPath('downloads');
@@ -5017,6 +5107,8 @@ function registerLocalSoftcopyIpc() {
 
   ipcMain.removeHandler(SOFTCOPY_SAVE_CHANNEL);
   ipcMain.handle(SOFTCOPY_SAVE_CHANNEL, handleSaveSessionMedia);
+  ipcMain.removeHandler(SOFTCOPY_READ_CHANNEL);
+  ipcMain.handle(SOFTCOPY_READ_CHANNEL, handleReadSavedSoftcopyMediaFile);
   ipcMain.removeHandler(KEYCHAIN_SAVE_CHANNEL);
   ipcMain.handle(KEYCHAIN_SAVE_CHANNEL, handleSaveKeychain4x6);
   localSoftcopyIpcRegistered = true;
@@ -5038,6 +5130,14 @@ ipcMain.removeHandler('diag:write-downloads-png-file');
 ipcMain.handle('diag:write-downloads-png-file', handleWriteDownloadsPngFile);
 console.log('[DIAG main] diag:write-downloads-png-file handler registered', {
   preloadPath: path.join(__dirname, 'preload.cjs'),
+});
+ipcMain.removeHandler('diag:log-event');
+ipcMain.handle('diag:log-event', async (_event, payload = {}) => {
+  const type = typeof payload.type === 'string'
+    ? payload.type.slice(0, 120)
+    : 'renderer-diagnostic';
+  await writeDiagnosticEvent(type, payload.details || {});
+  return { ok: true };
 });
 
 ipcMain.handle('print-strip', async (event, payload = {}) => {

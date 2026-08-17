@@ -1,4 +1,9 @@
-import { supabase, SOFTCOPY_BUCKET, SOFTCOPY_PAGE_BASE_URL } from './supabaseClient';
+import {
+  supabase,
+  SOFTCOPY_BUCKET,
+  SOFTCOPY_PAGE_BASE_URL,
+  SUPABASE_CLIENT_DIAGNOSTICS,
+} from './supabaseClient';
 import {
   MAX_RECOMMENDED_GIF_BYTES,
   MAX_RECOMMENDED_GIF_MB,
@@ -11,6 +16,15 @@ import {
 export const SOFTCOPY_LINK_EXPIRES_IN = 6 * 60 * 60;
 const SOFTCOPY_LINK_EXPIRES_IN_MS = SOFTCOPY_LINK_EXPIRES_IN * 1000;
 const IS_DEV = import.meta.env.DEV;
+
+function getRendererRuntimeDiagnostics(extra = {}) {
+  return {
+    platform: globalThis.window?.printApi?.platform || globalThis.navigator?.platform || 'unknown',
+    isPackaged: globalThis.window?.printApi?.isPackaged ?? null,
+    userAgent: globalThis.navigator?.userAgent || null,
+    ...extra,
+  };
+}
 
 function compactValue(value) {
   if (value === undefined) return null;
@@ -105,6 +119,55 @@ function logSoftcopyDiagnostic(label, diagnostic) {
   console.error(label, sanitizeDiagnosticForConsole(diagnostic));
 }
 
+function emitQrDiagnostic(label, diagnostic, level = 'log') {
+  const payload = getRendererRuntimeDiagnostics(diagnostic);
+  const logger = console[level] || console.log;
+  logger.call(console, label, payload);
+  try {
+    const logPromise = globalThis.window?.diagApi?.logEvent?.({
+      type: label,
+      details: payload,
+    });
+    if (logPromise?.catch) logPromise.catch(() => {});
+  } catch {
+    // Diagnostics must never interrupt the customer flow.
+  }
+}
+
+function isExpectedNoSideEffectRpcError(error) {
+  const message = String(error?.message || '');
+  return error?.code === '22023' && /missing session token/i.test(message);
+}
+
+function describeBlob(blob, fallbackMimeType = '') {
+  return {
+    available: Boolean(blob),
+    size: blob?.size || 0,
+    mimeType: blob?.type || fallbackMimeType || '',
+  };
+}
+
+function getUploadMediaType(fileLabel, contentType = '') {
+  if (fileLabel === 'photo') return contentType === 'image/jpeg' ? 'jpg' : 'png';
+  if (fileLabel === 'gif') return 'gif';
+  if (fileLabel === 'video') return 'video';
+  return contentType || 'media';
+}
+
+function getSupabaseConfigDiagnostics() {
+  return {
+    stage1SupabaseClientInitialized: SUPABASE_CLIENT_DIAGNOSTICS.clientInitialized,
+    stage2SupabaseUrlExists: SUPABASE_CLIENT_DIAGNOSTICS.hasSupabaseUrl,
+    stage3SupabaseAnonKeyExists: SUPABASE_CLIENT_DIAGNOSTICS.hasSupabaseAnonKey,
+    anonKeyPresent: SUPABASE_CLIENT_DIAGNOSTICS.anonKeyPresent,
+    anonKeyPrefix: SUPABASE_CLIENT_DIAGNOSTICS.anonKeyPrefix,
+    stage4BucketName: SUPABASE_CLIENT_DIAGNOSTICS.bucket,
+    bucket: SOFTCOPY_BUCKET,
+    hasSoftcopyPageBaseUrl: SUPABASE_CLIENT_DIAGNOSTICS.hasSoftcopyPageBaseUrl,
+    softcopyPageBaseUrl: SUPABASE_CLIENT_DIAGNOSTICS.softcopyPageBaseUrl,
+  };
+}
+
 function timeStart(label) {
   if (IS_DEV) console.time(label);
 }
@@ -132,9 +195,16 @@ export function createSoftcopySessionToken() {
   return `session-${Date.now()}-${random}`;
 }
 
-function assertSupabaseReady() {
+function assertSupabaseReady(step = 'supabase_client') {
   if (!supabase) {
-    throw new Error('Supabase is not configured');
+    const diagnostic = {
+      step,
+      stage: 'stage_1_supabase_client_initialized',
+      ...getSupabaseConfigDiagnostics(),
+      message: 'Supabase client is not configured',
+    };
+    emitQrDiagnostic('[QR CONFIG FAILED]', diagnostic, 'error');
+    throw createDiagnosticError('Supabase is not configured', diagnostic);
   }
 }
 
@@ -148,9 +218,19 @@ export async function uploadBlobToStorage(
     fileLabel = null,
   } = {},
 ) {
-  assertSupabaseReady();
+  assertSupabaseReady('storage_upload');
 
   const bucket = SOFTCOPY_BUCKET;
+  const uploadContext = {
+    mediaType: getUploadMediaType(fileLabel, contentType),
+    bucket,
+    path: filePath,
+    fileLabel,
+    sessionToken,
+    contentType,
+    size: blob?.size || 0,
+    mimeType: blob?.type || contentType || '',
+  };
   console.log('[softcopy] upload attempt', {
     mediaType: contentType,
     bucket,
@@ -161,14 +241,42 @@ export async function uploadBlobToStorage(
     size: blob?.size || 0,
   });
 
-  const uploadRes = await supabase.storage
-    .from(SOFTCOPY_BUCKET)
-    .upload(filePath, blob, {
-      contentType,
-      // Session-scoped paths are safe to overwrite on retry so a failed
-      // upload can reuse the same blobs without creating duplicates.
-      upsert: true,
-    });
+  emitQrDiagnostic('[QR UPLOAD START]', {
+    step: 'storage_upload',
+    stage: fileLabel === 'photo'
+      ? 'stage_5_png_upload_attempted'
+      : fileLabel === 'gif'
+        ? 'stage_6_gif_upload_attempted'
+        : fileLabel === 'video'
+          ? 'stage_7_video_upload_attempted'
+          : 'stage_storage_upload_attempted',
+    ...uploadContext,
+  });
+
+  let uploadRes;
+  try {
+    uploadRes = await supabase.storage
+      .from(SOFTCOPY_BUCKET)
+      .upload(filePath, blob, {
+        contentType,
+        // Session-scoped paths are safe to overwrite on retry so a failed
+        // upload can reuse the same blobs without creating duplicates.
+        upsert: true,
+      });
+  } catch (error) {
+    const diagnostic = {
+      step: 'storage_upload',
+      stage: 'storage_upload_exception',
+      ...uploadContext,
+      error: describeSupabaseError(error),
+      code: error?.code || error?.error || null,
+      message: error?.message || String(error),
+      httpStatus: error?.status || error?.statusCode || null,
+      stack: error?.stack || null,
+    };
+    emitQrDiagnostic('[QR UPLOAD FAILED]', diagnostic, 'error');
+    throw createDiagnosticError(`Supabase Storage upload failed for ${fileLabel || filePath}: ${diagnostic.message}`, diagnostic, error);
+  }
 
   const { error } = uploadRes;
   const { data: publicData } = resolvePublicUrl
@@ -191,21 +299,33 @@ export async function uploadBlobToStorage(
   if (error) {
     const diagnostic = {
       step: 'storage_upload',
+      stage: 'storage_upload_response_error',
       bucket,
       uploadPath: filePath,
+      path: filePath,
       fileLabel,
       sessionToken,
       contentType,
+      mimeType: blob?.type || contentType || '',
       sizeBytes: blob?.size || 0,
       error: describeSupabaseError(error),
       code: error.code || error.error || null,
       message: error.message || String(error),
       httpStatus: error.status || error.statusCode || null,
+      response: compactValue(uploadRes),
       stack: error.stack || null,
     };
     logSoftcopyDiagnostic('[softcopy-diagnostic] storage upload failed', diagnostic);
+    emitQrDiagnostic('[QR UPLOAD FAILED]', diagnostic, 'error');
     throw createDiagnosticError(`Supabase Storage upload failed for ${fileLabel || filePath}: ${diagnostic.message}`, diagnostic, error);
   }
+
+  emitQrDiagnostic('[QR UPLOAD OK]', {
+    step: 'storage_upload',
+    stage: 'storage_upload_success',
+    ...uploadContext,
+    response: compactValue(uploadRes),
+  });
 
   return {
     uploadOk: true,
@@ -238,32 +358,89 @@ export async function createSoftcopySession({
   gifPath,
   videoPath = null,
 }) {
-  assertSupabaseReady();
+  assertSupabaseReady('create_softcopy_session');
 
-  const { data, error } = await supabase
-    .rpc('create_softcopy_session', {
-      p_session_token: sessionToken,
-      p_photo_path: photoPath,
-      p_gif_path: gifPath,
-      p_video_path: videoPath,
-    })
-    .single();
+  const rpcPayload = {
+    p_session_token: sessionToken,
+    p_photo_path: photoPath,
+    p_gif_path: gifPath,
+    p_video_path: videoPath,
+  };
+  emitQrDiagnostic('[QR SESSION CREATE START]', {
+    step: 'create_softcopy_session',
+    stage: 'stage_8_database_rpc_session_create_attempted',
+    rpcFunctionName: 'create_softcopy_session',
+    payloadKeys: Object.keys(rpcPayload),
+    sessionToken,
+    uploadedFilePaths: {
+      photoPath,
+      gifPath,
+      videoPath,
+    },
+  });
 
-  if (error) {
+  let rpcResult;
+  try {
+    rpcResult = await supabase
+      .rpc('create_softcopy_session', rpcPayload)
+      .single();
+  } catch (error) {
     const diagnostic = {
       step: 'create_softcopy_session',
+      stage: 'create_softcopy_session_exception',
       bucket: SOFTCOPY_BUCKET,
+      rpcFunctionName: 'create_softcopy_session',
+      payloadKeys: Object.keys(rpcPayload),
       sessionToken,
       photoPath,
       gifPath,
       videoPath,
+      uploadedFilePaths: {
+        photoPath,
+        gifPath,
+        videoPath,
+      },
+      error: describeSupabaseError(error),
+      code: error?.code || error?.error || null,
+      message: error?.message || String(error),
+      httpStatus: error?.status || error?.statusCode || null,
+      details: compactValue(error?.details || null),
+      hint: compactValue(error?.hint || null),
+      stack: error?.stack || null,
+    };
+    emitQrDiagnostic('[QR SESSION CREATE FAILED]', diagnostic, 'error');
+    throw createDiagnosticError(`Supabase session record creation failed: ${diagnostic.message}`, diagnostic, error);
+  }
+
+  const { data, error } = rpcResult;
+
+  if (error) {
+    const diagnostic = {
+      step: 'create_softcopy_session',
+      stage: 'create_softcopy_session_response_error',
+      bucket: SOFTCOPY_BUCKET,
+      rpcFunctionName: 'create_softcopy_session',
+      payloadKeys: Object.keys(rpcPayload),
+      sessionToken,
+      photoPath,
+      gifPath,
+      videoPath,
+      uploadedFilePaths: {
+        photoPath,
+        gifPath,
+        videoPath,
+      },
       error: describeSupabaseError(error),
       code: error.code || error.error || null,
       message: error.message || String(error),
       httpStatus: error.status || error.statusCode || null,
+      details: compactValue(error.details || null),
+      hint: compactValue(error.hint || null),
+      response: compactValue(rpcResult),
       stack: error.stack || null,
     };
     logSoftcopyDiagnostic('[softcopy-diagnostic] session RPC failed', diagnostic);
+    emitQrDiagnostic('[QR SESSION CREATE FAILED]', diagnostic, 'error');
     throw createDiagnosticError(`Supabase session record creation failed: ${diagnostic.message}`, diagnostic, error);
   }
 
@@ -286,6 +463,21 @@ export async function createSoftcopySession({
     createdAt,
     expirationSource: 'supabase server uploaded_at + 6 hours',
   });
+  emitQrDiagnostic('[QR SESSION CREATE OK]', {
+    step: 'create_softcopy_session',
+    stage: 'stage_8_database_rpc_session_created',
+    rpcFunctionName: 'create_softcopy_session',
+    sessionToken,
+    uploadedFilePaths: {
+      photoPath,
+      gifPath,
+      videoPath,
+    },
+    resultKeys: data && typeof data === 'object' ? Object.keys(data) : [],
+    expiresAt,
+    uploadedAt,
+    createdAt,
+  });
 
   return {
     sessionToken,
@@ -296,16 +488,56 @@ export async function createSoftcopySession({
 }
 
 export function buildSoftcopyPageUrl(sessionToken) {
-  assertSupabaseReady();
+  assertSupabaseReady('build_softcopy_page_url');
   if (!SOFTCOPY_PAGE_BASE_URL) {
-    throw new Error('VITE_SOFTCOPY_PAGE_BASE_URL is not configured');
+    const diagnostic = {
+      step: 'build_softcopy_page_url',
+      stage: 'stage_9_softcopy_page_url_failed',
+      sessionToken,
+      generatedUrl: null,
+      urlEmpty: true,
+      urlValid: false,
+      message: 'VITE_SOFTCOPY_PAGE_BASE_URL is not configured',
+      ...getSupabaseConfigDiagnostics(),
+    };
+    emitQrDiagnostic('[QR URL FAILED]', diagnostic, 'error');
+    throw createDiagnosticError('VITE_SOFTCOPY_PAGE_BASE_URL is not configured', diagnostic);
   }
   const qrUrl = `${SOFTCOPY_PAGE_BASE_URL.replace(/\/+$/, '')}?token=${encodeURIComponent(sessionToken)}`;
+  try {
+    const parsed = new URL(qrUrl);
+    emitQrDiagnostic('[QR URL GENERATED]', {
+      step: 'build_softcopy_page_url',
+      stage: 'stage_9_softcopy_page_url_generated',
+      sessionToken,
+      generatedUrl: qrUrl,
+      urlEmpty: qrUrl.length === 0,
+      urlValid: true,
+      host: parsed.host,
+      qrLibraryReceivesValue: true,
+    });
+  } catch (error) {
+    const diagnostic = {
+      step: 'build_softcopy_page_url',
+      stage: 'stage_9_softcopy_page_url_failed',
+      sessionToken,
+      generatedUrl: qrUrl,
+      urlEmpty: qrUrl.length === 0,
+      urlValid: false,
+      qrLibraryReceivesValue: false,
+      error: describeSupabaseError(error),
+      message: error?.message || String(error),
+    };
+    emitQrDiagnostic('[QR URL FAILED]', diagnostic, 'error');
+    throw createDiagnosticError(`Softcopy QR URL is invalid: ${diagnostic.message}`, diagnostic, error);
+  }
   return qrUrl;
 }
 
 export async function uploadSoftcopyAssets({
+  sessionId = null,
   photoDataUrl = null,
+  photoBlob: providedPhotoBlob = null,
   gifBlob = null,
   videoBlob = null,
   videoMimeType = '',
@@ -319,7 +551,7 @@ export async function uploadSoftcopyAssets({
     video: true,
   },
 }) {
-  assertSupabaseReady();
+  assertSupabaseReady('upload_softcopy_assets');
   timeStart('[softcopy] upload total');
   timeStart('[softcopy] total upload');
   let uploadTotalEnded = false;
@@ -335,7 +567,29 @@ export async function uploadSoftcopyAssets({
   const gifEnabled = enabled?.gif !== false;
   const videoEnabled = enabled?.video !== false;
   const photoExtension = photoContentType === 'image/png' ? 'png' : 'jpg';
-  const photoBlob = photoEnabled && photoDataUrl ? dataUrlToBlob(photoDataUrl) : null;
+  let photoBlob = null;
+  if (photoEnabled) {
+    if (providedPhotoBlob) {
+      photoBlob = providedPhotoBlob;
+    } else if (photoDataUrl) {
+      try {
+        photoBlob = dataUrlToBlob(photoDataUrl);
+      } catch (error) {
+        const diagnostic = {
+          step: 'prepare_photo_upload_blob',
+          stage: 'stage_5_png_upload_failed_before_storage',
+          sessionId,
+          sessionToken: resolvedSessionToken,
+          hasPhotoDataUrl: Boolean(photoDataUrl),
+          photoDataUrlLength: photoDataUrl?.length || 0,
+          error: describeSupabaseError(error),
+          message: error?.message || String(error),
+        };
+        emitQrDiagnostic('[QR UPLOAD FAILED]', diagnostic, 'error');
+        throw createDiagnosticError(`PNG upload preparation failed: ${diagnostic.message}`, diagnostic, error);
+      }
+    }
+  }
 
   const photoPath = photoBlob ? `sessions/${resolvedSessionToken}/photo.${photoExtension}` : null;
   const gifPath = gifEnabled && gifBlob ? `sessions/${resolvedSessionToken}/animation.gif` : null;
@@ -350,7 +604,47 @@ export async function uploadSoftcopyAssets({
   const uploadErrors = [];
   const warnings = [];
 
+  emitQrDiagnostic('[QR DEBUG] start', {
+    step: 'upload_softcopy_assets',
+    stage: 'qr_pipeline_start',
+    sessionId,
+    sessionToken: resolvedSessionToken,
+    ...getSupabaseConfigDiagnostics(),
+    media: {
+      png: describeBlob(photoBlob, photoContentType),
+      gif: describeBlob(gifBlob, 'image/gif'),
+      video: describeBlob(videoBlob, resolvedVideoMimeType || 'video/webm'),
+    },
+    uploadPaths: {
+      photoPath,
+      gifPath,
+      videoPath,
+    },
+    enabled: {
+      photo: photoEnabled,
+      gif: gifEnabled,
+      video: videoEnabled,
+    },
+  });
+
   if (!photoPath && !gifPath && !videoPath) {
+    emitQrDiagnostic('[QR UPLOAD FAILED]', {
+      step: 'upload_softcopy_assets',
+      stage: 'no_enabled_media_available_for_upload',
+      sessionId,
+      sessionToken: resolvedSessionToken,
+      media: {
+        png: describeBlob(photoBlob, photoContentType),
+        gif: describeBlob(gifBlob, 'image/gif'),
+        video: describeBlob(videoBlob, resolvedVideoMimeType || 'video/webm'),
+      },
+      enabled: {
+        photo: photoEnabled,
+        gif: gifEnabled,
+        video: videoEnabled,
+      },
+      message: 'No softcopy media enabled',
+    }, 'error');
     endUploadTotal();
     throw new Error('No softcopy media enabled');
   }
@@ -488,6 +782,24 @@ export async function uploadSoftcopyAssets({
   }
 
   try {
+    const qrUrl = buildSoftcopyPageUrl(resolvedSessionToken);
+    emitQrDiagnostic('[QR DEBUG] complete', {
+      step: 'upload_softcopy_assets',
+      stage: 'stage_10_qr_value_generated',
+      sessionId,
+      sessionToken: resolvedSessionToken,
+      bucket: SOFTCOPY_BUCKET,
+      uploadedFilePaths: {
+        photoPath: successfulOutputs.photoPath,
+        gifPath: successfulOutputs.gifPath,
+        videoPath: successfulOutputs.videoPath,
+      },
+      finalQrUrl: qrUrl,
+      qrValueGenerated: Boolean(qrUrl),
+      qrLibraryReceivesValue: Boolean(qrUrl),
+      warnings,
+      partial: uploadErrors.length > 0,
+    });
     return {
       sessionToken: resolvedSessionToken,
       photoPath: successfulOutputs.photoPath,
@@ -498,11 +810,155 @@ export async function uploadSoftcopyAssets({
       uploadedAt: session.uploadedAt,
       createdAt: session.createdAt,
       bucket: SOFTCOPY_BUCKET,
-      qrUrl: buildSoftcopyPageUrl(resolvedSessionToken),
+      qrUrl,
       warnings,
       partial: uploadErrors.length > 0,
     };
   } finally {
     endUploadTotal();
+  }
+}
+
+export async function runSoftcopyQrDiagnosticProbe({
+  sessionToken = `diagnostic-${Date.now()}`,
+  includeRpc = true,
+} = {}) {
+  assertSupabaseReady('qr_diagnostic_probe');
+  const bucket = SOFTCOPY_BUCKET;
+  const path = `sessions/${sessionToken}/ping.txt`;
+  const stages = [];
+  let uploaded = false;
+  let result = {
+    ok: true,
+    failedStage: null,
+    stages,
+  };
+
+  emitQrDiagnostic('[QR DIAGNOSTIC START]', {
+    step: 'qr_diagnostic_probe',
+    sessionToken,
+    ...getSupabaseConfigDiagnostics(),
+    uploadPath: path,
+  });
+
+  try {
+    const blob = new Blob([`afterimage qr diagnostic ${new Date().toISOString()}\n`], {
+      type: 'text/plain',
+    });
+    const upload = await supabase.storage.from(bucket).upload(path, blob, {
+      contentType: 'text/plain',
+      upsert: false,
+    });
+    uploaded = !upload.error;
+    const uploadStage = {
+      step: 'diagnostic_storage_upload',
+      bucket,
+      path,
+      size: blob.size,
+      mimeType: blob.type,
+      ok: !upload.error,
+      error: describeSupabaseError(upload.error),
+      response: compactValue(upload),
+    };
+    stages.push(uploadStage);
+    emitQrDiagnostic(upload.error ? '[QR UPLOAD FAILED]' : '[QR UPLOAD OK]', uploadStage, upload.error ? 'error' : 'log');
+    if (upload.error) {
+      result = {
+        ok: false,
+        failedStage: 'diagnostic_storage_upload',
+        stages,
+      };
+      return result;
+    }
+
+    if (includeRpc) {
+      const rpc = await supabase.rpc('create_softcopy_session', {
+        p_session_token: '',
+        p_photo_path: null,
+        p_gif_path: null,
+        p_video_path: null,
+      });
+      const rpcReachable = !rpc.error || isExpectedNoSideEffectRpcError(rpc.error);
+      const rpcStage = {
+        step: 'diagnostic_rpc_reachability',
+        rpcFunctionName: 'create_softcopy_session',
+        payloadKeys: ['p_session_token', 'p_photo_path', 'p_gif_path', 'p_video_path'],
+        ok: rpcReachable,
+        noSideEffectInputError: isExpectedNoSideEffectRpcError(rpc.error),
+        error: describeSupabaseError(rpc.error),
+        responseDataPresent: Boolean(rpc.data),
+      };
+      stages.push(rpcStage);
+      emitQrDiagnostic(rpcReachable ? '[QR SESSION CREATE OK]' : '[QR SESSION CREATE FAILED]', rpcStage, rpcReachable ? 'log' : 'error');
+      if (!rpcReachable) {
+        result = {
+          ok: false,
+          failedStage: 'diagnostic_rpc_reachability',
+          stages,
+        };
+        return result;
+      }
+    }
+
+    result = {
+      ok: true,
+      failedStage: null,
+      stages,
+    };
+    return result;
+  } catch (error) {
+    const failureStage = {
+      step: 'qr_diagnostic_probe',
+      bucket,
+      path,
+      ok: false,
+      error: describeSupabaseError(error),
+      message: error?.message || String(error),
+    };
+    stages.push(failureStage);
+    emitQrDiagnostic('[QR DIAGNOSTIC FAILED]', failureStage, 'error');
+    result = {
+      ok: false,
+      failedStage: 'qr_diagnostic_probe',
+      stages,
+      error: failureStage.message,
+    };
+    return result;
+  } finally {
+    if (uploaded) {
+      try {
+        const removed = await supabase.storage.from(bucket).remove([path]);
+        const cleanupStage = {
+          step: 'diagnostic_storage_cleanup',
+          bucket,
+          path,
+          ok: !removed.error,
+          error: describeSupabaseError(removed.error),
+          response: compactValue(removed),
+        };
+        stages.push(cleanupStage);
+        emitQrDiagnostic(removed.error ? '[QR DIAGNOSTIC CLEANUP FAILED]' : '[QR DIAGNOSTIC CLEANUP OK]', cleanupStage, removed.error ? 'error' : 'log');
+        if (removed.error && result.ok) {
+          result.ok = false;
+          result.failedStage = 'diagnostic_storage_cleanup';
+        }
+      } catch (error) {
+        const cleanupStage = {
+          step: 'diagnostic_storage_cleanup',
+          bucket,
+          path,
+          ok: false,
+          error: describeSupabaseError(error),
+          message: error?.message || String(error),
+        };
+        stages.push(cleanupStage);
+        emitQrDiagnostic('[QR DIAGNOSTIC CLEANUP FAILED]', cleanupStage, 'error');
+        if (result.ok) {
+          result.ok = false;
+          result.failedStage = 'diagnostic_storage_cleanup';
+          result.error = cleanupStage.message;
+        }
+      }
+    }
   }
 }

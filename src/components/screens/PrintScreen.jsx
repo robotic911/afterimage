@@ -16,6 +16,7 @@ import { resolveTemplateRenderAssets } from '../../lib/templateRenderAssets';
 import { DEFAULT_PRINTER_PROFILE_ID, DEFAULT_SAFE_MARGIN_OVERRIDE } from '../../constants/printers';
 import {
   createSoftcopySessionToken,
+  runSoftcopyQrDiagnosticProbe,
   uploadSoftcopyAssets,
 } from '../../lib/softcopyUpload';
 import { DEFAULT_SOFTCOPY_SETTINGS, resolveSoftcopySettings } from '../../constants/softcopySettings';
@@ -38,8 +39,17 @@ const PRICE_PER_COPY = 99; // PHP
 const FINAL_PRINT_STATUSES = new Set(['completed', 'failed', 'cancelled', 'partial']);
 const IS_DEV = import.meta.env.DEV;
 const RUNTIME_PLATFORM = window.printApi?.platform || 'unknown';
+const RUNTIME_IS_PACKAGED = window.printApi?.isPackaged ?? null;
 const CAN_OPEN_PRINT_CENTER = window.printApi?.canOpenPrintCenter === true;
 const SHOW_DIAGNOSTIC_UI = false;
+const SHOW_QR_DIAGNOSTIC_UI = (() => {
+  if (IS_DEV) return true;
+  try {
+    return window.localStorage?.getItem('afterimage.qrDiagnostics') === 'true';
+  } catch {
+    return false;
+  }
+})();
 const SHOW_KEYCHAIN_DEBUG_UI = false;
 const ENABLE_KEYCHAIN_AUTO_SAVE = false;
 const KEYCHAIN_AUTO_SAVE_IN_FLIGHT_KEYS = new Set();
@@ -527,6 +537,8 @@ export default function PrintScreen({
   const [finalPreviewPngStatus, setFinalPreviewPngStatus] = useState('idle');
   const [step4KeychainSaving, setStep4KeychainSaving] = useState(false);
   const [step4KeychainResult, setStep4KeychainResult] = useState(null);
+  const [qrDiagnosticRunning, setQrDiagnosticRunning] = useState(false);
+  const [qrDiagnosticResult, setQrDiagnosticResult] = useState(null);
   const finishReadyTimerRef = useRef(null);
   const sessionLockedRef = useRef(false);
   const printInFlightRef = useRef(false);
@@ -662,6 +674,8 @@ export default function PrintScreen({
       setUploadRetrying(false);
       setStep4KeychainSaving(false);
       setStep4KeychainResult(null);
+      setQrDiagnosticRunning(false);
+      setQrDiagnosticResult(null);
       if (finishReadyTimerRef.current) {
         clearTimeout(finishReadyTimerRef.current);
         finishReadyTimerRef.current = null;
@@ -1133,7 +1147,7 @@ export default function PrintScreen({
       videoExtension: canReuseCachedPayload ? cachedPayload.videoExtension || '' : '',
       enabled,
       warnings: canReuseCachedPayload ? cachedPayload.warnings || warnings : warnings,
-      canUpload: Boolean(photoDataUrl || (canReuseCachedPayload && (cachedPayload.gifBlob || cachedPayload.videoBlob))),
+      canUpload: Boolean(photoDataUrl || localPhotoBlob || (canReuseCachedPayload && (cachedPayload.gifBlob || cachedPayload.videoBlob))),
       cacheKey,
       uploadedPaths,
       localSave: canReuseCachedPayload ? cachedPayload.localSave || null : null,
@@ -1215,12 +1229,101 @@ export default function PrintScreen({
       return kind === 'photo' || (/\.png$/i.test(String(name || '')) && !/keychain-4x6/i.test(String(name || '')));
     });
 
+  const getSavedMediaFileByKind = (savedFiles = [], requestedKind) => savedFiles
+    .find(file => {
+      const name = typeof file === 'string' ? file : file?.name;
+      const kind = typeof file === 'string' ? '' : file?.kind;
+      if (requestedKind === 'photo') {
+        return kind === 'photo' || (/\.png$/i.test(String(name || '')) && !/keychain-4x6/i.test(String(name || '')));
+      }
+      if (requestedKind === 'gif') {
+        return kind === 'gif' || /\.gif$/i.test(String(name || ''));
+      }
+      if (requestedKind === 'video') {
+        return kind === 'video' || /\.(mp4|webm|mov)$/i.test(String(name || ''));
+      }
+      return false;
+    });
+
   const getSavedKeychainFile = (savedFiles = []) => savedFiles
     .find(file => {
       const name = typeof file === 'string' ? file : file?.name;
       const kind = typeof file === 'string' ? '' : file?.kind;
       return kind === 'keychain4x6' || String(name || '').includes('keychain-4x6');
     });
+
+  const hydrateUploadPayloadFromSavedMedia = async (payload) => {
+    if (!payload?.localSave?.savedFiles?.length || !window.softcopyApi?.readSavedMediaFile) {
+      return payload;
+    }
+
+    const nextPayload = { ...payload };
+    const readBlob = async (kind) => {
+      const savedFile = getSavedMediaFileByKind(payload.localSave.savedFiles, kind);
+      const filePath = savedFile?.path || savedFile?.targetPath || null;
+      if (!filePath) return null;
+      const result = await window.softcopyApi.readSavedMediaFile({
+        kind,
+        path: filePath,
+      });
+      if (!result?.ok || !result.arrayBuffer) {
+        console.warn('[QR DEBUG] saved media retry fallback failed', {
+          kind,
+          path: filePath,
+          error: result?.error || 'unknown',
+        });
+        return null;
+      }
+      const blob = new Blob([result.arrayBuffer], {
+        type: result.mimeType || savedFile?.mimeType || '',
+      });
+      console.log('[QR DEBUG] saved media retry fallback loaded', {
+        kind,
+        path: filePath,
+        size: blob.size,
+        mimeType: blob.type,
+      });
+      return {
+        blob,
+        mimeType: result.mimeType || blob.type || '',
+        filename: result.filename || savedFile?.name || null,
+      };
+    };
+
+    if (nextPayload.enabled?.photo !== false && !nextPayload.photoDataUrl && !nextPayload.localPhotoBlob) {
+      const photo = await readBlob('photo');
+      if (photo?.blob) {
+        nextPayload.localPhotoBlob = photo.blob;
+      }
+    }
+
+    if (nextPayload.enabled?.gif !== false && !nextPayload.gifBlob) {
+      const gif = await readBlob('gif');
+      if (gif?.blob) {
+        nextPayload.gifBlob = gif.blob;
+      }
+    }
+
+    if (nextPayload.enabled?.video !== false && !nextPayload.videoBlob) {
+      const video = await readBlob('video');
+      if (video?.blob) {
+        nextPayload.videoBlob = video.blob;
+        nextPayload.videoMimeType = video.mimeType || nextPayload.videoMimeType || video.blob.type || '';
+        if (!nextPayload.videoExtension && video.filename) {
+          const extension = video.filename.split('.').pop()?.toLowerCase();
+          nextPayload.videoExtension = ['mp4', 'webm', 'mov'].includes(extension) ? extension : nextPayload.videoExtension;
+        }
+      }
+    }
+
+    nextPayload.canUpload = Boolean(
+      nextPayload.photoDataUrl
+      || nextPayload.localPhotoBlob
+      || nextPayload.gifBlob
+      || nextPayload.videoBlob,
+    );
+    return nextPayload;
+  };
 
   const buildLocalMetadata = (payload, upload = {}) => {
     const savedPhotoFile = getSavedPhotoFile(payload.localSave?.savedFiles);
@@ -1670,60 +1773,81 @@ export default function PrintScreen({
   };
 
   const performSoftcopyUpload = async (payload, { isRetry = false } = {}) => {
-    if (!payload?.canUpload || !softcopySettings.qrEnabled) {
-      softcopyArtifactRef.current = payload || null;
+    let uploadPayload = payload || null;
+    try {
+      uploadPayload = await hydrateUploadPayloadFromSavedMedia(uploadPayload);
+      if (uploadPayload && uploadPayload !== payload) {
+        softcopyArtifactRef.current = uploadPayload;
+      }
+    } catch (error) {
+      console.warn('[QR DEBUG] saved media retry fallback threw', {
+        error: error?.message || String(error),
+      });
+    }
+
+    if (!uploadPayload?.canUpload || !softcopySettings.qrEnabled) {
+      softcopyArtifactRef.current = uploadPayload || null;
       softcopyLogRef.current = { status: 'disabled' };
-      setSoftcopyWarnings(payload?.warnings || []);
+      setSoftcopyWarnings(uploadPayload?.warnings || []);
       setSoftcopyState({ status: 'idle', qrUrl: null });
       return { status: 'disabled' };
     }
 
     if (isRetry) {
-      console.log('[recovery] retry upload started');
+      console.log('[recovery] retry upload started', {
+        sessionToken: uploadPayload.sessionToken,
+        canUpload: uploadPayload.canUpload,
+        hasPhotoDataUrl: Boolean(uploadPayload.photoDataUrl),
+        hasPhotoBlob: Boolean(uploadPayload.localPhotoBlob),
+        hasGifBlob: Boolean(uploadPayload.gifBlob),
+        hasVideoBlob: Boolean(uploadPayload.videoBlob),
+      });
     }
 
     if (uploadInFlightRef.current) {
       if (IS_DEV) console.log('[softcopy] duplicate upload start ignored');
-      return softcopyLogRef.current || { status: 'uploading', sessionToken: payload.sessionToken || null };
+      return softcopyLogRef.current || { status: 'uploading', sessionToken: uploadPayload.sessionToken || null };
     }
 
     uploadInFlightRef.current = true;
     setSoftcopyState({ status: 'uploading', qrUrl: null });
-    setSoftcopyWarnings(payload.warnings || []);
+    setSoftcopyWarnings(uploadPayload.warnings || []);
     try {
       const uploaded = await uploadSoftcopyAssets({
-        photoDataUrl: payload.photoDataUrl,
-        gifBlob: payload.gifBlob,
-        videoBlob: payload.videoBlob,
-        videoMimeType: payload.videoMimeType || '',
-        videoExtension: payload.videoExtension || '',
+        sessionId: sessionStartRef?.current ? `session-${sessionStartRef.current}` : null,
+        photoDataUrl: uploadPayload.photoDataUrl,
+        photoBlob: uploadPayload.localPhotoBlob || null,
+        gifBlob: uploadPayload.gifBlob,
+        videoBlob: uploadPayload.videoBlob,
+        videoMimeType: uploadPayload.videoMimeType || '',
+        videoExtension: uploadPayload.videoExtension || '',
         photoContentType: 'image/png',
-        enabled: payload.enabled,
-        sessionToken: payload.sessionToken,
-        existingPaths: payload.uploadedPaths || {},
+        enabled: uploadPayload.enabled,
+        sessionToken: uploadPayload.sessionToken,
+        existingPaths: uploadPayload.uploadedPaths || {},
       });
       if (IS_DEV) {
         console.log('[keychain] excluded from QR upload', {
-          sessionId: payload.sessionToken,
+          sessionId: uploadPayload.sessionToken,
           uploadFileNames: [
-            payload.photoDataUrl ? 'photo.png' : null,
-            payload.gifBlob ? 'animation.gif' : null,
-            payload.videoBlob ? `video.${payload.videoExtension || 'webm'}` : null,
+            (uploadPayload.photoDataUrl || uploadPayload.localPhotoBlob) ? 'photo.png' : null,
+            uploadPayload.gifBlob ? 'animation.gif' : null,
+            uploadPayload.videoBlob ? `video.${uploadPayload.videoExtension || 'webm'}` : null,
           ].filter(Boolean),
         });
       }
       const nextLog = {
         status: 'ready',
-        cameraOrientation: payload.cameraOrientation || normalizedCameraOrientation,
+        cameraOrientation: uploadPayload.cameraOrientation || normalizedCameraOrientation,
         ...uploaded,
       };
       softcopyArtifactRef.current = {
-        ...payload,
+        ...uploadPayload,
         ...uploaded,
         uploadedPaths: {
-          photoPath: uploaded.photoPath || payload.uploadedPaths?.photoPath || null,
-          gifPath: uploaded.gifPath || payload.uploadedPaths?.gifPath || null,
-          videoPath: uploaded.videoPath || payload.uploadedPaths?.videoPath || null,
+          photoPath: uploaded.photoPath || uploadPayload.uploadedPaths?.photoPath || null,
+          gifPath: uploaded.gifPath || uploadPayload.uploadedPaths?.gifPath || null,
+          videoPath: uploaded.videoPath || uploadPayload.uploadedPaths?.videoPath || null,
         },
       };
       softcopyLogRef.current = nextLog;
@@ -1731,13 +1855,13 @@ export default function PrintScreen({
         status: 'ready',
         ...uploaded,
       });
-      await updateLocalSoftcopyMetadata(payload, nextLog);
+      await updateLocalSoftcopyMetadata(uploadPayload, nextLog);
       if (IS_DEV) {
         console.log('[softcopy-upload] upload result', {
-          sessionId: payload.sessionToken,
-          cameraOrientation: payload.cameraOrientation || normalizedCameraOrientation,
+          sessionId: uploadPayload.sessionToken,
+          cameraOrientation: uploadPayload.cameraOrientation || normalizedCameraOrientation,
           uploadSucceeded: true,
-          localSaveSucceeded: payload.localSave?.ok === true,
+          localSaveSucceeded: uploadPayload.localSave?.ok === true,
         });
       }
       return nextLog;
@@ -1753,27 +1877,27 @@ export default function PrintScreen({
       console.warn('[softcopy] upload failed', {
         reason: message,
         step: 'upload_softcopy_assets',
-        enabledOutputs: payload?.enabled || {},
-        hasPhoto: Boolean(payload?.photoDataUrl),
-        hasGif: Boolean(payload?.gifBlob),
-        hasVideo: Boolean(payload?.videoBlob),
-        hasSessionToken: Boolean(payload?.sessionToken),
+        enabledOutputs: uploadPayload?.enabled || {},
+        hasPhoto: Boolean(uploadPayload?.photoDataUrl || uploadPayload?.localPhotoBlob),
+        hasGif: Boolean(uploadPayload?.gifBlob),
+        hasVideo: Boolean(uploadPayload?.videoBlob),
+        hasSessionToken: Boolean(uploadPayload?.sessionToken),
         diagnostics: diagnosticSummary,
         hasStack: Boolean(softcopyErr?.stack),
       });
       softcopyArtifactRef.current = {
-        ...payload,
+        ...uploadPayload,
         uploadedPaths: {
-          ...(payload.uploadedPaths || {}),
-          photoPath: successfulOutputs.photoPath || payload.uploadedPaths?.photoPath || null,
-          gifPath: successfulOutputs.gifPath || payload.uploadedPaths?.gifPath || null,
-          videoPath: successfulOutputs.videoPath || payload.uploadedPaths?.videoPath || null,
+          ...(uploadPayload.uploadedPaths || {}),
+          photoPath: successfulOutputs.photoPath || uploadPayload.uploadedPaths?.photoPath || null,
+          gifPath: successfulOutputs.gifPath || uploadPayload.uploadedPaths?.gifPath || null,
+          videoPath: successfulOutputs.videoPath || uploadPayload.uploadedPaths?.videoPath || null,
         },
       };
       softcopyLogRef.current = {
         status: 'error',
         error: message,
-        sessionToken: payload.sessionToken || null,
+        sessionToken: uploadPayload.sessionToken || null,
       };
       setSoftcopyState({
         status: 'error',
@@ -1783,15 +1907,15 @@ export default function PrintScreen({
       const failedResult = {
         status: 'error',
         error: message,
-        cameraOrientation: payload.cameraOrientation || normalizedCameraOrientation,
+        cameraOrientation: uploadPayload.cameraOrientation || normalizedCameraOrientation,
       };
-      await updateLocalSoftcopyMetadata(payload, failedResult);
+      await updateLocalSoftcopyMetadata(uploadPayload, failedResult);
       if (IS_DEV) {
         console.log('[softcopy-upload] upload result', {
-          sessionId: payload.sessionToken,
-          cameraOrientation: payload.cameraOrientation || normalizedCameraOrientation,
+          sessionId: uploadPayload.sessionToken,
+          cameraOrientation: uploadPayload.cameraOrientation || normalizedCameraOrientation,
           uploadSucceeded: false,
-          localSaveSucceeded: payload.localSave?.ok === true,
+          localSaveSucceeded: uploadPayload.localSave?.ok === true,
         });
       }
       return failedResult;
@@ -1962,6 +2086,72 @@ export default function PrintScreen({
       setUploadRetrying(false);
     }
   };
+
+  const handleRunQrDiagnosticProbe = useCallback(async () => {
+    if (qrDiagnosticRunning) return qrDiagnosticResult;
+    setQrDiagnosticRunning(true);
+    try {
+      const result = await runSoftcopyQrDiagnosticProbe();
+      setQrDiagnosticResult(result);
+      console.log('[QR DIAGNOSTIC RESULT]', result);
+      return result;
+    } catch (error) {
+      const result = {
+        ok: false,
+        failedStage: 'qr_diagnostic_probe',
+        error: error?.message || String(error),
+      };
+      setQrDiagnosticResult(result);
+      console.error('[QR DIAGNOSTIC RESULT]', result);
+      return result;
+    } finally {
+      setQrDiagnosticRunning(false);
+    }
+  }, [qrDiagnosticResult, qrDiagnosticRunning]);
+
+  useEffect(() => {
+    window.__afterimageRunQrDiagnostic = handleRunQrDiagnosticProbe;
+    return () => {
+      if (window.__afterimageRunQrDiagnostic === handleRunQrDiagnosticProbe) {
+        delete window.__afterimageRunQrDiagnostic;
+      }
+    };
+  }, [handleRunQrDiagnosticProbe]);
+
+  useEffect(() => {
+    if (softcopy?.status !== 'ready') return;
+    let urlValid = false;
+    let qrRenderError = null;
+    try {
+      if (softcopy.qrUrl) {
+        new URL(softcopy.qrUrl);
+        urlValid = true;
+      }
+    } catch (error) {
+      qrRenderError = error?.message || String(error);
+    }
+    const diagnostic = {
+      stage: urlValid ? 'stage_11_qr_displayed_in_ui' : 'stage_11_qr_display_failed',
+      platform: RUNTIME_PLATFORM,
+      isPackaged: RUNTIME_IS_PACKAGED,
+      sessionToken: softcopy.sessionToken || softcopyArtifactRef.current?.sessionToken || null,
+      generatedUrl: softcopy.qrUrl || null,
+      urlEmpty: !softcopy.qrUrl,
+      urlValid,
+      qrLibraryReceivesValue: Boolean(softcopy.qrUrl),
+      qrRenderError,
+    };
+    const label = urlValid ? '[QR DEBUG] displayed' : '[QR URL FAILED]';
+    if (urlValid) {
+      console.log(label, diagnostic);
+    } else {
+      console.error(label, diagnostic);
+    }
+    window.diagApi?.logEvent?.({
+      type: label,
+      details: diagnostic,
+    })?.catch?.(() => {});
+  }, [softcopy?.qrUrl, softcopy?.sessionToken, softcopy?.status]);
 
   const handleEndSession = () => {
     onPrint?.();
@@ -2766,6 +2956,23 @@ export default function PrintScreen({
                         </button>
                       )}
                     </div>
+                    {SHOW_QR_DIAGNOSTIC_UI && (
+                      <div className="softcopy-error-actions">
+                        <button
+                          type="button"
+                          className="btn-ghost"
+                          onClick={handleRunQrDiagnosticProbe}
+                          disabled={qrDiagnosticRunning}
+                        >
+                          {qrDiagnosticRunning ? 'Running QR Probe...' : 'Run QR Probe'}
+                        </button>
+                        {qrDiagnosticResult && (
+                          <p>
+                            QR probe {qrDiagnosticResult.ok ? 'passed' : `failed at ${qrDiagnosticResult.failedStage || 'unknown'}`}.
+                          </p>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </section>
