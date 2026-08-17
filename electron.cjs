@@ -3551,6 +3551,7 @@ ipcMain.handle('app:quit', async () => {
 // Print pipeline
 // ─────────────────────────────────────────────────────────────────────────
 const MICRONS_PER_INCH = 25400;
+const MICRONS_PER_MM = 1000;
 const MIN_PRINT_COPIES = 1;
 const MAX_PRINT_COPIES = 3;
 const DEFAULT_PRINT_COPIES = 1;
@@ -3564,6 +3565,30 @@ let printerDiscoveryCache = {
   expiresAt: 0,
   printers: null,
 };
+const DEFAULT_ELECTRON_PRINT_PAGE = Object.freeze({
+  id: 'default_4x6',
+  cssWidth: '4in',
+  cssHeight: '6in',
+  widthMicrons: 4 * MICRONS_PER_INCH,
+  heightMicrons: 6 * MICRONS_PER_INCH,
+  widthMm: 101.6,
+  heightMm: 152.4,
+  imageFit: 'fill',
+  preferCSSPageSize: false,
+  windowsCompensation: null,
+});
+const WINDOWS_SELPHY_CP1500_PRINT_PAGE = Object.freeze({
+  id: 'canon_selphy_cp1500_windows_postcard',
+  cssWidth: '100mm',
+  cssHeight: '148mm',
+  widthMicrons: 100 * MICRONS_PER_MM,
+  heightMicrons: 148 * MICRONS_PER_MM,
+  widthMm: 100,
+  heightMm: 148,
+  imageFit: 'cover',
+  preferCSSPageSize: true,
+  windowsCompensation: 'Windows Canon SELPHY CP1500 postcard borderless media is 100mm x 148mm; avoid Chromium/driver fitting a true 4in x 6in page onto postcard media.',
+});
 
 function normalizePrinterStatus(status) {
   if (status == null || status === '') {
@@ -3592,6 +3617,42 @@ function normalizePrinterStatus(status) {
 function isSelphyPrinter(printer = {}) {
   const label = `${printer.name || ''} ${printer.displayName || ''} ${printer.description || ''}`.toLowerCase();
   return label.includes('canon selphy') || label.includes('selphy cp1500') || label.includes('cp1500') || label.includes('selphy');
+}
+
+function getPrintPageConfig(printer = null) {
+  if (process.platform === 'win32' && isSelphyPrinter(printer || {})) {
+    return WINDOWS_SELPHY_CP1500_PRINT_PAGE;
+  }
+  return DEFAULT_ELECTRON_PRINT_PAGE;
+}
+
+function buildPrintShell(printDocumentTitle, printPageConfig) {
+  const coverCss = printPageConfig.imageFit === 'cover'
+    ? `
+    object-fit: cover;
+    object-position: center center;`
+    : '';
+  const overflowCss = printPageConfig.imageFit === 'cover' ? ' overflow: hidden;' : '';
+  return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>${printDocumentTitle}</title>
+<style>
+  @page { size: ${printPageConfig.cssWidth} ${printPageConfig.cssHeight}; margin: 0; }
+  html, body { margin: 0; padding: 0; width: ${printPageConfig.cssWidth}; height: ${printPageConfig.cssHeight}; background: #fff;${overflowCss} }
+  img {
+    width: ${printPageConfig.cssWidth};
+    height: ${printPageConfig.cssHeight};
+    display: block;${coverCss}
+    image-rendering: -webkit-optimize-contrast;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+</style>
+</head>
+<body></body>
+</html>`;
 }
 
 function normalizePrinterInfo(printer = {}) {
@@ -3860,6 +3921,7 @@ function summarizePrinterForDiagnostics(printer = {}) {
     description: printer.description || null,
     status: printer.status ?? null,
     statusLabel: printer.statusLabel || null,
+    options: printer.options && typeof printer.options === 'object' ? compactDiagnosticValue(printer.options) : null,
     isDefault: printer.isDefault === true,
     isSelphy: printer.isSelphy === true,
     isAvailable: printer.isAvailable ?? null,
@@ -3877,6 +3939,76 @@ function sanitizePrintOptions(options = {}) {
     margins: options.margins || null,
     landscape: options.landscape === true,
     scaleFactor: options.scaleFactor || null,
+    preferCSSPageSize: options.preferCSSPageSize === true,
+  };
+}
+
+function buildPrintFitDiagnostics(printPageConfig, readiness = {}) {
+  const sourceWidth = Number(readiness?.naturalWidth) || null;
+  const sourceHeight = Number(readiness?.naturalHeight) || null;
+  const sourceAspect = sourceWidth && sourceHeight ? sourceWidth / sourceHeight : null;
+  const pageAspect = printPageConfig.widthMm / printPageConfig.heightMm;
+  let effectiveRenderedWidthMm = printPageConfig.widthMm;
+  let effectiveRenderedHeightMm = printPageConfig.heightMm;
+  let cropLeftMm = 0;
+  let cropRightMm = 0;
+  let cropTopMm = 0;
+  let cropBottomMm = 0;
+
+  if (printPageConfig.imageFit === 'cover' && sourceAspect) {
+    if (sourceAspect > pageAspect) {
+      effectiveRenderedWidthMm = printPageConfig.heightMm * sourceAspect;
+      const cropMm = Math.max(0, effectiveRenderedWidthMm - printPageConfig.widthMm) / 2;
+      cropLeftMm = cropMm;
+      cropRightMm = cropMm;
+    } else {
+      effectiveRenderedHeightMm = printPageConfig.widthMm / sourceAspect;
+      const cropMm = Math.max(0, effectiveRenderedHeightMm - printPageConfig.heightMm) / 2;
+      cropTopMm = cropMm;
+      cropBottomMm = cropMm;
+    }
+  }
+
+  return {
+    sourceImage: {
+      widthPx: sourceWidth,
+      heightPx: sourceHeight,
+      aspect: sourceAspect,
+    },
+    expectedPhysicalDimensions: {
+      widthMm: printPageConfig.widthMm,
+      heightMm: printPageConfig.heightMm,
+      widthIn: printPageConfig.widthMm / 25.4,
+      heightIn: printPageConfig.heightMm / 25.4,
+    },
+    requestedPageSize: {
+      widthMicrons: printPageConfig.widthMicrons,
+      heightMicrons: printPageConfig.heightMicrons,
+      widthMm: printPageConfig.widthMm,
+      heightMm: printPageConfig.heightMm,
+    },
+    cssPageSize: {
+      width: printPageConfig.cssWidth,
+      height: printPageConfig.cssHeight,
+      margin: '0',
+    },
+    cssImageFit: printPageConfig.imageFit,
+    cssMargins: {
+      page: 0,
+      html: 0,
+      body: 0,
+      image: 0,
+    },
+    pageAspect,
+    effectivePrintDimensions: {
+      renderedWidthMm: effectiveRenderedWidthMm,
+      renderedHeightMm: effectiveRenderedHeightMm,
+      cropLeftMm,
+      cropRightMm,
+      cropTopMm,
+      cropBottomMm,
+    },
+    windowsCompensation: process.platform === 'win32' ? printPageConfig.windowsCompensation : null,
   };
 }
 
@@ -3898,6 +4030,7 @@ function buildPrintDiagnostics({
   rawFailureReason = null,
   staleSavedSelection = false,
   message = null,
+  printFit = null,
 } = {}) {
   const availablePrinters = Array.isArray(printerList?.printers)
     ? printerList.printers.map(summarizePrinterForDiagnostics)
@@ -3916,6 +4049,17 @@ function buildPrintDiagnostics({
     imageDecoded: imageDecoded ?? null,
     layoutReady: layoutReady ?? null,
     printOptions: printOptions ? sanitizePrintOptions(printOptions) : null,
+    sourceImage: printFit?.sourceImage || null,
+    requestedPageSize: printFit?.requestedPageSize || null,
+    expectedPhysicalDimensions: printFit?.expectedPhysicalDimensions || null,
+    orientation: printOptions?.landscape === true ? 'landscape' : 'portrait',
+    scaleFactor: printOptions?.scaleFactor ?? null,
+    cssPageSize: printFit?.cssPageSize || null,
+    cssMargins: printFit?.cssMargins || null,
+    cssImageFit: printFit?.cssImageFit || null,
+    windowsCompensation: printFit?.windowsCompensation || null,
+    effectivePrintDimensions: printFit?.effectivePrintDimensions || null,
+    printerDriverOptions: printer?.options && typeof printer.options === 'object' ? compactDiagnosticValue(printer.options) : null,
     webContentsPrintSuccess,
     failureReason: failureReason || null,
     rawFailureReason: rawFailureReason || failureReason || null,
@@ -4115,27 +4259,8 @@ async function submitSinglePrintCopy({
   });
   const printDocumentTitle = `Afterimage ${job.id} Copy ${copyIndex} of ${job.finalCopies}`;
   printWin.setTitle(printDocumentTitle);
-
-  const shell = `<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>${printDocumentTitle}</title>
-<style>
-  @page { size: 4in 6in; margin: 0; }
-  html, body { margin: 0; padding: 0; width: 4in; height: 6in; background: #fff; }
-  img {
-    width: 4in;
-    height: 6in;
-    display: block;
-    image-rendering: -webkit-optimize-contrast;
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
-  }
-</style>
-</head>
-<body></body>
-</html>`;
+  const printPageConfig = getPrintPageConfig(printer);
+  const shell = buildPrintShell(printDocumentTitle, printPageConfig);
 
   try {
     await printWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(shell));
@@ -4203,13 +4328,33 @@ async function submitSinglePrintCopy({
       silent: silent === true,
       printBackground: true,
       copies: 1,
-      pageSize: { width: 4 * MICRONS_PER_INCH, height: 6 * MICRONS_PER_INCH },
+      pageSize: { width: printPageConfig.widthMicrons, height: printPageConfig.heightMicrons },
       margins: { marginType: 'none' },
       landscape: false,
       scaleFactor: 100,
     };
+    if (printPageConfig.preferCSSPageSize) {
+      printOptions.preferCSSPageSize = true;
+    }
     if (printerName) {
       printOptions.deviceName = printerName;
+    }
+    const printFit = buildPrintFitDiagnostics(printPageConfig, readiness);
+
+    if (process.platform === 'win32') {
+      console.log('[PRINT DIAGNOSTICS] Windows page fit', compactDiagnosticValue({
+        platform: process.platform,
+        printer: summarizePrinterForDiagnostics(printer),
+        sourceImage: printFit.sourceImage,
+        requestedPageSize: printFit.requestedPageSize,
+        orientation: printOptions.landscape ? 'landscape' : 'portrait',
+        scaleFactor: printOptions.scaleFactor,
+        cssPageSize: printFit.cssPageSize,
+        cssMargins: printFit.cssMargins,
+        windowsCompensation: printFit.windowsCompensation,
+        effectivePrintDimensions: printFit.effectivePrintDimensions,
+        printOptions: sanitizePrintOptions(printOptions),
+      }));
     }
 
     if (!artworkReady) {
@@ -4231,6 +4376,7 @@ async function submitSinglePrintCopy({
         failureReason,
         rawFailureReason: failureReason,
         message: failureReason,
+        printFit,
       });
       logPrintDiagnostics(printerDiagnostics);
       return {
@@ -4279,6 +4425,7 @@ async function submitSinglePrintCopy({
       webContentsPrintSuccess: result.success,
       failureReason: result.failureReason,
       rawFailureReason: result.rawFailureReason,
+      printFit,
     });
     logPrintDiagnostics(printerDiagnostics);
 
