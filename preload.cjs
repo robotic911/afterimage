@@ -97,6 +97,7 @@ const onTodayMonitorSessionsUpdated = (cb) => {
 
 contextBridge.exposeInMainWorld('diagApi', {
   logEvent: (payload) => ipcRenderer.invoke('diag:log-event', payload),
+  getRuntimeInfo: () => ipcRenderer.invoke('diag:get-runtime-info'),
   writeDownloadsTextFile: () => ipcRenderer.invoke('diag:write-downloads-text-file'),
   writeDownloadsPngFile: (payload) => {
     console.log('[DIAG STEP 2 preload] writeDownloadsPngFile called', {

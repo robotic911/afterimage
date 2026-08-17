@@ -13,6 +13,7 @@ import {
 } from '../../lib/shotImageSource';
 import { versionTemplateAssetSrc } from '../../lib/templateAssetUrl';
 import { resolveTemplateRenderAssets } from '../../lib/templateRenderAssets';
+import { AFTERIMAGE_BUILD, createAfterimageBuildPayload } from '../../lib/buildInfo';
 import { DEFAULT_PRINTER_PROFILE_ID, DEFAULT_SAFE_MARGIN_OVERRIDE } from '../../constants/printers';
 import {
   createSoftcopySessionToken,
@@ -50,6 +51,7 @@ const SHOW_QR_DIAGNOSTIC_UI = (() => {
     return false;
   }
 })();
+const SHOW_BUILD_DIAGNOSTIC_UI = SHOW_QR_DIAGNOSTIC_UI;
 const SHOW_KEYCHAIN_DEBUG_UI = false;
 const ENABLE_KEYCHAIN_AUTO_SAVE = false;
 const KEYCHAIN_AUTO_SAVE_IN_FLIGHT_KEYS = new Set();
@@ -74,8 +76,15 @@ function normalizePrintApiResult(result, fallbackCopies) {
     status,
     copiesRequested,
     copiesPrinted,
-    error: result?.error || result?.failureReason || null,
+    error: result?.error || result?.failureReason || result?.rawFailureReason || null,
+    failureReason: result?.failureReason || result?.rawFailureReason || result?.error || null,
+    rawFailureReason: result?.rawFailureReason || result?.failureReason || null,
     jobId: result?.jobId || null,
+    printerName: result?.printerName || result?.deviceName || null,
+    deviceName: result?.deviceName || result?.printerName || null,
+    printerDiagnostics: result?.printerDiagnostics || null,
+    availablePrinters: Array.isArray(result?.availablePrinters) ? result.availablePrinters : null,
+    printOptions: result?.printOptions || null,
   };
 }
 
@@ -84,6 +93,100 @@ function getPrintStatusMessage(status, copiesPrinted, copiesRequested, error = n
   if (status === 'partial') return `${copiesPrinted} of ${copiesRequested} ${copiesRequested === 1 ? 'copy was' : 'copies were'} printed. You can retry printing or end this session.`;
   if (status === 'failed') return error || 'Print failed. Please check the printer and try again.';
   return null;
+}
+
+const QR_PROBE_STAGE_ORDER = [
+  'supabase_config',
+  'storage_bucket',
+  'storage_upload',
+  'storage_verify',
+  'storage_remove',
+  'rpc_create_session',
+  'softcopy_page',
+  'qr_value',
+  'qr_render',
+];
+
+const QR_PROBE_STAGE_LABELS = {
+  supabase_config: 'Supabase config',
+  storage_bucket: 'Bucket',
+  storage_upload: 'Upload',
+  storage_verify: 'Storage verify',
+  storage_remove: 'Storage cleanup',
+  rpc_create_session: 'RPC',
+  softcopy_page: 'Softcopy page',
+  qr_value: 'QR value',
+  qr_render: 'QR render',
+};
+
+function formatDiagnosticValue(value) {
+  if (value == null || value === '') return 'none';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function getDiagnosticErrorMessage(stage = {}) {
+  return stage.message || stage.error?.message || stage.error || null;
+}
+
+function getQrProbeStageRows(result) {
+  const stages = Array.isArray(result?.stages) ? result.stages : [];
+  const byStep = new Map(stages.map((stage) => [stage.step || stage.stage, stage]));
+  const ordered = QR_PROBE_STAGE_ORDER.map((step) => byStep.get(step) || { step, ok: null });
+  const extras = stages.filter((stage) => !QR_PROBE_STAGE_ORDER.includes(stage.step || stage.stage));
+  return [...ordered, ...extras];
+}
+
+function withRendererQrStage(result = {}) {
+  const stages = Array.isArray(result.stages) ? [...result.stages] : [];
+  const previousFailure = stages.find((stage) => stage?.ok === false) || null;
+  const qrRenderStage = {
+    step: 'qr_render',
+    ok: !previousFailure && result.ok !== false,
+    qrLibraryReceivesValue: !previousFailure && result.ok !== false,
+    message: previousFailure ? 'QR render skipped because an earlier diagnostic stage failed.' : null,
+  };
+  if (!stages.some((stage) => stage?.step === 'qr_render')) {
+    stages.push(qrRenderStage);
+  }
+  const failedStageResult = stages.find((stage) => stage?.ok === false) || null;
+  return {
+    ...result,
+    ok: !failedStageResult,
+    failedStage: failedStageResult ? (failedStageResult.step || failedStageResult.stage || result.failedStage || null) : null,
+    failedStageResult,
+    message: failedStageResult ? (getDiagnosticErrorMessage(failedStageResult) || result.message || result.error || null) : null,
+    code: failedStageResult ? (failedStageResult.error?.code || result.code || null) : null,
+    details: failedStageResult ? (failedStageResult.error?.details ?? result.details ?? null) : null,
+    hint: failedStageResult ? (failedStageResult.error?.hint ?? result.hint ?? null) : null,
+    stages,
+  };
+}
+
+function buildRendererPrintDiagnostics(printResult = {}) {
+  const source = printResult.printerDiagnostics || {};
+  return {
+    selectedDevice: source.selectedDevice || printResult.deviceName || printResult.printerName || null,
+    found: source.found ?? null,
+    availablePrinters: source.availablePrinters || printResult.availablePrinters || [],
+    printerStatus: source.printerStatus || null,
+    artworkReady: source.artworkReady ?? null,
+    htmlLoaded: source.htmlLoaded ?? null,
+    imageLoaded: source.imageLoaded ?? null,
+    imageDecoded: source.imageDecoded ?? null,
+    layoutReady: source.layoutReady ?? null,
+    printOptions: source.printOptions || printResult.printOptions || null,
+    webContentsPrintSuccess: source.webContentsPrintSuccess ?? printResult.ok ?? null,
+    failureReason: printResult.failureReason || source.failureReason || printResult.error || null,
+    rawFailureReason: printResult.rawFailureReason || source.rawFailureReason || null,
+    staleSavedSelection: source.staleSavedSelection === true,
+    jobId: printResult.jobId || source.jobId || null,
+  };
 }
 
 function getSoftcopyErrorMessage(error = '') {
@@ -539,6 +642,11 @@ export default function PrintScreen({
   const [step4KeychainResult, setStep4KeychainResult] = useState(null);
   const [qrDiagnosticRunning, setQrDiagnosticRunning] = useState(false);
   const [qrDiagnosticResult, setQrDiagnosticResult] = useState(null);
+  const [runtimeInfo, setRuntimeInfo] = useState(() => ({
+    platform: RUNTIME_PLATFORM,
+    isPackaged: RUNTIME_IS_PACKAGED,
+  }));
+  const [printDiagnosticResult, setPrintDiagnosticResult] = useState(null);
   const finishReadyTimerRef = useRef(null);
   const sessionLockedRef = useRef(false);
   const printInFlightRef = useRef(false);
@@ -566,6 +674,50 @@ export default function PrintScreen({
   useEffect(() => {
     activeRef.current = active;
   }, [active]);
+
+  useEffect(() => {
+    let mounted = true;
+    const fallbackRuntimeInfo = {
+      platform: RUNTIME_PLATFORM,
+      isPackaged: RUNTIME_IS_PACKAGED,
+    };
+
+    const publishBuildInfo = (mainRuntimeInfo = fallbackRuntimeInfo) => {
+      const payload = createAfterimageBuildPayload({
+        platform: mainRuntimeInfo?.platform || RUNTIME_PLATFORM,
+        processArch: mainRuntimeInfo?.arch || null,
+        isPackaged: mainRuntimeInfo?.isPackaged ?? RUNTIME_IS_PACKAGED,
+        main: mainRuntimeInfo || null,
+      });
+      console.log('[AFTERIMAGE BUILD]', payload);
+      window.diagApi?.logEvent?.({
+        type: '[AFTERIMAGE BUILD]',
+        details: payload,
+      })?.catch?.(() => {});
+    };
+
+    if (window.diagApi?.getRuntimeInfo) {
+      window.diagApi.getRuntimeInfo()
+        .then((result) => {
+          const info = result?.info || fallbackRuntimeInfo;
+          if (mounted) setRuntimeInfo(info);
+          publishBuildInfo(info);
+        })
+        .catch((error) => {
+          if (mounted) setRuntimeInfo(fallbackRuntimeInfo);
+          publishBuildInfo({
+            ...fallbackRuntimeInfo,
+            runtimeInfoError: error?.message || String(error),
+          });
+        });
+    } else {
+      publishBuildInfo(fallbackRuntimeInfo);
+    }
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const setSoftcopyState = useCallback((nextState) => {
     if (!activeRef.current) return;
@@ -2091,16 +2243,21 @@ export default function PrintScreen({
     if (qrDiagnosticRunning) return qrDiagnosticResult;
     setQrDiagnosticRunning(true);
     try {
-      const result = await runSoftcopyQrDiagnosticProbe();
+      const result = withRendererQrStage(await runSoftcopyQrDiagnosticProbe());
       setQrDiagnosticResult(result);
       console.log('[QR DIAGNOSTIC RESULT]', result);
       return result;
     } catch (error) {
-      const result = {
+      const result = withRendererQrStage({
         ok: false,
-        failedStage: 'qr_diagnostic_probe',
+        failedStage: error?.failedStage || 'qr_diagnostic_probe',
+        code: error?.code || null,
+        details: error?.details || null,
+        hint: error?.hint || null,
         error: error?.message || String(error),
-      };
+        message: error?.message || String(error),
+        stages: Array.isArray(error?.stages) ? error.stages : [],
+      });
       setQrDiagnosticResult(result);
       console.error('[QR DIAGNOSTIC RESULT]', result);
       return result;
@@ -2368,6 +2525,7 @@ export default function PrintScreen({
     setPrintProgress({ current: 1, total: selectedCopies });
     setSoftcopyWarnings([]);
     setUploadRetrying(false);
+    setPrintDiagnosticResult(null);
     if (softcopyArtifactRef.current?.cacheKey !== softcopyCacheKey) {
       softcopyArtifactRef.current = null;
     }
@@ -2493,6 +2651,9 @@ export default function PrintScreen({
           timeEnd('[print] send job');
         }
         const printResult = normalizePrintApiResult(res, selectedCopies);
+        const printDiagnostics = buildRendererPrintDiagnostics(printResult);
+        setPrintDiagnosticResult(printDiagnostics);
+        console.log('[PRINT DIAGNOSTICS]', printDiagnostics);
         console.log('[print] result received', printResult);
         printStatus = printResult.status;
         printJobId = printResult.jobId;
@@ -2501,9 +2662,16 @@ export default function PrintScreen({
         printMessage = getPrintStatusMessage(printStatus, printCopiesCompleted, printCopiesRequested, printResult.error);
         if (printStatus === 'failed') {
           printStatus = 'failed';
-          printFailureReason = printResult.error || 'print call returned !success';
-          console.log('[print] print failed', { jobId: printJobId, error: printFailureReason });
-          throw new Error(printFailureReason);
+          printFailureReason = printResult.failureReason || printResult.rawFailureReason || printResult.error || 'print call returned !success';
+          console.log('[print] print failed', {
+            jobId: printJobId,
+            error: printFailureReason,
+            deviceName: printResult.deviceName,
+            rawFailureReason: printResult.rawFailureReason,
+          });
+          const printError = new Error(printFailureReason);
+          printError.printResult = printResult;
+          throw printError;
         }
         if (printStatus === 'cancelled' || printStatus === 'partial') {
           console.log('[print] print cancelled by operator', {
@@ -2533,6 +2701,11 @@ export default function PrintScreen({
         printCopiesCompleted = 0;
       }
       printFailureReason = err?.message || String(err);
+      if (err?.printResult) {
+        const printDiagnostics = buildRendererPrintDiagnostics(err.printResult);
+        setPrintDiagnosticResult(printDiagnostics);
+        console.log('[PRINT DIAGNOSTICS]', printDiagnostics);
+      }
       printMessage = getPrintStatusMessage(printStatus, printCopiesCompleted, printCopiesRequested, printFailureReason);
       console.error('[print] failed', err);
       if (qrEnabled && softcopyMediaEnabled && !softcopyStarted) {
@@ -2549,7 +2722,7 @@ export default function PrintScreen({
       setPrintTerminalStatus(printStatus);
       if (printStatus !== 'completed') {
         const recoveryText = printStatus === 'failed'
-          ? 'Print failed. Please check the printer and try again.'
+          ? (printMessage || printFailureReason || 'Print failed. Please check the printer and try again.')
           : (printMessage || printFailureReason || 'Print failed. Please try again.');
         setPrintError(recoveryText);
         setPrintProgress(null);
@@ -2669,13 +2842,21 @@ export default function PrintScreen({
   const printErrorTitle = printTerminalStatus === 'cancelled' || printTerminalStatus === 'partial'
     ? 'Print cancelled.'
     : 'Print failed.';
-  const showPrinterGuidance = Boolean(printError || ['failed', 'cancelled', 'partial'].includes(printTerminalStatus));
+  const rawPrintFailureReason = printDiagnosticResult?.rawFailureReason || printDiagnosticResult?.failureReason || null;
+  const showPrinterGuidance = Boolean(
+    !rawPrintFailureReason
+    && (printError || ['failed', 'cancelled', 'partial'].includes(printTerminalStatus)),
+  );
   const showPrintReadyCard = !printing && !printCompleted;
   const printerGuidance = RUNTIME_PLATFORM === 'darwin'
     ? 'Printer appears offline or the job is waiting in macOS Print Center. Check the printer, then cancel or resume the job in Print Center. Afterimage can stop queued app jobs, but jobs already sent to the printer must be managed in Print Center.'
     : RUNTIME_PLATFORM === 'win32'
       ? 'Printer appears offline or the job is waiting in the Windows print queue. Check Printers & scanners, confirm the correct printer is set as default, then resume or cancel the job in the Windows queue.'
       : 'Printer appears offline or the system print queue is waiting. Check the printer and operating-system print queue, then retry.';
+  const runtimePackaged = runtimeInfo?.isPackaged ?? RUNTIME_IS_PACKAGED;
+  const buildModeLabel = runtimePackaged === true ? 'packaged' : runtimePackaged === false ? 'dev' : 'unknown';
+  const buildPlatformLabel = runtimeInfo?.platform || RUNTIME_PLATFORM;
+  const buildArchLabel = runtimeInfo?.arch || 'unknown';
   const actionLabel = printing
     ? (printProgress ? `Printing ${printProgress.current} of ${printProgress.total}...` : 'Printing...')
     : uploadRetrying
@@ -2901,6 +3082,22 @@ export default function PrintScreen({
           </div>
 
           <div className="print-sidebar-content">
+            {SHOW_BUILD_DIAGNOSTIC_UI && (
+              <section className="developer-diagnostic-panel" aria-label="Afterimage build diagnostics">
+                <strong>AFTERIMAGE BUILD</strong>
+                <span>version: {AFTERIMAGE_BUILD.version}</span>
+                <span>commit: {AFTERIMAGE_BUILD.commit}</span>
+                <span>built: {AFTERIMAGE_BUILD.timestamp}</span>
+                <span>platform: {buildPlatformLabel}</span>
+                <span>arch: {buildArchLabel}</span>
+                <span>mode: {buildModeLabel}</span>
+                <span>cwd: {runtimeInfo?.cwd || 'unknown'}</span>
+                <span>appPath: {runtimeInfo?.appPath || 'unknown'}</span>
+                <span>dirname: {runtimeInfo?.dirname || 'unknown'}</span>
+                <span>resources: {runtimeInfo?.resourcesPath || 'unknown'}</span>
+              </section>
+            )}
+
             {(softcopyIsBusy || softcopyIsReady || softcopyIsError || softcopyWarnings.length > 0) && (
               <section className="print-download-section" aria-label="Photo download">
                 {softcopyIsBusy && (
@@ -2967,9 +3164,30 @@ export default function PrintScreen({
                           {qrDiagnosticRunning ? 'Running QR Probe...' : 'Run QR Probe'}
                         </button>
                         {qrDiagnosticResult && (
-                          <p>
-                            QR probe {qrDiagnosticResult.ok ? 'passed' : `failed at ${qrDiagnosticResult.failedStage || 'unknown'}`}.
-                          </p>
+                          <div className="developer-diagnostic-panel qr-diagnostic-panel">
+                            <strong>QR DIAGNOSTICS</strong>
+                            <div className="diagnostic-stage-list">
+                              {getQrProbeStageRows(qrDiagnosticResult).map((stage) => {
+                                const step = stage.step || stage.stage || 'unknown';
+                                const statusLabel = stage.ok === true ? 'PASS' : stage.ok === false ? 'FAIL' : 'PENDING';
+                                return (
+                                  <div key={step} className={`diagnostic-stage-row ${stage.ok === false ? 'fail' : stage.ok === true ? 'pass' : ''}`}>
+                                    <span>{QR_PROBE_STAGE_LABELS[step] || step}</span>
+                                    <b>{statusLabel}</b>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                            {!qrDiagnosticResult.ok && (
+                              <div className="diagnostic-detail-list">
+                                <span>Exact stage: {qrDiagnosticResult.failedStage || 'unknown'}</span>
+                                <span>Code: {formatDiagnosticValue(qrDiagnosticResult.code)}</span>
+                                <span>Message: {formatDiagnosticValue(qrDiagnosticResult.message || qrDiagnosticResult.error)}</span>
+                                <span>Details: {formatDiagnosticValue(qrDiagnosticResult.details)}</span>
+                                <span>Hint: {formatDiagnosticValue(qrDiagnosticResult.hint)}</span>
+                              </div>
+                            )}
+                          </div>
                         )}
                       </div>
                     )}
@@ -3024,6 +3242,21 @@ export default function PrintScreen({
                     <div>
                       <p><strong>{printErrorTitle}</strong> {printError}</p>
                       {showPrinterGuidance && <p>{printerGuidance}</p>}
+                      {SHOW_QR_DIAGNOSTIC_UI && printDiagnosticResult && (
+                        <div className="developer-diagnostic-panel print-diagnostic-panel">
+                          <strong>PRINT DIAGNOSTICS</strong>
+                          <span>Selected device: {printDiagnosticResult.selectedDevice || 'none'}</span>
+                          <span>Found: {printDiagnosticResult.found === true ? 'YES' : printDiagnosticResult.found === false ? 'NO' : 'unknown'}</span>
+                          <span>Printer status: {formatDiagnosticValue(printDiagnosticResult.printerStatus)}</span>
+                          <span>Artwork ready: {printDiagnosticResult.artworkReady === true ? 'YES' : printDiagnosticResult.artworkReady === false ? 'NO' : 'unknown'}</span>
+                          <span>Image decoded: {printDiagnosticResult.imageDecoded === true ? 'YES' : printDiagnosticResult.imageDecoded === false ? 'NO' : 'unknown'}</span>
+                          <span>Layout ready: {printDiagnosticResult.layoutReady === true ? 'YES' : printDiagnosticResult.layoutReady === false ? 'NO' : 'unknown'}</span>
+                          <span>webContents.print success: {formatDiagnosticValue(printDiagnosticResult.webContentsPrintSuccess)}</span>
+                          <span>failureReason: {formatDiagnosticValue(printDiagnosticResult.failureReason || printDiagnosticResult.rawFailureReason)}</span>
+                          <span>Print options: {formatDiagnosticValue(printDiagnosticResult.printOptions)}</span>
+                          <span>Available printers: {formatDiagnosticValue((printDiagnosticResult.availablePrinters || []).map((printer) => printer.name || printer.displayName || 'unknown'))}</span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}

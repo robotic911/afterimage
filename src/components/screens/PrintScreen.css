@@ -83,6 +83,53 @@
   background: #eee;
 }
 
+.developer-diagnostic-panel {
+  display: grid;
+  gap: 4px;
+  max-height: 220px;
+  overflow: auto;
+  padding: 9px 10px;
+  border: 1px solid rgba(0,0,0,.24);
+  border-radius: 8px;
+  background: #fff;
+  color: #111;
+  font-size: 11px;
+  line-height: 1.25;
+  text-align: left;
+  word-break: break-word;
+}
+
+.developer-diagnostic-panel strong {
+  font-size: 12px;
+  letter-spacing: .8px;
+}
+
+.diagnostic-stage-list,
+.diagnostic-detail-list {
+  display: grid;
+  gap: 3px;
+}
+
+.diagnostic-stage-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.diagnostic-stage-row b {
+  font-size: 10px;
+  color: #555;
+}
+
+.diagnostic-stage-row.pass b {
+  color: #0c7a3b;
+}
+
+.diagnostic-stage-row.fail b {
+  color: #b00020;
+}
+
 .print-test-badge {
   position: absolute;
   top: 14px;

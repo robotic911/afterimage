@@ -147,6 +147,35 @@ function describeBlob(blob, fallbackMimeType = '') {
   };
 }
 
+function createProbeResult(stages, fallbackStage = 'qr_diagnostic_probe', fallbackError = null) {
+  const failedStageResult = stages.find((stage) => stage?.ok === false) || null;
+  const error = failedStageResult?.error || (fallbackError ? describeSupabaseError(fallbackError) : null);
+  const message = failedStageResult?.message || error?.message || (fallbackError?.message || null);
+  const failedStage = failedStageResult?.step || failedStageResult?.stage || fallbackStage;
+  return {
+    ok: !failedStageResult,
+    failedStage: failedStageResult ? failedStage : null,
+    code: failedStageResult ? (error?.code || failedStageResult?.code || null) : null,
+    message: failedStageResult ? message : null,
+    details: failedStageResult ? (error?.details ?? failedStageResult?.details ?? null) : null,
+    hint: failedStageResult ? (error?.hint ?? failedStageResult?.hint ?? null) : null,
+    httpStatus: failedStageResult ? (error?.httpStatus ?? failedStageResult?.httpStatus ?? null) : null,
+    error: failedStageResult ? message : null,
+    failedStageResult,
+    stages,
+  };
+}
+
+function appendProbeStage(stages, step, payload = {}) {
+  const stage = {
+    step,
+    ok: payload.ok === true,
+    ...payload,
+  };
+  stages.push(stage);
+  return stage;
+}
+
 function getUploadMediaType(fileLabel, contentType = '') {
   if (fileLabel === 'photo') return contentType === 'image/jpeg' ? 'jpg' : 'png';
   if (fileLabel === 'gif') return 'gif';
@@ -823,16 +852,11 @@ export async function runSoftcopyQrDiagnosticProbe({
   sessionToken = `diagnostic-${Date.now()}`,
   includeRpc = true,
 } = {}) {
-  assertSupabaseReady('qr_diagnostic_probe');
   const bucket = SOFTCOPY_BUCKET;
   const path = `sessions/${sessionToken}/ping.txt`;
   const stages = [];
   let uploaded = false;
-  let result = {
-    ok: true,
-    failedStage: null,
-    stages,
-  };
+  let result = null;
 
   emitQrDiagnostic('[QR DIAGNOSTIC START]', {
     step: 'qr_diagnostic_probe',
@@ -842,6 +866,39 @@ export async function runSoftcopyQrDiagnosticProbe({
   });
 
   try {
+    const configStage = appendProbeStage(stages, 'supabase_config', {
+      ok: Boolean(supabase)
+        && SUPABASE_CLIENT_DIAGNOSTICS.hasSupabaseUrl
+        && SUPABASE_CLIENT_DIAGNOSTICS.hasSupabaseAnonKey,
+      ...getSupabaseConfigDiagnostics(),
+      message: supabase ? null : 'Supabase client is not configured',
+    });
+    emitQrDiagnostic(
+      configStage.ok ? '[QR CONFIG OK]' : '[QR CONFIG FAILED]',
+      configStage,
+      configStage.ok ? 'log' : 'error',
+    );
+    if (!configStage.ok) {
+      result = createProbeResult(stages);
+      return result;
+    }
+
+    const bucketStage = appendProbeStage(stages, 'storage_bucket', {
+      ok: bucket === 'softcopies',
+      bucket,
+      expectedBucket: 'softcopies',
+      message: bucket === 'softcopies' ? null : `Configured bucket is "${bucket}", expected "softcopies".`,
+    });
+    emitQrDiagnostic(
+      bucketStage.ok ? '[QR BUCKET OK]' : '[QR BUCKET FAILED]',
+      bucketStage,
+      bucketStage.ok ? 'log' : 'error',
+    );
+    if (!bucketStage.ok) {
+      result = createProbeResult(stages);
+      return result;
+    }
+
     const blob = new Blob([`afterimage qr diagnostic ${new Date().toISOString()}\n`], {
       type: 'text/plain',
     });
@@ -850,8 +907,7 @@ export async function runSoftcopyQrDiagnosticProbe({
       upsert: false,
     });
     uploaded = !upload.error;
-    const uploadStage = {
-      step: 'diagnostic_storage_upload',
+    const uploadStage = appendProbeStage(stages, 'storage_upload', {
       bucket,
       path,
       size: blob.size,
@@ -859,15 +915,31 @@ export async function runSoftcopyQrDiagnosticProbe({
       ok: !upload.error,
       error: describeSupabaseError(upload.error),
       response: compactValue(upload),
-    };
-    stages.push(uploadStage);
+    });
     emitQrDiagnostic(upload.error ? '[QR UPLOAD FAILED]' : '[QR UPLOAD OK]', uploadStage, upload.error ? 'error' : 'log');
     if (upload.error) {
-      result = {
-        ok: false,
-        failedStage: 'diagnostic_storage_upload',
-        stages,
-      };
+      result = createProbeResult(stages);
+      return result;
+    }
+
+    const responsePath = upload.data?.path || upload.data?.Key || null;
+    const verifyStage = appendProbeStage(stages, 'storage_verify', {
+      ok: responsePath === path || String(responsePath || '').endsWith(path),
+      bucket,
+      path,
+      responsePath,
+      message: responsePath === path || String(responsePath || '').endsWith(path)
+        ? null
+        : 'Supabase upload response did not confirm the expected path.',
+      response: compactValue(upload.data || null),
+    });
+    emitQrDiagnostic(
+      verifyStage.ok ? '[QR STORAGE VERIFY OK]' : '[QR STORAGE VERIFY FAILED]',
+      verifyStage,
+      verifyStage.ok ? 'log' : 'error',
+    );
+    if (!verifyStage.ok) {
+      result = createProbeResult(stages);
       return result;
     }
 
@@ -879,84 +951,116 @@ export async function runSoftcopyQrDiagnosticProbe({
         p_video_path: null,
       });
       const rpcReachable = !rpc.error || isExpectedNoSideEffectRpcError(rpc.error);
-      const rpcStage = {
-        step: 'diagnostic_rpc_reachability',
+      const rpcStage = appendProbeStage(stages, 'rpc_create_session', {
         rpcFunctionName: 'create_softcopy_session',
         payloadKeys: ['p_session_token', 'p_photo_path', 'p_gif_path', 'p_video_path'],
         ok: rpcReachable,
         noSideEffectInputError: isExpectedNoSideEffectRpcError(rpc.error),
         error: describeSupabaseError(rpc.error),
         responseDataPresent: Boolean(rpc.data),
-      };
-      stages.push(rpcStage);
+      });
       emitQrDiagnostic(rpcReachable ? '[QR SESSION CREATE OK]' : '[QR SESSION CREATE FAILED]', rpcStage, rpcReachable ? 'log' : 'error');
       if (!rpcReachable) {
-        result = {
-          ok: false,
-          failedStage: 'diagnostic_rpc_reachability',
-          stages,
-        };
+        result = createProbeResult(stages);
         return result;
       }
     }
 
-    result = {
-      ok: true,
-      failedStage: null,
-      stages,
-    };
+    let generatedUrl = null;
+    let urlValid = false;
+    let urlError = null;
+    try {
+      generatedUrl = buildSoftcopyPageUrl(sessionToken);
+      new URL(generatedUrl);
+      urlValid = true;
+    } catch (error) {
+      urlError = error;
+    }
+    const softcopyPageStage = appendProbeStage(stages, 'softcopy_page', {
+      ok: urlValid,
+      generatedUrl,
+      urlEmpty: !generatedUrl,
+      urlValid,
+      error: describeSupabaseError(urlError),
+      message: urlValid ? null : (urlError?.message || 'Softcopy page URL is not valid.'),
+    });
+    emitQrDiagnostic(
+      softcopyPageStage.ok ? '[QR SOFTCOPY PAGE OK]' : '[QR URL FAILED]',
+      softcopyPageStage,
+      softcopyPageStage.ok ? 'log' : 'error',
+    );
+    if (!softcopyPageStage.ok) {
+      result = createProbeResult(stages);
+      return result;
+    }
+
+    const qrValueStage = appendProbeStage(stages, 'qr_value', {
+      ok: Boolean(generatedUrl),
+      generatedUrl,
+      qrLibraryReceivesValue: Boolean(generatedUrl),
+      message: generatedUrl ? null : 'QR value is empty.',
+    });
+    emitQrDiagnostic(
+      qrValueStage.ok ? '[QR VALUE OK]' : '[QR URL FAILED]',
+      qrValueStage,
+      qrValueStage.ok ? 'log' : 'error',
+    );
+
+    result = createProbeResult(stages);
     return result;
   } catch (error) {
-    const failureStage = {
-      step: 'qr_diagnostic_probe',
+    const nestedDiagnostic = getErrorDiagnostics(error).find((diagnostic) => diagnostic?.step || diagnostic?.stage) || null;
+    const failureStage = appendProbeStage(stages, nestedDiagnostic?.step || nestedDiagnostic?.stage || 'qr_diagnostic_probe', {
+      ...(nestedDiagnostic || {}),
       bucket,
       path,
       ok: false,
-      error: describeSupabaseError(error),
-      message: error?.message || String(error),
-    };
-    stages.push(failureStage);
+      error: nestedDiagnostic?.error || describeSupabaseError(error),
+      message: nestedDiagnostic?.message || error?.message || String(error),
+    });
     emitQrDiagnostic('[QR DIAGNOSTIC FAILED]', failureStage, 'error');
-    result = {
-      ok: false,
-      failedStage: 'qr_diagnostic_probe',
-      stages,
-      error: failureStage.message,
-    };
+    result = createProbeResult(stages, 'qr_diagnostic_probe', error);
     return result;
   } finally {
     if (uploaded) {
       try {
         const removed = await supabase.storage.from(bucket).remove([path]);
-        const cleanupStage = {
-          step: 'diagnostic_storage_cleanup',
+        const cleanupStage = appendProbeStage(stages, 'storage_remove', {
           bucket,
           path,
           ok: !removed.error,
           error: describeSupabaseError(removed.error),
           response: compactValue(removed),
-        };
-        stages.push(cleanupStage);
+        });
         emitQrDiagnostic(removed.error ? '[QR DIAGNOSTIC CLEANUP FAILED]' : '[QR DIAGNOSTIC CLEANUP OK]', cleanupStage, removed.error ? 'error' : 'log');
         if (removed.error && result.ok) {
           result.ok = false;
-          result.failedStage = 'diagnostic_storage_cleanup';
+          result.failedStage = 'storage_remove';
+          result.failedStageResult = cleanupStage;
+          result.error = cleanupStage.error?.message || 'Diagnostic storage cleanup failed.';
+          result.message = result.error;
+          result.code = cleanupStage.error?.code || null;
+          result.details = cleanupStage.error?.details || null;
+          result.hint = cleanupStage.error?.hint || null;
         }
       } catch (error) {
-        const cleanupStage = {
-          step: 'diagnostic_storage_cleanup',
+        const cleanupStage = appendProbeStage(stages, 'storage_remove', {
           bucket,
           path,
           ok: false,
           error: describeSupabaseError(error),
           message: error?.message || String(error),
-        };
-        stages.push(cleanupStage);
+        });
         emitQrDiagnostic('[QR DIAGNOSTIC CLEANUP FAILED]', cleanupStage, 'error');
         if (result.ok) {
           result.ok = false;
-          result.failedStage = 'diagnostic_storage_cleanup';
+          result.failedStage = 'storage_remove';
+          result.failedStageResult = cleanupStage;
           result.error = cleanupStage.message;
+          result.message = cleanupStage.message;
+          result.code = cleanupStage.error?.code || null;
+          result.details = cleanupStage.error?.details || null;
+          result.hint = cleanupStage.error?.hint || null;
         }
       }
     }

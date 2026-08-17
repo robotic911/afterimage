@@ -4,7 +4,7 @@ const fs = require('fs');
 const fsp = fs.promises;
 const crypto = require('crypto');
 const { pathToFileURL } = require('url');
-const { spawn } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 const {
   getKeychainPrice,
   isValidKeychainCopies,
@@ -69,6 +69,53 @@ async function writeDiagnosticEvent(type, details = {}) {
   } catch (error) {
     console.warn('[diagnostics] failed to write event', error?.message || String(error));
   }
+}
+
+function safeAppPathValue(getter) {
+  try {
+    return getter();
+  } catch {
+    return null;
+  }
+}
+
+function readMainGitCommit() {
+  try {
+    return execFileSync('git', ['rev-parse', '--short', 'HEAD'], {
+      cwd: __dirname,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).toString().trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function getRuntimeDiagnostics() {
+  return {
+    productName: app.getName?.() || 'Afterimage',
+    version: app.getVersion?.() || null,
+    gitCommit: readMainGitCommit(),
+    buildTimestamp: null,
+    platform: process.platform,
+    arch: process.arch,
+    isPackaged: app.isPackaged,
+    defaultApp: process.defaultApp === true,
+    cwd: process.cwd(),
+    appPath: safeAppPathValue(() => app.getAppPath()),
+    dirname: __dirname,
+    resourcesPath: process.resourcesPath || null,
+    execPath: process.execPath,
+    userDataPath: safeAppPathValue(() => app.getPath('userData')),
+    diagnosticsDir: getDiagnosticsDir(),
+    mainProcessStartedAt: new Date(mainProcessStartedAt).toISOString(),
+    argv: process.argv.slice(0, 8),
+    versions: {
+      electron: process.versions.electron,
+      chrome: process.versions.chrome,
+      node: process.versions.node,
+      v8: process.versions.v8,
+    },
+  };
 }
 
 console.log('[DIAG main] electron.cjs loaded with downloads test handler');
@@ -3630,10 +3677,44 @@ async function resolveTargetPrinter(webContents) {
 
   if (selectedPrinterName) {
     if (!selectedPrinter) {
-      throw new Error('Selected printer is missing. Choose an online Canon SELPHY printer in Today Monitor or Admin Settings.');
+      const diagnostics = buildPrintDiagnostics({
+        selectedDevice: selectedPrinterName,
+        selectedPrinterName,
+        printer: null,
+        printerList,
+        staleSavedSelection: true,
+        message: 'Saved printer selection is not present on this machine.',
+      });
+      logPrintDiagnostics(diagnostics);
+      await persistSelectedPrinterName(null);
+      if (availableSelphyPrinters.length === 1) {
+        const targetPrinter = availableSelphyPrinters[0];
+        const nextSettings = await persistSelectedPrinterName(targetPrinter.name);
+        console.log('[print] stale selected printer replaced with local printer queue', {
+          staleSelectedPrinterName: selectedPrinterName,
+          targetPrinterName: targetPrinter.name,
+          platform: process.platform,
+        });
+        return { printer: targetPrinter, settings: nextSettings, printerList };
+      }
+      throw createPrintDiagnosticError(
+        'Saved printer selection is missing on this machine. Select the actual Windows Canon SELPHY printer in Today Monitor or Admin Settings.',
+        diagnostics,
+      );
     }
     if (selectedPrinter.isAvailable === false) {
-      throw new Error('Selected printer is offline. Choose an online Canon SELPHY printer in Today Monitor or Admin Settings.');
+      const diagnostics = buildPrintDiagnostics({
+        selectedDevice: selectedPrinter.name,
+        selectedPrinterName,
+        printer: selectedPrinter,
+        printerList,
+        message: 'Selected printer is marked unavailable by the operating system.',
+      });
+      logPrintDiagnostics(diagnostics);
+      throw createPrintDiagnosticError(
+        'Selected printer is offline. Choose an online Canon SELPHY printer in Today Monitor or Admin Settings.',
+        diagnostics,
+      );
     }
     console.log('[print] target printer resolved', {
       selectedPrinterName,
@@ -3645,7 +3726,18 @@ async function resolveTargetPrinter(webContents) {
   }
 
   if (availableSelphyPrinters.length === 0) {
-    throw new Error('No online Canon SELPHY printer queue was found. Select or reconnect a Canon SELPHY printer in Admin Settings.');
+    const diagnostics = buildPrintDiagnostics({
+      selectedDevice: null,
+      selectedPrinterName,
+      printer: null,
+      printerList,
+      message: 'No online Canon SELPHY printer queue was found.',
+    });
+    logPrintDiagnostics(diagnostics);
+    throw createPrintDiagnosticError(
+      'No online Canon SELPHY printer queue was found. Select or reconnect a Canon SELPHY printer in Admin Settings.',
+      diagnostics,
+    );
   }
 
   const targetPrinter = availableSelphyPrinters[0];
@@ -3713,13 +3805,34 @@ function normalizePrintResult({
   copiesRequested = 0,
   copiesPrinted = 0,
   error = null,
+  failureReason = null,
+  rawFailureReason = null,
   jobId = null,
   printerName = null,
+  deviceName = null,
+  printerDiagnostics = null,
+  availablePrinters = null,
+  printOptions = null,
 } = {}) {
   const finalStatus = ['completed', 'failed', 'cancelled', 'partial'].includes(status) ? status : 'failed';
   const safeRequested = Math.max(0, Math.floor(Number(copiesRequested) || 0));
   const safePrinted = Math.max(0, Math.min(safeRequested || Number.MAX_SAFE_INTEGER, Math.floor(Number(copiesPrinted) || 0)));
   const safeError = typeof error === 'string' && error.trim() ? error.trim().slice(0, 256) : null;
+  const safeFailureReason = typeof failureReason === 'string' && failureReason.trim()
+    ? failureReason.trim().slice(0, 512)
+    : null;
+  const safeRawFailureReason = typeof rawFailureReason === 'string' && rawFailureReason.trim()
+    ? rawFailureReason.trim().slice(0, 512)
+    : safeFailureReason;
+  const safeDeviceName = typeof deviceName === 'string' && deviceName.trim()
+    ? deviceName.trim().slice(0, 256)
+    : printerName;
+  const serializedDiagnostics = printerDiagnostics && typeof printerDiagnostics === 'object'
+    ? compactDiagnosticValue(printerDiagnostics)
+    : null;
+  const serializedPrinters = Array.isArray(availablePrinters)
+    ? availablePrinters.slice(0, 30).map((printer) => compactDiagnosticValue(printer))
+    : null;
   return {
     ok: finalStatus === 'completed',
     success: finalStatus === 'completed',
@@ -3729,10 +3842,103 @@ function normalizePrintResult({
     requestedCopies: safeRequested,
     completedCopies: safePrinted,
     error: safeError,
-    failureReason: finalStatus === 'failed' ? safeError : null,
+    failureReason: finalStatus === 'failed' || finalStatus === 'partial' ? (safeRawFailureReason || safeError) : null,
+    rawFailureReason: safeRawFailureReason,
     jobId,
-    printerName,
+    printerName: safeDeviceName,
+    deviceName: safeDeviceName,
+    printerDiagnostics: serializedDiagnostics,
+    availablePrinters: serializedPrinters,
+    printOptions: printOptions && typeof printOptions === 'object' ? compactDiagnosticValue(printOptions) : null,
   };
+}
+
+function summarizePrinterForDiagnostics(printer = {}) {
+  return {
+    name: printer.name || null,
+    displayName: printer.displayName || null,
+    description: printer.description || null,
+    status: printer.status ?? null,
+    statusLabel: printer.statusLabel || null,
+    isDefault: printer.isDefault === true,
+    isSelphy: printer.isSelphy === true,
+    isAvailable: printer.isAvailable ?? null,
+    unavailableReason: printer.unavailableReason || null,
+  };
+}
+
+function sanitizePrintOptions(options = {}) {
+  return {
+    silent: options.silent === true,
+    printBackground: options.printBackground === true,
+    copies: options.copies || null,
+    deviceName: options.deviceName || null,
+    pageSize: options.pageSize || null,
+    margins: options.margins || null,
+    landscape: options.landscape === true,
+    scaleFactor: options.scaleFactor || null,
+  };
+}
+
+function buildPrintDiagnostics({
+  selectedDevice = null,
+  selectedPrinterName = null,
+  printer = null,
+  printerList = null,
+  printOptions = null,
+  job = null,
+  copyIndex = null,
+  artworkReady = null,
+  htmlLoaded = null,
+  imageLoaded = null,
+  imageDecoded = null,
+  layoutReady = null,
+  webContentsPrintSuccess = null,
+  failureReason = null,
+  rawFailureReason = null,
+  staleSavedSelection = false,
+  message = null,
+} = {}) {
+  const availablePrinters = Array.isArray(printerList?.printers)
+    ? printerList.printers.map(summarizePrinterForDiagnostics)
+    : [];
+  const selectedName = selectedDevice || selectedPrinterName || printer?.name || null;
+  return {
+    selectedDevice: selectedName,
+    storedSelectedPrinterName: selectedPrinterName || null,
+    found: Boolean(printer),
+    availablePrinters,
+    printerStatus: printer ? summarizePrinterForDiagnostics(printer) : null,
+    staleSavedSelection: staleSavedSelection === true,
+    artworkReady: artworkReady ?? null,
+    htmlLoaded: htmlLoaded ?? null,
+    imageLoaded: imageLoaded ?? null,
+    imageDecoded: imageDecoded ?? null,
+    layoutReady: layoutReady ?? null,
+    printOptions: printOptions ? sanitizePrintOptions(printOptions) : null,
+    webContentsPrintSuccess,
+    failureReason: failureReason || null,
+    rawFailureReason: rawFailureReason || failureReason || null,
+    message: message || null,
+    jobId: job?.id || null,
+    sessionId: job?.sessionId || null,
+    copyIndex,
+    finalCopies: job?.finalCopies || null,
+    platform: process.platform,
+    isPackaged: app.isPackaged,
+  };
+}
+
+function createPrintDiagnosticError(message, diagnostics) {
+  const error = new Error(message);
+  error.printDiagnostics = diagnostics;
+  error.rawFailureReason = message;
+  return error;
+}
+
+function logPrintDiagnostics(diagnostics) {
+  console.log('[PRINT DIAGNOSTICS]', compactDiagnosticValue(diagnostics));
+  writeDiagnosticEvent('PRINT DIAGNOSTICS', diagnostics);
 }
 
 function filePathToDataUrl(filePath) {
@@ -3894,6 +4100,9 @@ async function submitSinglePrintCopy({
   job,
   copyIndex,
   printerName,
+  printer,
+  printerList,
+  selectedPrinterName,
 }) {
   const printWin = new BrowserWindow({
     show: false,
@@ -3930,19 +4139,65 @@ async function submitSinglePrintCopy({
 
   try {
     await printWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(shell));
-    const imageLoaded = await printWin.webContents.executeJavaScript(`
+    const readiness = await printWin.webContents.executeJavaScript(`
       new Promise((resolve) => {
+        const startedAt = Date.now();
+        const finish = (payload) => resolve({
+          htmlLoaded: document.readyState !== 'loading',
+          elapsedMs: Date.now() - startedAt,
+          ...payload,
+        });
+        const timeout = setTimeout(() => {
+          finish({
+            imageLoaded: false,
+            imageDecoded: false,
+            layoutReady: false,
+            error: 'print image load timed out',
+          });
+        }, 15000);
         const img = document.createElement('img');
-        img.onload = () => resolve(true);
-        img.onerror = () => resolve(false);
+        img.onload = async () => {
+          let imageDecoded = false;
+          let decodeError = null;
+          try {
+            if (typeof img.decode === 'function') {
+              await img.decode();
+            }
+            imageDecoded = true;
+          } catch (error) {
+            decodeError = error?.message || String(error);
+          }
+          requestAnimationFrame(() => requestAnimationFrame(() => {
+            clearTimeout(timeout);
+            const rect = img.getBoundingClientRect();
+            finish({
+              imageLoaded: true,
+              imageDecoded,
+              decodeError,
+              layoutReady: rect.width > 0 && rect.height > 0,
+              naturalWidth: img.naturalWidth,
+              naturalHeight: img.naturalHeight,
+              renderedWidth: rect.width,
+              renderedHeight: rect.height,
+            });
+          }));
+        };
+        img.onerror = () => {
+          clearTimeout(timeout);
+          finish({
+            imageLoaded: false,
+            imageDecoded: false,
+            layoutReady: false,
+            error: 'print image failed to load',
+          });
+        };
         img.src = ${JSON.stringify(dataUrl)};
         document.body.appendChild(img);
       });
     `);
-    if (!imageLoaded) {
-      return { success: false, failureReason: 'print image failed to load' };
-    }
-    await wait(80);
+    const artworkReady = readiness?.imageLoaded === true
+      && readiness?.imageDecoded === true
+      && readiness?.layoutReady === true;
 
     const printOptions = {
       silent: silent === true,
@@ -3957,6 +4212,38 @@ async function submitSinglePrintCopy({
       printOptions.deviceName = printerName;
     }
 
+    if (!artworkReady) {
+      const failureReason = readiness?.error || readiness?.decodeError || 'print artwork was not ready';
+      const printerDiagnostics = buildPrintDiagnostics({
+        selectedDevice: printerName,
+        selectedPrinterName,
+        printer,
+        printerList,
+        printOptions,
+        job,
+        copyIndex,
+        artworkReady,
+        htmlLoaded: readiness?.htmlLoaded ?? null,
+        imageLoaded: readiness?.imageLoaded ?? null,
+        imageDecoded: readiness?.imageDecoded ?? null,
+        layoutReady: readiness?.layoutReady ?? null,
+        webContentsPrintSuccess: false,
+        failureReason,
+        rawFailureReason: failureReason,
+        message: failureReason,
+      });
+      logPrintDiagnostics(printerDiagnostics);
+      return {
+        success: false,
+        failureReason,
+        rawFailureReason: failureReason,
+        deviceName: printerName,
+        printerDiagnostics,
+        availablePrinters: printerDiagnostics.availablePrinters,
+        printOptions: printerDiagnostics.printOptions,
+      };
+    }
+
     if (!app.isPackaged) {
       console.log('[print] submitting copy', {
         jobId: job.id,
@@ -3969,9 +4256,31 @@ async function submitSinglePrintCopy({
 
     const result = await new Promise((resolve) => {
       printWin.webContents.print(printOptions, (success, failureReason) => {
-        resolve({ success, failureReason: failureReason || null });
+        resolve({
+          success,
+          failureReason: failureReason || null,
+          rawFailureReason: failureReason || null,
+        });
       });
     });
+    const printerDiagnostics = buildPrintDiagnostics({
+      selectedDevice: printerName,
+      selectedPrinterName,
+      printer,
+      printerList,
+      printOptions,
+      job,
+      copyIndex,
+      artworkReady,
+      htmlLoaded: readiness?.htmlLoaded ?? null,
+      imageLoaded: readiness?.imageLoaded ?? null,
+      imageDecoded: readiness?.imageDecoded ?? null,
+      layoutReady: readiness?.layoutReady ?? null,
+      webContentsPrintSuccess: result.success,
+      failureReason: result.failureReason,
+      rawFailureReason: result.rawFailureReason,
+    });
+    logPrintDiagnostics(printerDiagnostics);
 
     if (!app.isPackaged) {
       console.log('[print] copy result', {
@@ -3988,7 +4297,13 @@ async function submitSinglePrintCopy({
       // before its dedicated print window is destroyed.
       await wait(250);
     }
-    return result;
+    return {
+      ...result,
+      deviceName: printerName,
+      printerDiagnostics,
+      availablePrinters: printerDiagnostics.availablePrinters,
+      printOptions: printerDiagnostics.printOptions,
+    };
   } finally {
     if (!printWin.isDestroyed()) printWin.destroy();
   }
@@ -4019,6 +4334,7 @@ async function runPrintJob(job, pending) {
   try {
     const target = await resolveTargetPrinter(sender);
     const printerName = target.printer.name;
+    const selectedPrinterName = target.settings?.selectedPrinterName || printerName;
     updatePrintJob(job, {
       status: 'printing',
       startedAt: new Date().toISOString(),
@@ -4052,10 +4368,11 @@ async function runPrintJob(job, pending) {
           status,
           copiesRequested: job.finalCopies,
           copiesPrinted: completedCopies,
-          error: completedCopies > 0 ? 'Stopped remaining copies.' : null,
-          jobId: job.id,
-          printerName,
-        });
+        error: completedCopies > 0 ? 'Stopped remaining copies.' : null,
+        jobId: job.id,
+        printerName,
+        deviceName: printerName,
+      });
       }
 
       const currentCopy = copyIndex + 1;
@@ -4073,6 +4390,9 @@ async function runPrintJob(job, pending) {
         job,
         copyIndex: currentCopy,
         printerName,
+        printer: target.printer,
+        printerList: target.printerList,
+        selectedPrinterName,
       });
 
       if (!result.success) {
@@ -4090,8 +4410,14 @@ async function runPrintJob(job, pending) {
           copiesRequested: job.finalCopies,
           copiesPrinted: completedCopies,
           error: failureReason,
+          failureReason,
+          rawFailureReason: result.rawFailureReason || failureReason,
           jobId: job.id,
           printerName,
+          deviceName: result.deviceName || printerName,
+          printerDiagnostics: result.printerDiagnostics || null,
+          availablePrinters: result.availablePrinters || null,
+          printOptions: result.printOptions || null,
         });
       }
 
@@ -4123,9 +4449,17 @@ async function runPrintJob(job, pending) {
       copiesPrinted: completedCopies,
       jobId: job.id,
       printerName,
+      deviceName: printerName,
     });
   } catch (err) {
     const failureReason = err?.message || String(err);
+    const printerDiagnostics = err?.printDiagnostics || buildPrintDiagnostics({
+      failureReason,
+      rawFailureReason: err?.rawFailureReason || failureReason,
+      message: failureReason,
+      job,
+    });
+    logPrintDiagnostics(printerDiagnostics);
     const status = completedCopies > 0 ? 'partial' : 'failed';
     updatePrintJob(job, {
       status,
@@ -4139,7 +4473,14 @@ async function runPrintJob(job, pending) {
       copiesRequested: job.finalCopies,
       copiesPrinted: completedCopies,
       error: failureReason,
+      failureReason,
+      rawFailureReason: err?.rawFailureReason || failureReason,
       jobId: job.id,
+      printerName: printerDiagnostics.selectedDevice || null,
+      deviceName: printerDiagnostics.selectedDevice || null,
+      printerDiagnostics,
+      availablePrinters: printerDiagnostics.availablePrinters || null,
+      printOptions: printerDiagnostics.printOptions || null,
     });
   } finally {
     if (!app.isPackaged) {
@@ -5138,6 +5479,13 @@ ipcMain.handle('diag:log-event', async (_event, payload = {}) => {
     : 'renderer-diagnostic';
   await writeDiagnosticEvent(type, payload.details || {});
   return { ok: true };
+});
+ipcMain.removeHandler('diag:get-runtime-info');
+ipcMain.handle('diag:get-runtime-info', async () => {
+  const info = getRuntimeDiagnostics();
+  console.log('[AFTERIMAGE BUILD]', info);
+  await writeDiagnosticEvent('AFTERIMAGE BUILD', info);
+  return { ok: true, info };
 });
 
 ipcMain.handle('print-strip', async (event, payload = {}) => {
