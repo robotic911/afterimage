@@ -3589,6 +3589,9 @@ const WINDOWS_SELPHY_CP1500_PRINT_PAGE = Object.freeze({
   preferCSSPageSize: false,
   scaleFactor: WINDOWS_SELPHY_CP1500_SCALE_FACTOR,
   dpi: { horizontal: 300, vertical: 300 },
+  zeroMarginDocument: true,
+  borderlessIntent: true,
+  borderlessOverscanPercent: 0,
   windowsCompensation: 'Windows Canon SELPHY CP1500 driver shrinks the rendered page to its printable area. Keep the generated PNG unchanged and compensate only in the Windows print transform.',
 });
 
@@ -3629,6 +3632,72 @@ function getPrintPageConfig(printer = null) {
 }
 
 function buildPrintShell(printDocumentTitle, printPageConfig) {
+  if (printPageConfig.zeroMarginDocument) {
+    const fitCss = printPageConfig.imageFit === 'cover'
+      ? `
+    object-fit: cover;
+    object-position: center center;`
+      : `
+    object-fit: fill;`;
+    return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>${printDocumentTitle}</title>
+<style>
+  @page { size: ${printPageConfig.cssWidth} ${printPageConfig.cssHeight}; margin: 0; }
+  * { box-sizing: border-box; }
+  html {
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #fff;
+  }
+  body {
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #fff;
+  }
+  #print-root {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0;
+    outline: 0;
+    overflow: hidden;
+    line-height: 0;
+    background: #fff;
+  }
+  #print-root img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    max-height: none;
+    display: block;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0;
+    outline: 0;${fitCss}
+    image-rendering: -webkit-optimize-contrast;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+</style>
+</head>
+<body><div id="print-root"></div></body>
+</html>`;
+  }
+
   const coverCss = printPageConfig.imageFit === 'cover'
     ? `
     object-fit: cover;
@@ -4061,12 +4130,93 @@ function extractPrinterMediaMetrics(printer = {}) {
   };
 }
 
+function collectPrinterOptionMatches(value, terms, pathName = 'options', out = [], seen = new Set()) {
+  if (out.length >= 30) return out;
+  if (value == null) return out;
+
+  if (typeof value === 'object') {
+    if (seen.has(value)) return out;
+    seen.add(value);
+    if (Array.isArray(value)) {
+      value.forEach((item, index) => {
+        collectPrinterOptionMatches(item, terms, `${pathName}[${index}]`, out, seen);
+      });
+      return out;
+    }
+    Object.entries(value).forEach(([key, child]) => {
+      const nextPath = `${pathName}.${key}`;
+      const keyText = String(key).toLowerCase();
+      const childText = typeof child === 'object' ? '' : String(child || '').toLowerCase();
+      const matchedTerms = terms.filter((term) => keyText.includes(term) || childText.includes(term));
+      if (matchedTerms.length && out.length < 30) {
+        out.push({
+          path: nextPath,
+          value: typeof child === 'object' ? '[object]' : String(child).slice(0, 160),
+          matchedTerms,
+        });
+      }
+      collectPrinterOptionMatches(child, terms, nextPath, out, seen);
+    });
+    return out;
+  }
+
+  const valueText = String(value).toLowerCase();
+  const matchedTerms = terms.filter((term) => valueText.includes(term));
+  if (matchedTerms.length && out.length < 30) {
+    out.push({
+      path: pathName,
+      value: String(value).slice(0, 160),
+      matchedTerms,
+    });
+  }
+  return out;
+}
+
+function optionPathLooksSelected(pathName = '') {
+  const pathText = String(pathName).toLowerCase();
+  return ['selected', 'current', 'default', 'active'].some((term) => pathText.includes(term));
+}
+
+function buildBorderlessPrintDiagnostics(printer = {}, printPageConfig = {}, printOptions = {}) {
+  const borderlessTerms = ['borderless', 'border-less', 'full bleed', 'full-bleed', 'edge-to-edge', 'edge to edge'];
+  const paperTerms = ['postcard', '4x6', '4 x 6', '100x148', '100 x 148', 'photo', 'bordered', 'media', 'paper'];
+  const borderlessMatches = collectPrinterOptionMatches(printer.options || {}, borderlessTerms);
+  const paperMatches = collectPrinterOptionMatches(printer.options || {}, paperTerms);
+  const selectedBorderlessMatches = borderlessMatches.filter((match) => optionPathLooksSelected(match.path));
+  const selectedPaperMatches = paperMatches.filter((match) => optionPathLooksSelected(match.path));
+  const knownSelphy = isSelphyPrinter(printer);
+
+  return {
+    supportedByKnownPrinterProfile: knownSelphy,
+    exposedInPrinterOptions: borderlessMatches.length > 0,
+    selectedInPrinterOptions: selectedBorderlessMatches.length > 0
+      ? true
+      : (borderlessMatches.length > 0 ? false : null),
+    selectedByElectronOption: false,
+    electronBorderlessOptionAvailable: false,
+    appRequestedZeroMargins: printOptions?.margins?.marginType === 'none'
+      || (printOptions?.margins?.marginType === 'custom'
+        && Number(printOptions?.margins?.top) === 0
+        && Number(printOptions?.margins?.right) === 0
+        && Number(printOptions?.margins?.bottom) === 0
+        && Number(printOptions?.margins?.left) === 0),
+    appRequestedBorderlessIntent: printPageConfig.borderlessIntent === true,
+    overscanPercent: Number(printPageConfig.borderlessOverscanPercent) || 0,
+    driverPreferenceRequired: true,
+    borderlessMatches,
+    selectedBorderlessMatches,
+    paperMatches,
+    selectedPaperMatches,
+  };
+}
+
 function buildPrintFitDiagnostics(printPageConfig, readiness = {}, printOptions = {}, printer = {}) {
   const sourceWidth = Number(readiness?.naturalWidth) || null;
   const sourceHeight = Number(readiness?.naturalHeight) || null;
   const sourceAspect = sourceWidth && sourceHeight ? sourceWidth / sourceHeight : null;
   const pageAspect = printPageConfig.widthMm / printPageConfig.heightMm;
   const printerMedia = extractPrinterMediaMetrics(printer);
+  const borderless = buildBorderlessPrintDiagnostics(printer, printPageConfig, printOptions);
   const scaleFactor = Number(printOptions?.scaleFactor) || 100;
   const scaleMultiplier = scaleFactor / 100;
   let effectiveRenderedWidthMm = printPageConfig.widthMm;
@@ -4104,10 +4254,17 @@ function buildPrintFitDiagnostics(printPageConfig, readiness = {}, printOptions 
       htmlHeightPx: Number(readiness?.htmlHeight) || null,
       bodyWidthPx: Number(readiness?.bodyWidth) || null,
       bodyHeightPx: Number(readiness?.bodyHeight) || null,
+      rootWidthPx: Number(readiness?.rootWidth) || null,
+      rootHeightPx: Number(readiness?.rootHeight) || null,
       imageCssWidth: readiness?.imageCssWidth || null,
       imageCssHeight: readiness?.imageCssHeight || null,
       imageRenderedWidthPx: Number(readiness?.renderedWidth) || null,
       imageRenderedHeightPx: Number(readiness?.renderedHeight) || null,
+      bodyMargin: readiness?.bodyMargin || null,
+      bodyPadding: readiness?.bodyPadding || null,
+      rootMargin: readiness?.rootMargin || null,
+      rootPadding: readiness?.rootPadding || null,
+      rootBorderWidth: readiness?.rootBorderWidth || null,
     },
     expectedPhysicalDimensions: {
       widthMm: printPageConfig.widthMm,
@@ -4125,6 +4282,7 @@ function buildPrintFitDiagnostics(printPageConfig, readiness = {}, printOptions 
     reportedPrinterPrintableArea: printerMedia.printableArea,
     reportedPrintableScalePercent: printerMedia.printableScalePercent,
     printerMediaSource: printerMedia.source,
+    borderless,
     cssPageSize: {
       width: printPageConfig.cssWidth,
       height: printPageConfig.cssHeight,
@@ -4221,6 +4379,7 @@ function buildPrintDiagnostics({
     cssMargins: printFit?.cssMargins || null,
     applicationMargins: printFit?.applicationMargins || null,
     cssImageFit: printFit?.cssImageFit || null,
+    borderless: printFit?.borderless || null,
     windowsCompensation: printFit?.windowsCompensation || null,
     effectivePrintDimensions: printFit?.effectivePrintDimensions || null,
     printerDriverOptions: printer?.options && typeof printer.options === 'object' ? compactDiagnosticValue(printer.options) : null,
@@ -4459,9 +4618,13 @@ async function submitSinglePrintCopy({
           requestAnimationFrame(() => requestAnimationFrame(() => {
             clearTimeout(timeout);
             const rect = img.getBoundingClientRect();
+            const root = document.getElementById('print-root') || document.body;
             const bodyRect = document.body.getBoundingClientRect();
             const htmlRect = document.documentElement.getBoundingClientRect();
+            const rootRect = root.getBoundingClientRect();
             const imgStyle = window.getComputedStyle(img);
+            const bodyStyle = window.getComputedStyle(document.body);
+            const rootStyle = window.getComputedStyle(root);
             finish({
               imageLoaded: true,
               imageDecoded,
@@ -4475,8 +4638,15 @@ async function submitSinglePrintCopy({
               htmlHeight: htmlRect.height,
               bodyWidth: bodyRect.width,
               bodyHeight: bodyRect.height,
+              rootWidth: rootRect.width,
+              rootHeight: rootRect.height,
               imageCssWidth: imgStyle.width,
               imageCssHeight: imgStyle.height,
+              bodyMargin: bodyStyle.margin,
+              bodyPadding: bodyStyle.padding,
+              rootMargin: rootStyle.margin,
+              rootPadding: rootStyle.padding,
+              rootBorderWidth: rootStyle.borderWidth,
               devicePixelRatio: window.devicePixelRatio,
             });
           }));
@@ -4491,7 +4661,7 @@ async function submitSinglePrintCopy({
           });
         };
         img.src = ${JSON.stringify(dataUrl)};
-        document.body.appendChild(img);
+        (document.getElementById('print-root') || document.body).appendChild(img);
       });
     `);
     const artworkReady = readiness?.imageLoaded === true
@@ -4519,7 +4689,7 @@ async function submitSinglePrintCopy({
     const printFit = buildPrintFitDiagnostics(printPageConfig, readiness, printOptions, printer);
 
     if (process.platform === 'win32' && !app.isPackaged) {
-      console.log('[WINDOWS PRINT DIAGNOSTICS]', compactDiagnosticValue({
+      console.log('[WINDOWS BORDERLESS PRINT]', compactDiagnosticValue({
         platform: process.platform,
         printer: summarizePrinterForDiagnostics(printer),
         sourceImage: printFit.sourceImage,
@@ -4533,6 +4703,7 @@ async function submitSinglePrintCopy({
         cssPageSize: printFit.cssPageSize,
         cssMargins: printFit.cssMargins,
         applicationMargins: printFit.applicationMargins,
+        borderless: printFit.borderless,
         calculatedScale: printFit.calculatedScale,
         windowsCompensation: printFit.windowsCompensation,
         effectivePrintDimensions: printFit.effectivePrintDimensions,
