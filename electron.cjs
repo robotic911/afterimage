@@ -12,6 +12,14 @@ const {
 const {
   maybeInitializeFromPortableData,
 } = require('./scripts/portable-data.cjs');
+const {
+  WINDOWS_BORDERLESS_PREF_CACHE_MS,
+  buildCanonicalElectronPrintOptions,
+  buildWindowsPrintSnapshot,
+  getCanonicalPrintPageConfig,
+  isSelphyPrinter,
+  validateWindowsPrintInvariants,
+} = require('./printPipeline.cjs');
 
 const APP_ID = 'com.kennethpatino.kukuphotobooth';
 const SOFTCOPY_SAVE_CHANNEL = 'softcopy-local:save-session-media';
@@ -3189,6 +3197,9 @@ ipcMain.handle('today-monitor:print-extra-session-copy', async (event, payload =
       job,
       copyIndex: 1,
       printerName,
+      printer: target.printer,
+      printerList: target.printerList,
+      selectedPrinterName: target.settings?.selectedPrinterName || printerName,
     });
 
     const normalized = normalizePrintResult({
@@ -3309,6 +3320,9 @@ ipcMain.handle('today-monitor:generate-and-print-keychain', async (event, payloa
         job,
         copyIndex: 1,
         printerName,
+        printer: target.printer,
+        printerList: target.printerList,
+        selectedPrinterName: target.settings?.selectedPrinterName || printerName,
       });
 
       const normalized = normalizePrintResult({
@@ -3550,13 +3564,11 @@ ipcMain.handle('app:quit', async () => {
 // ─────────────────────────────────────────────────────────────────────────
 // Print pipeline
 // ─────────────────────────────────────────────────────────────────────────
-const MICRONS_PER_INCH = 25400;
 const MIN_PRINT_COPIES = 1;
 const MAX_PRINT_COPIES = 3;
 const DEFAULT_PRINT_COPIES = 1;
 const MAX_PRINT_QUEUE_JOBS = 50;
 const FINAL_PRINT_JOB_STATUSES = new Set(['completed', 'failed', 'cancelled', 'partial']);
-const WINDOWS_SELPHY_CP1500_SCALE_FACTOR = 108;
 const printQueue = [];
 const pendingPrintJobs = new Map();
 let activePrintJobId = null;
@@ -3565,35 +3577,7 @@ let printerDiscoveryCache = {
   expiresAt: 0,
   printers: null,
 };
-const DEFAULT_ELECTRON_PRINT_PAGE = Object.freeze({
-  id: 'default_4x6',
-  cssWidth: '4in',
-  cssHeight: '6in',
-  widthMicrons: 4 * MICRONS_PER_INCH,
-  heightMicrons: 6 * MICRONS_PER_INCH,
-  widthMm: 101.6,
-  heightMm: 152.4,
-  imageFit: 'fill',
-  preferCSSPageSize: false,
-  windowsCompensation: null,
-});
-const WINDOWS_SELPHY_CP1500_PRINT_PAGE = Object.freeze({
-  id: 'canon_selphy_cp1500_windows_zero_margin_4x6',
-  cssWidth: '4in',
-  cssHeight: '6in',
-  widthMicrons: 4 * MICRONS_PER_INCH,
-  heightMicrons: 6 * MICRONS_PER_INCH,
-  widthMm: 101.6,
-  heightMm: 152.4,
-  imageFit: 'fill',
-  preferCSSPageSize: false,
-  scaleFactor: WINDOWS_SELPHY_CP1500_SCALE_FACTOR,
-  dpi: { horizontal: 300, vertical: 300 },
-  zeroMarginDocument: true,
-  borderlessIntent: true,
-  borderlessOverscanPercent: 0,
-  windowsCompensation: 'Windows Canon SELPHY CP1500 driver shrinks the rendered page to its printable area. Keep the generated PNG unchanged and compensate only in the Windows print transform.',
-});
+const windowsBorderlessPreferenceCache = new Map();
 
 function normalizePrinterStatus(status) {
   if (status == null || status === '') {
@@ -3619,16 +3603,11 @@ function normalizePrinterStatus(status) {
   };
 }
 
-function isSelphyPrinter(printer = {}) {
-  const label = `${printer.name || ''} ${printer.displayName || ''} ${printer.description || ''}`.toLowerCase();
-  return label.includes('canon selphy') || label.includes('selphy cp1500') || label.includes('cp1500') || label.includes('selphy');
-}
-
 function getPrintPageConfig(printer = null) {
-  if (process.platform === 'win32' && isSelphyPrinter(printer || {})) {
-    return WINDOWS_SELPHY_CP1500_PRINT_PAGE;
-  }
-  return DEFAULT_ELECTRON_PRINT_PAGE;
+  return getCanonicalPrintPageConfig({
+    platform: process.platform,
+    printer,
+  });
 }
 
 function buildPrintShell(printDocumentTitle, printPageConfig) {
@@ -3932,6 +3911,13 @@ function serializePrintJob(job) {
   };
 }
 
+function getPrintJobType(job = {}) {
+  const id = String(job?.id || '');
+  if (job?.keychainCopies) return 'keychain';
+  if (id.startsWith('reprint_')) return 'reprint';
+  return 'customer_print';
+}
+
 function normalizePrintResult({
   status = 'failed',
   copiesRequested = 0,
@@ -4011,6 +3997,7 @@ function sanitizePrintOptions(options = {}) {
     landscape: options.landscape === true,
     scaleFactor: options.scaleFactor || null,
     dpi: options.dpi || null,
+    usePrinterDefaultPageSize: options.usePrinterDefaultPageSize === true,
     preferCSSPageSize: options.preferCSSPageSize === true,
   };
 }
@@ -4177,7 +4164,7 @@ function optionPathLooksSelected(pathName = '') {
   return ['selected', 'current', 'default', 'active'].some((term) => pathText.includes(term));
 }
 
-function buildBorderlessPrintDiagnostics(printer = {}, printPageConfig = {}, printOptions = {}) {
+function buildBorderlessPrintDiagnostics(printer = {}, printPageConfig = {}, printOptions = {}, windowsPrintPrep = null) {
   const borderlessTerms = ['borderless', 'border-less', 'full bleed', 'full-bleed', 'edge-to-edge', 'edge to edge'];
   const paperTerms = ['postcard', '4x6', '4 x 6', '100x148', '100 x 148', 'photo', 'bordered', 'media', 'paper'];
   const borderlessMatches = collectPrinterOptionMatches(printer.options || {}, borderlessTerms);
@@ -4185,13 +4172,20 @@ function buildBorderlessPrintDiagnostics(printer = {}, printPageConfig = {}, pri
   const selectedBorderlessMatches = borderlessMatches.filter((match) => optionPathLooksSelected(match.path));
   const selectedPaperMatches = paperMatches.filter((match) => optionPathLooksSelected(match.path));
   const knownSelphy = isSelphyPrinter(printer);
+  const ticketBorderlessSelected = typeof windowsPrintPrep?.borderlessSelectedAfter === 'boolean'
+    ? windowsPrintPrep.borderlessSelectedAfter
+    : (typeof windowsPrintPrep?.borderlessSelectedBefore === 'boolean' ? windowsPrintPrep.borderlessSelectedBefore : null);
 
   return {
     supportedByKnownPrinterProfile: knownSelphy,
+    supportedByWindowsPrintTicket: typeof windowsPrintPrep?.borderlessSupported === 'boolean'
+      ? windowsPrintPrep.borderlessSupported
+      : null,
     exposedInPrinterOptions: borderlessMatches.length > 0,
-    selectedInPrinterOptions: selectedBorderlessMatches.length > 0
+    selectedInWindowsPrintTicket: ticketBorderlessSelected,
+    selectedInPrinterOptions: ticketBorderlessSelected ?? (selectedBorderlessMatches.length > 0
       ? true
-      : (borderlessMatches.length > 0 ? false : null),
+      : (borderlessMatches.length > 0 ? false : null)),
     selectedByElectronOption: false,
     electronBorderlessOptionAvailable: false,
     appRequestedZeroMargins: printOptions?.margins?.marginType === 'none'
@@ -4210,13 +4204,290 @@ function buildBorderlessPrintDiagnostics(printer = {}, printPageConfig = {}, pri
   };
 }
 
-function buildPrintFitDiagnostics(printPageConfig, readiness = {}, printOptions = {}, printer = {}) {
+function runWindowsPowerShellJson(script, { timeoutMs = 7000 } = {}) {
+  return new Promise((resolve) => {
+    if (process.platform !== 'win32') {
+      resolve({ ok: false, skipped: true, reason: 'not_win32' });
+      return;
+    }
+
+    const encodedCommand = Buffer.from(script, 'utf16le').toString('base64');
+    const child = spawn('powershell.exe', [
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-EncodedCommand',
+      encodedCommand,
+    ], {
+      windowsHide: true,
+    });
+    let settled = false;
+    let stdout = '';
+    let stderr = '';
+    const settle = (payload) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(payload);
+    };
+    const timer = setTimeout(() => {
+      try { child.kill(); } catch { /* ignore */ }
+      settle({
+        ok: false,
+        timedOut: true,
+        error: `PowerShell printer diagnostics timed out after ${timeoutMs}ms`,
+        stderr: stderr.trim(),
+      });
+    }, timeoutMs);
+
+    child.stdout?.on('data', (chunk) => { stdout += chunk.toString('utf8'); });
+    child.stderr?.on('data', (chunk) => { stderr += chunk.toString('utf8'); });
+    child.on('error', (error) => {
+      settle({
+        ok: false,
+        error: error?.message || String(error),
+        stderr: stderr.trim(),
+      });
+    });
+    child.on('close', (code) => {
+      const text = stdout.trim();
+      if (!text) {
+        settle({
+          ok: false,
+          exitCode: code,
+          error: stderr.trim() || 'PowerShell returned no output',
+        });
+        return;
+      }
+      const jsonLine = text.split(/\r?\n/).filter(Boolean).at(-1);
+      try {
+        const parsed = JSON.parse(jsonLine);
+        settle({
+          ...parsed,
+          exitCode: code,
+          stderr: stderr.trim() || null,
+        });
+      } catch (error) {
+        settle({
+          ok: false,
+          exitCode: code,
+          error: error?.message || String(error),
+          stdout: text.slice(-4000),
+          stderr: stderr.trim() || null,
+        });
+      }
+    });
+  });
+}
+
+function buildWindowsBorderlessPowerShell(printerName) {
+  const printerNameBase64 = Buffer.from(String(printerName || ''), 'utf8').toString('base64');
+  return `
+$ErrorActionPreference = 'Stop'
+$PrinterName = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${printerNameBase64}'))
+function EnumName($value) {
+  if ($null -eq $value) { return $null }
+  return $value.ToString()
+}
+function ToMm($value) {
+  if ($null -eq $value) { return $null }
+  return [Math]::Round(([double]$value * 25.4 / 96.0), 3)
+}
+function MediaRecord($media) {
+  if ($null -eq $media) { return $null }
+  return [ordered]@{
+    name = EnumName $media.PageMediaSizeName
+    widthDiu = $media.Width
+    heightDiu = $media.Height
+    widthMm = ToMm $media.Width
+    heightMm = ToMm $media.Height
+  }
+}
+function MediaScore($media) {
+  if ($null -eq $media) { return -1 }
+  $record = MediaRecord $media
+  $name = ([string]$record.name).ToLowerInvariant()
+  $width = [double]($record.widthMm)
+  $height = [double]($record.heightMm)
+  $shortSide = [Math]::Min($width, $height)
+  $longSide = [Math]::Max($width, $height)
+  $score = 0
+  if ($name -match 'borderless|full|bleed|edge') { $score += 100 }
+  if ($name -match '4x6|4 x 6|postcard|photo') { $score += 40 }
+  if ($shortSide -ge 98 -and $shortSide -le 103 -and $longSide -ge 146 -and $longSide -le 153) { $score += 30 }
+  return $score
+}
+function TicketRecord($ticket) {
+  if ($null -eq $ticket) { return $null }
+  return [ordered]@{
+    pageBorderless = EnumName $ticket.PageBorderless
+    pageMediaSize = MediaRecord $ticket.PageMediaSize
+    pageScalingFactor = $ticket.PageScalingFactor
+    pageScaling = EnumName $ticket.PageScaling
+    outputQuality = EnumName $ticket.OutputQuality
+    pageResolution = if ($null -eq $ticket.PageResolution) { $null } else { [ordered]@{
+      x = $ticket.PageResolution.X
+      y = $ticket.PageResolution.Y
+      quality = EnumName $ticket.PageResolution.QualitativeResolution
+    }}
+  }
+}
+$result = [ordered]@{
+  ok = $true
+  printerName = $PrinterName
+  inspected = $false
+  appliedChanges = $false
+  attemptedBorderless = $false
+  attemptedMediaSize = $false
+  borderlessSupported = $null
+  borderlessSelectedBefore = $null
+  borderlessSelectedAfter = $null
+  mediaSelectedBefore = $null
+  mediaSelectedAfter = $null
+  selectedMediaCandidate = $null
+  printConfiguration = $null
+  defaultTicketBefore = $null
+  defaultTicketAfter = $null
+  pageImageableArea = $null
+  pageBorderlessCapability = @()
+  pageMediaSizeCapability = @()
+  pageScalingCapability = @()
+  error = $null
+}
+try {
+  try {
+    $cfg = Get-PrintConfiguration -PrinterName $PrinterName -ErrorAction Stop
+    $result.printConfiguration = [ordered]@{
+      paperSize = $cfg.PaperSize
+      color = $cfg.Color
+      duplexingMode = $cfg.DuplexingMode
+      printQuality = $cfg.PrintQuality
+    }
+  } catch {
+    $result.printConfiguration = [ordered]@{ error = $_.Exception.Message }
+  }
+
+  Add-Type -AssemblyName System.Printing
+  $server = New-Object System.Printing.LocalPrintServer
+  $queue = $server.GetPrintQueue($PrinterName)
+  $queue.Refresh()
+  $ticket = $queue.DefaultPrintTicket
+  $cap = $queue.GetPrintCapabilities($ticket)
+  $result.inspected = $true
+  $result.defaultTicketBefore = TicketRecord $ticket
+  $result.borderlessSelectedBefore = ((EnumName $ticket.PageBorderless) -eq 'Borderless')
+  $result.mediaSelectedBefore = $result.defaultTicketBefore.pageMediaSize
+
+  foreach ($item in $cap.PageBorderlessCapability) {
+    $result.pageBorderlessCapability += (EnumName $item)
+  }
+  $result.borderlessSupported = $result.pageBorderlessCapability -contains 'Borderless'
+
+  $mediaCandidates = @()
+  foreach ($media in $cap.PageMediaSizeCapability) {
+    $record = MediaRecord $media
+    $score = MediaScore $media
+    $record['score'] = $score
+    $result.pageMediaSizeCapability += $record
+    if ($score -gt 0) {
+      $mediaCandidates += [pscustomobject]@{ media = $media; score = $score; record = $record }
+    }
+  }
+  $bestMedia = $mediaCandidates | Sort-Object -Property score -Descending | Select-Object -First 1
+  if ($null -ne $bestMedia) {
+    $result.selectedMediaCandidate = $bestMedia.record
+  }
+
+  foreach ($item in $cap.PageScalingCapability) {
+    $result.pageScalingCapability += (EnumName $item)
+  }
+  if ($null -ne $cap.PageImageableArea) {
+    $result.pageImageableArea = [ordered]@{
+      originWidthDiu = $cap.PageImageableArea.OriginWidth
+      originHeightDiu = $cap.PageImageableArea.OriginHeight
+      extentWidthDiu = $cap.PageImageableArea.ExtentWidth
+      extentHeightDiu = $cap.PageImageableArea.ExtentHeight
+      originWidthMm = ToMm $cap.PageImageableArea.OriginWidth
+      originHeightMm = ToMm $cap.PageImageableArea.OriginHeight
+      extentWidthMm = ToMm $cap.PageImageableArea.ExtentWidth
+      extentHeightMm = ToMm $cap.PageImageableArea.ExtentHeight
+    }
+  }
+
+  $nextTicket = $ticket
+  if ($result.borderlessSupported -and -not $result.borderlessSelectedBefore) {
+    $result.attemptedBorderless = $true
+    $nextTicket.PageBorderless = [System.Printing.PageBorderless]::Borderless
+  }
+  if ($null -ne $bestMedia -and $bestMedia.score -ge 30) {
+    $currentName = if ($null -eq $ticket.PageMediaSize) { $null } else { EnumName $ticket.PageMediaSize.PageMediaSizeName }
+    $candidateName = EnumName $bestMedia.media.PageMediaSizeName
+    if ($currentName -ne $candidateName) {
+      $result.attemptedMediaSize = $true
+      $nextTicket.PageMediaSize = $bestMedia.media
+    }
+  }
+
+  if ($result.attemptedBorderless -or $result.attemptedMediaSize) {
+    $validation = $queue.MergeAndValidatePrintTicket($queue.DefaultPrintTicket, $nextTicket)
+    $queue.DefaultPrintTicket = $validation.ValidatedPrintTicket
+    $queue.Commit()
+    $queue.Refresh()
+    $result.appliedChanges = $true
+  }
+
+  $afterTicket = $queue.DefaultPrintTicket
+  $result.defaultTicketAfter = TicketRecord $afterTicket
+  $result.borderlessSelectedAfter = ((EnumName $afterTicket.PageBorderless) -eq 'Borderless')
+  $result.mediaSelectedAfter = $result.defaultTicketAfter.pageMediaSize
+} catch {
+  $result.ok = $false
+  $result.error = $_.Exception.Message
+}
+$result | ConvertTo-Json -Depth 12 -Compress
+`;
+}
+
+async function prepareWindowsBorderlessPrint(printerName, printPageConfig) {
+  if (
+    process.platform !== 'win32'
+    || !printPageConfig?.borderlessIntent
+    || typeof printerName !== 'string'
+    || !printerName.trim()
+  ) {
+    return { ok: false, skipped: true, reason: 'not_windows_borderless_print' };
+  }
+
+  const cacheKey = printerName.trim().toLowerCase();
+  const cached = windowsBorderlessPreferenceCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < WINDOWS_BORDERLESS_PREF_CACHE_MS) {
+    return { ...cached.result, cached: true };
+  }
+
+  const script = buildWindowsBorderlessPowerShell(printerName);
+  const result = await runWindowsPowerShellJson(script, { timeoutMs: 7000 });
+  const normalized = {
+    ...result,
+    cached: false,
+    printerName,
+  };
+  windowsBorderlessPreferenceCache.set(cacheKey, {
+    at: Date.now(),
+    result: normalized,
+  });
+  console.log('[WINDOWS CP1500 EDGE DEBUG] print ticket', compactDiagnosticValue(normalized));
+  await writeDiagnosticEvent('WINDOWS CP1500 EDGE DEBUG', normalized);
+  return normalized;
+}
+
+function buildPrintFitDiagnostics(printPageConfig, readiness = {}, printOptions = {}, printer = {}, windowsPrintPrep = null) {
   const sourceWidth = Number(readiness?.naturalWidth) || null;
   const sourceHeight = Number(readiness?.naturalHeight) || null;
   const sourceAspect = sourceWidth && sourceHeight ? sourceWidth / sourceHeight : null;
   const pageAspect = printPageConfig.widthMm / printPageConfig.heightMm;
   const printerMedia = extractPrinterMediaMetrics(printer);
-  const borderless = buildBorderlessPrintDiagnostics(printer, printPageConfig, printOptions);
+  const borderless = buildBorderlessPrintDiagnostics(printer, printPageConfig, printOptions, windowsPrintPrep);
   const scaleFactor = Number(printOptions?.scaleFactor) || 100;
   const scaleMultiplier = scaleFactor / 100;
   let effectiveRenderedWidthMm = printPageConfig.widthMm;
@@ -4277,11 +4548,14 @@ function buildPrintFitDiagnostics(printPageConfig, readiness = {}, printOptions 
       heightMicrons: printPageConfig.heightMicrons,
       widthMm: printPageConfig.widthMm,
       heightMm: printPageConfig.heightMm,
+      usePrinterDefaultPageSize: printOptions?.usePrinterDefaultPageSize === true,
+      electronPageSizeOption: printOptions?.pageSize || null,
     },
     reportedPrinterPageSize: printerMedia.pageSize,
     reportedPrinterPrintableArea: printerMedia.printableArea,
     reportedPrintableScalePercent: printerMedia.printableScalePercent,
     printerMediaSource: printerMedia.source,
+    windowsPrintPrep: windowsPrintPrep ? compactDiagnosticValue(windowsPrintPrep) : null,
     borderless,
     cssPageSize: {
       width: printPageConfig.cssWidth,
@@ -4352,6 +4626,8 @@ function buildPrintDiagnostics({
   staleSavedSelection = false,
   message = null,
   printFit = null,
+  printInvariantReport = null,
+  windowsPrintSnapshot = null,
 } = {}) {
   const availablePrinters = Array.isArray(printerList?.printers)
     ? printerList.printers.map(summarizePrinterForDiagnostics)
@@ -4375,6 +4651,7 @@ function buildPrintDiagnostics({
     expectedPhysicalDimensions: printFit?.expectedPhysicalDimensions || null,
     orientation: printOptions?.landscape === true ? 'landscape' : 'portrait',
     scaleFactor: printOptions?.scaleFactor ?? null,
+    windowsPrintPrep: printFit?.windowsPrintPrep || null,
     cssPageSize: printFit?.cssPageSize || null,
     cssMargins: printFit?.cssMargins || null,
     applicationMargins: printFit?.applicationMargins || null,
@@ -4382,6 +4659,8 @@ function buildPrintDiagnostics({
     borderless: printFit?.borderless || null,
     windowsCompensation: printFit?.windowsCompensation || null,
     effectivePrintDimensions: printFit?.effectivePrintDimensions || null,
+    printInvariantReport: printInvariantReport || null,
+    windowsPrintSnapshot: windowsPrintSnapshot || null,
     printerDriverOptions: printer?.options && typeof printer.options === 'object' ? compactDiagnosticValue(printer.options) : null,
     webContentsPrintSuccess,
     failureReason: failureReason || null,
@@ -4667,48 +4946,39 @@ async function submitSinglePrintCopy({
     const artworkReady = readiness?.imageLoaded === true
       && readiness?.imageDecoded === true
       && readiness?.layoutReady === true;
-
-    const printOptions = {
-      silent: silent === true,
-      printBackground: true,
-      copies: 1,
-      pageSize: { width: printPageConfig.widthMicrons, height: printPageConfig.heightMicrons },
-      margins: { marginType: 'none' },
-      landscape: false,
-      scaleFactor: printPageConfig.scaleFactor || 100,
-    };
-    if (printPageConfig.dpi) {
-      printOptions.dpi = printPageConfig.dpi;
-    }
-    if (printPageConfig.preferCSSPageSize) {
-      printOptions.preferCSSPageSize = true;
-    }
-    if (printerName) {
-      printOptions.deviceName = printerName;
-    }
-    const printFit = buildPrintFitDiagnostics(printPageConfig, readiness, printOptions, printer);
+    const windowsPrintPrep = await prepareWindowsBorderlessPrint(printerName, printPageConfig);
+    const printOptions = buildCanonicalElectronPrintOptions(printPageConfig, {
+      silent,
+      printerName,
+    });
+    const printFit = buildPrintFitDiagnostics(printPageConfig, readiness, printOptions, printer, windowsPrintPrep);
+    const printInvariantReport = validateWindowsPrintInvariants(printPageConfig, printOptions, {
+      platform: process.platform,
+      printer,
+      printerName,
+      readiness,
+    });
+    const windowsPrintSnapshot = process.platform === 'win32'
+      ? buildWindowsPrintSnapshot({
+        jobType: getPrintJobType(job),
+        printerName,
+        printer,
+        printPageConfig,
+        printOptions,
+        readiness,
+        printFit,
+        windowsPrintPrep,
+        invariantReport: printInvariantReport,
+      })
+      : null;
 
     if (process.platform === 'win32' && !app.isPackaged) {
-      console.log('[WINDOWS BORDERLESS PRINT]', compactDiagnosticValue({
-        platform: process.platform,
-        printer: summarizePrinterForDiagnostics(printer),
-        sourceImage: printFit.sourceImage,
-        printDocument: printFit.printDocument,
-        requestedPageSize: printFit.requestedPageSize,
-        reportedPrinterPageSize: printFit.reportedPrinterPageSize,
-        reportedPrinterPrintableArea: printFit.reportedPrinterPrintableArea,
-        reportedPrintableScalePercent: printFit.reportedPrintableScalePercent,
-        orientation: printOptions.landscape ? 'landscape' : 'portrait',
-        scaleFactor: printOptions.scaleFactor,
-        cssPageSize: printFit.cssPageSize,
-        cssMargins: printFit.cssMargins,
-        applicationMargins: printFit.applicationMargins,
-        borderless: printFit.borderless,
-        calculatedScale: printFit.calculatedScale,
-        windowsCompensation: printFit.windowsCompensation,
-        effectivePrintDimensions: printFit.effectivePrintDimensions,
-        printOptions: sanitizePrintOptions(printOptions),
-      }));
+      console.log('[WINDOWS PRINT SNAPSHOT]', compactDiagnosticValue(windowsPrintSnapshot));
+      await writeDiagnosticEvent('WINDOWS PRINT SNAPSHOT', windowsPrintSnapshot);
+      if (!printInvariantReport.ok) {
+        console.warn('[WINDOWS PRINT INVARIANT VIOLATION]', compactDiagnosticValue(printInvariantReport));
+        await writeDiagnosticEvent('WINDOWS PRINT INVARIANT VIOLATION', printInvariantReport);
+      }
     }
 
     if (!artworkReady) {
@@ -4731,6 +5001,8 @@ async function submitSinglePrintCopy({
         rawFailureReason: failureReason,
         message: failureReason,
         printFit,
+        printInvariantReport,
+        windowsPrintSnapshot,
       });
       logPrintDiagnostics(printerDiagnostics);
       return {
@@ -4780,6 +5052,8 @@ async function submitSinglePrintCopy({
       failureReason: result.failureReason,
       rawFailureReason: result.rawFailureReason,
       printFit,
+      printInvariantReport,
+      windowsPrintSnapshot,
     });
     logPrintDiagnostics(printerDiagnostics);
 

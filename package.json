@@ -64,6 +64,7 @@
       "keychainPricing.config.json",
       "keychainPricing.cjs",
       "preload.cjs",
+      "printPipeline.cjs",
       "scripts/portable-data.cjs",
       "dist/**/*",
       "default-templates/**/*",
