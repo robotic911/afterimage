@@ -3556,6 +3556,7 @@ const MAX_PRINT_COPIES = 3;
 const DEFAULT_PRINT_COPIES = 1;
 const MAX_PRINT_QUEUE_JOBS = 50;
 const FINAL_PRINT_JOB_STATUSES = new Set(['completed', 'failed', 'cancelled', 'partial']);
+const WINDOWS_SELPHY_CP1500_SCALE_FACTOR = 108;
 const printQueue = [];
 const pendingPrintJobs = new Map();
 let activePrintJobId = null;
@@ -3586,7 +3587,9 @@ const WINDOWS_SELPHY_CP1500_PRINT_PAGE = Object.freeze({
   heightMm: 152.4,
   imageFit: 'fill',
   preferCSSPageSize: false,
-  windowsCompensation: 'Windows SELPHY prints the generated 1200x1800 composition as the source of truth on a 4in x 6in zero-margin document. No extra application safe margin, postcard resize, or CSS page preference is applied.',
+  scaleFactor: WINDOWS_SELPHY_CP1500_SCALE_FACTOR,
+  dpi: { horizontal: 300, vertical: 300 },
+  windowsCompensation: 'Windows Canon SELPHY CP1500 driver shrinks the rendered page to its printable area. Keep the generated PNG unchanged and compensate only in the Windows print transform.',
 });
 
 function normalizePrinterStatus(status) {
@@ -3938,15 +3941,134 @@ function sanitizePrintOptions(options = {}) {
     margins: options.margins || null,
     landscape: options.landscape === true,
     scaleFactor: options.scaleFactor || null,
+    dpi: options.dpi || null,
     preferCSSPageSize: options.preferCSSPageSize === true,
   };
 }
 
-function buildPrintFitDiagnostics(printPageConfig, readiness = {}) {
+function roundDiagnosticNumber(value, decimals = 4) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  const factor = 10 ** decimals;
+  return Math.round(number * factor) / factor;
+}
+
+function micronsToMm(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number / 1000 : null;
+}
+
+function firstFiniteNumber(...values) {
+  for (const value of values) {
+    const number = Number(value);
+    if (Number.isFinite(number)) return number;
+  }
+  return null;
+}
+
+function findObjectWithMicronPageSize(value, seen = new Set()) {
+  if (!value || typeof value !== 'object') return null;
+  if (seen.has(value)) return null;
+  seen.add(value);
+
+  const widthMicrons = firstFiniteNumber(
+    value.width_microns,
+    value.widthMicrons,
+    value.widthMicron,
+    value.page_width_microns,
+    value.pageWidthMicrons,
+  );
+  const heightMicrons = firstFiniteNumber(
+    value.height_microns,
+    value.heightMicrons,
+    value.heightMicron,
+    value.page_height_microns,
+    value.pageHeightMicrons,
+  );
+  if (widthMicrons && heightMicrons) {
+    return value;
+  }
+
+  for (const child of Object.values(value)) {
+    const found = findObjectWithMicronPageSize(child, seen);
+    if (found) return found;
+  }
+  return null;
+}
+
+function extractPrinterMediaMetrics(printer = {}) {
+  const source = findObjectWithMicronPageSize(printer.options || {});
+  if (!source) {
+    return {
+      pageSize: null,
+      printableArea: null,
+      printableScalePercent: null,
+      source: null,
+      available: false,
+    };
+  }
+
+  const widthMicrons = firstFiniteNumber(
+    source.width_microns,
+    source.widthMicrons,
+    source.widthMicron,
+    source.page_width_microns,
+    source.pageWidthMicrons,
+  );
+  const heightMicrons = firstFiniteNumber(
+    source.height_microns,
+    source.heightMicrons,
+    source.heightMicron,
+    source.page_height_microns,
+    source.pageHeightMicrons,
+  );
+  const imageableLeftMicrons = firstFiniteNumber(source.imageable_area_left_microns, source.imageableAreaLeftMicrons);
+  const imageableRightMicrons = firstFiniteNumber(source.imageable_area_right_microns, source.imageableAreaRightMicrons);
+  const imageableTopMicrons = firstFiniteNumber(source.imageable_area_top_microns, source.imageableAreaTopMicrons);
+  const imageableBottomMicrons = firstFiniteNumber(source.imageable_area_bottom_microns, source.imageableAreaBottomMicrons);
+  const printableWidthMicrons = imageableLeftMicrons != null && imageableRightMicrons != null
+    ? Math.max(0, imageableRightMicrons - imageableLeftMicrons)
+    : null;
+  const printableHeightMicrons = imageableBottomMicrons != null && imageableTopMicrons != null
+    ? Math.max(0, imageableTopMicrons - imageableBottomMicrons)
+    : null;
+  const printableScalePercent = widthMicrons && heightMicrons && printableWidthMicrons && printableHeightMicrons
+    ? Math.min(printableWidthMicrons / widthMicrons, printableHeightMicrons / heightMicrons) * 100
+    : null;
+
+  return {
+    pageSize: {
+      widthMicrons,
+      heightMicrons,
+      widthMm: roundDiagnosticNumber(micronsToMm(widthMicrons), 3),
+      heightMm: roundDiagnosticNumber(micronsToMm(heightMicrons), 3),
+    },
+    printableArea: printableWidthMicrons && printableHeightMicrons
+      ? {
+          leftMicrons: imageableLeftMicrons,
+          rightMicrons: imageableRightMicrons,
+          topMicrons: imageableTopMicrons,
+          bottomMicrons: imageableBottomMicrons,
+          widthMicrons: printableWidthMicrons,
+          heightMicrons: printableHeightMicrons,
+          widthMm: roundDiagnosticNumber(micronsToMm(printableWidthMicrons), 3),
+          heightMm: roundDiagnosticNumber(micronsToMm(printableHeightMicrons), 3),
+        }
+      : null,
+    printableScalePercent: roundDiagnosticNumber(printableScalePercent, 2),
+    source: source.name || source.custom_display_name || source.display_name || null,
+    available: true,
+  };
+}
+
+function buildPrintFitDiagnostics(printPageConfig, readiness = {}, printOptions = {}, printer = {}) {
   const sourceWidth = Number(readiness?.naturalWidth) || null;
   const sourceHeight = Number(readiness?.naturalHeight) || null;
   const sourceAspect = sourceWidth && sourceHeight ? sourceWidth / sourceHeight : null;
   const pageAspect = printPageConfig.widthMm / printPageConfig.heightMm;
+  const printerMedia = extractPrinterMediaMetrics(printer);
+  const scaleFactor = Number(printOptions?.scaleFactor) || 100;
+  const scaleMultiplier = scaleFactor / 100;
   let effectiveRenderedWidthMm = printPageConfig.widthMm;
   let effectiveRenderedHeightMm = printPageConfig.heightMm;
   let cropLeftMm = 0;
@@ -3973,6 +4095,19 @@ function buildPrintFitDiagnostics(printPageConfig, readiness = {}) {
       widthPx: sourceWidth,
       heightPx: sourceHeight,
       aspect: sourceAspect,
+      renderedWidthPx: Number(readiness?.renderedWidth) || null,
+      renderedHeightPx: Number(readiness?.renderedHeight) || null,
+    },
+    printDocument: {
+      devicePixelRatio: Number(readiness?.devicePixelRatio) || null,
+      htmlWidthPx: Number(readiness?.htmlWidth) || null,
+      htmlHeightPx: Number(readiness?.htmlHeight) || null,
+      bodyWidthPx: Number(readiness?.bodyWidth) || null,
+      bodyHeightPx: Number(readiness?.bodyHeight) || null,
+      imageCssWidth: readiness?.imageCssWidth || null,
+      imageCssHeight: readiness?.imageCssHeight || null,
+      imageRenderedWidthPx: Number(readiness?.renderedWidth) || null,
+      imageRenderedHeightPx: Number(readiness?.renderedHeight) || null,
     },
     expectedPhysicalDimensions: {
       widthMm: printPageConfig.widthMm,
@@ -3986,6 +4121,10 @@ function buildPrintFitDiagnostics(printPageConfig, readiness = {}) {
       widthMm: printPageConfig.widthMm,
       heightMm: printPageConfig.heightMm,
     },
+    reportedPrinterPageSize: printerMedia.pageSize,
+    reportedPrinterPrintableArea: printerMedia.printableArea,
+    reportedPrintableScalePercent: printerMedia.printableScalePercent,
+    printerMediaSource: printerMedia.source,
     cssPageSize: {
       width: printPageConfig.cssWidth,
       height: printPageConfig.cssHeight,
@@ -4007,13 +4146,30 @@ function buildPrintFitDiagnostics(printPageConfig, readiness = {}) {
       safeMarginAppliedInGeneratedImageOnly: true,
     },
     pageAspect,
+    calculatedScale: {
+      electronScaleFactorPercent: scaleFactor,
+      preDriverScalePercent: roundDiagnosticNumber(scaleFactor, 2),
+      reportedPrintableScalePercent: printerMedia.printableScalePercent,
+      predictedAfterPrintableFitScalePercent: printerMedia.printableScalePercent
+        ? roundDiagnosticNumber(scaleFactor * (printerMedia.printableScalePercent / 100), 2)
+        : null,
+      scaleNeededToNeutralizeReportedPrintableFit: printerMedia.printableScalePercent
+        ? roundDiagnosticNumber(10000 / printerMedia.printableScalePercent, 2)
+        : null,
+    },
     effectivePrintDimensions: {
-      renderedWidthMm: effectiveRenderedWidthMm,
-      renderedHeightMm: effectiveRenderedHeightMm,
-      cropLeftMm,
-      cropRightMm,
-      cropTopMm,
-      cropBottomMm,
+      renderedWidthMm: roundDiagnosticNumber(effectiveRenderedWidthMm * scaleMultiplier, 3),
+      renderedHeightMm: roundDiagnosticNumber(effectiveRenderedHeightMm * scaleMultiplier, 3),
+      unscaledRenderedWidthMm: roundDiagnosticNumber(effectiveRenderedWidthMm, 3),
+      unscaledRenderedHeightMm: roundDiagnosticNumber(effectiveRenderedHeightMm, 3),
+      horizontalUnusedMm: roundDiagnosticNumber(Math.max(0, printPageConfig.widthMm - (effectiveRenderedWidthMm * scaleMultiplier)), 3),
+      verticalUnusedMm: roundDiagnosticNumber(Math.max(0, printPageConfig.heightMm - (effectiveRenderedHeightMm * scaleMultiplier)), 3),
+      horizontalOverflowMm: roundDiagnosticNumber(Math.max(0, (effectiveRenderedWidthMm * scaleMultiplier) - printPageConfig.widthMm), 3),
+      verticalOverflowMm: roundDiagnosticNumber(Math.max(0, (effectiveRenderedHeightMm * scaleMultiplier) - printPageConfig.heightMm), 3),
+      cropLeftMm: roundDiagnosticNumber(cropLeftMm, 3),
+      cropRightMm: roundDiagnosticNumber(cropRightMm, 3),
+      cropTopMm: roundDiagnosticNumber(cropTopMm, 3),
+      cropBottomMm: roundDiagnosticNumber(cropBottomMm, 3),
     },
     windowsCompensation: process.platform === 'win32' ? printPageConfig.windowsCompensation : null,
   };
@@ -4303,6 +4459,9 @@ async function submitSinglePrintCopy({
           requestAnimationFrame(() => requestAnimationFrame(() => {
             clearTimeout(timeout);
             const rect = img.getBoundingClientRect();
+            const bodyRect = document.body.getBoundingClientRect();
+            const htmlRect = document.documentElement.getBoundingClientRect();
+            const imgStyle = window.getComputedStyle(img);
             finish({
               imageLoaded: true,
               imageDecoded,
@@ -4312,6 +4471,13 @@ async function submitSinglePrintCopy({
               naturalHeight: img.naturalHeight,
               renderedWidth: rect.width,
               renderedHeight: rect.height,
+              htmlWidth: htmlRect.width,
+              htmlHeight: htmlRect.height,
+              bodyWidth: bodyRect.width,
+              bodyHeight: bodyRect.height,
+              imageCssWidth: imgStyle.width,
+              imageCssHeight: imgStyle.height,
+              devicePixelRatio: window.devicePixelRatio,
             });
           }));
         };
@@ -4339,27 +4505,35 @@ async function submitSinglePrintCopy({
       pageSize: { width: printPageConfig.widthMicrons, height: printPageConfig.heightMicrons },
       margins: { marginType: 'none' },
       landscape: false,
-      scaleFactor: 100,
+      scaleFactor: printPageConfig.scaleFactor || 100,
     };
+    if (printPageConfig.dpi) {
+      printOptions.dpi = printPageConfig.dpi;
+    }
     if (printPageConfig.preferCSSPageSize) {
       printOptions.preferCSSPageSize = true;
     }
     if (printerName) {
       printOptions.deviceName = printerName;
     }
-    const printFit = buildPrintFitDiagnostics(printPageConfig, readiness);
+    const printFit = buildPrintFitDiagnostics(printPageConfig, readiness, printOptions, printer);
 
     if (process.platform === 'win32' && !app.isPackaged) {
       console.log('[WINDOWS PRINT DIAGNOSTICS]', compactDiagnosticValue({
         platform: process.platform,
         printer: summarizePrinterForDiagnostics(printer),
         sourceImage: printFit.sourceImage,
+        printDocument: printFit.printDocument,
         requestedPageSize: printFit.requestedPageSize,
+        reportedPrinterPageSize: printFit.reportedPrinterPageSize,
+        reportedPrinterPrintableArea: printFit.reportedPrinterPrintableArea,
+        reportedPrintableScalePercent: printFit.reportedPrintableScalePercent,
         orientation: printOptions.landscape ? 'landscape' : 'portrait',
         scaleFactor: printOptions.scaleFactor,
         cssPageSize: printFit.cssPageSize,
         cssMargins: printFit.cssMargins,
         applicationMargins: printFit.applicationMargins,
+        calculatedScale: printFit.calculatedScale,
         windowsCompensation: printFit.windowsCompensation,
         effectivePrintDimensions: printFit.effectivePrintDimensions,
         printOptions: sanitizePrintOptions(printOptions),
