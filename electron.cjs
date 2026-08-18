@@ -3551,7 +3551,6 @@ ipcMain.handle('app:quit', async () => {
 // Print pipeline
 // ─────────────────────────────────────────────────────────────────────────
 const MICRONS_PER_INCH = 25400;
-const MICRONS_PER_MM = 1000;
 const MIN_PRINT_COPIES = 1;
 const MAX_PRINT_COPIES = 3;
 const DEFAULT_PRINT_COPIES = 1;
@@ -3578,16 +3577,16 @@ const DEFAULT_ELECTRON_PRINT_PAGE = Object.freeze({
   windowsCompensation: null,
 });
 const WINDOWS_SELPHY_CP1500_PRINT_PAGE = Object.freeze({
-  id: 'canon_selphy_cp1500_windows_postcard',
-  cssWidth: '100mm',
-  cssHeight: '148mm',
-  widthMicrons: 100 * MICRONS_PER_MM,
-  heightMicrons: 148 * MICRONS_PER_MM,
-  widthMm: 100,
-  heightMm: 148,
-  imageFit: 'cover',
-  preferCSSPageSize: true,
-  windowsCompensation: 'Windows Canon SELPHY CP1500 postcard borderless media is 100mm x 148mm; avoid Chromium/driver fitting a true 4in x 6in page onto postcard media.',
+  id: 'canon_selphy_cp1500_windows_zero_margin_4x6',
+  cssWidth: '4in',
+  cssHeight: '6in',
+  widthMicrons: 4 * MICRONS_PER_INCH,
+  heightMicrons: 6 * MICRONS_PER_INCH,
+  widthMm: 101.6,
+  heightMm: 152.4,
+  imageFit: 'fill',
+  preferCSSPageSize: false,
+  windowsCompensation: 'Windows SELPHY prints the generated 1200x1800 composition as the source of truth on a 4in x 6in zero-margin document. No extra application safe margin, postcard resize, or CSS page preference is applied.',
 });
 
 function normalizePrinterStatus(status) {
@@ -3997,7 +3996,15 @@ function buildPrintFitDiagnostics(printPageConfig, readiness = {}) {
       page: 0,
       html: 0,
       body: 0,
+      root: 0,
       image: 0,
+    },
+    applicationMargins: {
+      page: 0,
+      document: 0,
+      container: 0,
+      electronMarginType: 'none',
+      safeMarginAppliedInGeneratedImageOnly: true,
     },
     pageAspect,
     effectivePrintDimensions: {
@@ -4056,6 +4063,7 @@ function buildPrintDiagnostics({
     scaleFactor: printOptions?.scaleFactor ?? null,
     cssPageSize: printFit?.cssPageSize || null,
     cssMargins: printFit?.cssMargins || null,
+    applicationMargins: printFit?.applicationMargins || null,
     cssImageFit: printFit?.cssImageFit || null,
     windowsCompensation: printFit?.windowsCompensation || null,
     effectivePrintDimensions: printFit?.effectivePrintDimensions || null,
@@ -4341,8 +4349,8 @@ async function submitSinglePrintCopy({
     }
     const printFit = buildPrintFitDiagnostics(printPageConfig, readiness);
 
-    if (process.platform === 'win32') {
-      console.log('[PRINT DIAGNOSTICS] Windows page fit', compactDiagnosticValue({
+    if (process.platform === 'win32' && !app.isPackaged) {
+      console.log('[WINDOWS PRINT DIAGNOSTICS]', compactDiagnosticValue({
         platform: process.platform,
         printer: summarizePrinterForDiagnostics(printer),
         sourceImage: printFit.sourceImage,
@@ -4351,6 +4359,7 @@ async function submitSinglePrintCopy({
         scaleFactor: printOptions.scaleFactor,
         cssPageSize: printFit.cssPageSize,
         cssMargins: printFit.cssMargins,
+        applicationMargins: printFit.applicationMargins,
         windowsCompensation: printFit.windowsCompensation,
         effectivePrintDimensions: printFit.effectivePrintDimensions,
         printOptions: sanitizePrintOptions(printOptions),
