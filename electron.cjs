@@ -15,6 +15,7 @@ const {
 const {
   WINDOWS_BORDERLESS_PREF_CACHE_MS,
   buildCanonicalElectronPrintOptions,
+  buildCanonicalPrintShell,
   buildWindowsPrintSnapshot,
   getCanonicalPrintPageConfig,
   isSelphyPrinter,
@@ -3610,101 +3611,6 @@ function getPrintPageConfig(printer = null) {
   });
 }
 
-function buildPrintShell(printDocumentTitle, printPageConfig) {
-  if (printPageConfig.zeroMarginDocument) {
-    const fitCss = printPageConfig.imageFit === 'cover'
-      ? `
-    object-fit: cover;
-    object-position: center center;`
-      : `
-    object-fit: fill;`;
-    return `<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>${printDocumentTitle}</title>
-<style>
-  @page { size: ${printPageConfig.cssWidth} ${printPageConfig.cssHeight}; margin: 0; }
-  * { box-sizing: border-box; }
-  html {
-    margin: 0 !important;
-    padding: 0 !important;
-    width: 100%;
-    height: 100%;
-    overflow: hidden;
-    background: #fff;
-  }
-  body {
-    margin: 0 !important;
-    padding: 0 !important;
-    width: 100%;
-    height: 100%;
-    overflow: hidden;
-    background: #fff;
-  }
-  #print-root {
-    position: fixed;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    margin: 0 !important;
-    padding: 0 !important;
-    border: 0;
-    outline: 0;
-    overflow: hidden;
-    line-height: 0;
-    background: #fff;
-  }
-  #print-root img {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    max-width: none;
-    max-height: none;
-    display: block;
-    margin: 0 !important;
-    padding: 0 !important;
-    border: 0;
-    outline: 0;${fitCss}
-    image-rendering: -webkit-optimize-contrast;
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
-  }
-</style>
-</head>
-<body><div id="print-root"></div></body>
-</html>`;
-  }
-
-  const coverCss = printPageConfig.imageFit === 'cover'
-    ? `
-    object-fit: cover;
-    object-position: center center;`
-    : '';
-  const overflowCss = printPageConfig.imageFit === 'cover' ? ' overflow: hidden;' : '';
-  return `<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>${printDocumentTitle}</title>
-<style>
-  @page { size: ${printPageConfig.cssWidth} ${printPageConfig.cssHeight}; margin: 0; }
-  html, body { margin: 0; padding: 0; width: ${printPageConfig.cssWidth}; height: ${printPageConfig.cssHeight}; background: #fff;${overflowCss} }
-  img {
-    width: ${printPageConfig.cssWidth};
-    height: ${printPageConfig.cssHeight};
-    display: block;${coverCss}
-    image-rendering: -webkit-optimize-contrast;
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
-  }
-</style>
-</head>
-<body></body>
-</html>`;
-}
-
 function normalizePrinterInfo(printer = {}) {
   const statusInfo = normalizePrinterStatus(printer.status);
   return {
@@ -4862,7 +4768,7 @@ async function submitSinglePrintCopy({
   const printDocumentTitle = `Afterimage ${job.id} Copy ${copyIndex} of ${job.finalCopies}`;
   printWin.setTitle(printDocumentTitle);
   const printPageConfig = getPrintPageConfig(printer);
-  const shell = buildPrintShell(printDocumentTitle, printPageConfig);
+  const shell = buildCanonicalPrintShell(printDocumentTitle, printPageConfig);
 
   try {
     await printWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(shell));
