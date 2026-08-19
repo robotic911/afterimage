@@ -13,6 +13,7 @@ const {
   ZERO_PHYSICAL_PRINT_MARGINS,
   buildCanonicalElectronPrintOptions,
   buildCanonicalPrintShell,
+  buildWindowsPrintSnapshot,
   getCanonicalPrintPageConfig,
   validateWindowsPrintInvariants,
 } = require('../printPipeline.cjs');
@@ -78,6 +79,74 @@ test('Windows CP1500 print shell uses isolated zero-margin CSS', () => {
   assert.doesNotMatch(shell, /100vh|100vw|object-fit:\s*contain|max-width:\s*100%|max-height:\s*100%/);
 });
 
+test('Windows print snapshot reports physical page, printable area, and hardware margins', () => {
+  const snapshot = buildWindowsPrintSnapshot({
+    jobType: 'customer_print',
+    printerName: 'Canon SELPHY CP1500',
+    printer: { name: 'Canon SELPHY CP1500' },
+    printPageConfig: WINDOWS_SELPHY_CP1500_PRINT_PAGE,
+    printOptions: buildCanonicalElectronPrintOptions(WINDOWS_SELPHY_CP1500_PRINT_PAGE, {
+      silent: true,
+      printerName: 'Canon SELPHY CP1500',
+    }),
+    readiness: {
+      naturalWidth: 1200,
+      naturalHeight: 1800,
+      bodyMargin: '0px',
+      rootMargin: '0px',
+      rootPadding: '0px',
+    },
+    windowsPrintPrep: {
+      borderlessSupported: true,
+      borderlessSelectedBefore: false,
+      borderlessSelectedAfter: true,
+      pageImageableAreaAfter: {
+        physicalWidthMm: 101.6,
+        physicalHeightMm: 152.4,
+        originXMm: 0,
+        originYMm: 0,
+        extentWidthMm: 101.6,
+        extentHeightMm: 152.4,
+        printableScalePercent: 100,
+        hardwareMarginsMm: {
+          left: 0,
+          right: 0,
+          top: 0,
+          bottom: 0,
+        },
+      },
+    },
+  });
+
+  assert.deepEqual(snapshot.requestedPaper, {
+    width: '4in',
+    height: '6in',
+    widthMm: 101.6,
+    heightMm: 152.4,
+    widthMicrons: 101600,
+    heightMicrons: 152400,
+  });
+  assert.deepEqual(snapshot.physicalPage, {
+    widthMm: 101.6,
+    heightMm: 152.4,
+    source: 'windows_print_ticket_imageable_area',
+  });
+  assert.deepEqual(snapshot.printableArea, {
+    xMm: 0,
+    yMm: 0,
+    widthMm: 101.6,
+    heightMm: 152.4,
+    source: 'windows_print_ticket_imageable_area',
+  });
+  assert.deepEqual(snapshot.hardwareMargins, {
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+  });
+  assert.equal(snapshot.printableScalePercent, 100);
+});
+
 test('Darwin and non-SELPHY printers keep the existing default print path values', () => {
   const config = getCanonicalPrintPageConfig({
     platform: 'darwin',
@@ -121,6 +190,7 @@ test('main process keeps one physical webContents.print implementation', () => {
   assert.equal(printCalls.length, 1);
   assert.doesNotMatch(source, /function buildPrintShell/);
   assert.match(source, /buildCanonicalPrintShell/);
+  assert.match(source, /WINDOWS PRINT DIAGNOSTICS/);
 
   const extraPrintBlock = source.slice(
     source.indexOf("ipcMain.handle('today-monitor:print-extra-session-copy'"),

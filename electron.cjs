@@ -4239,6 +4239,57 @@ function TicketRecord($ticket) {
     }}
   }
 }
+function ImageableAreaRecord($capability, $ticket) {
+  if ($null -eq $capability -or $null -eq $capability.PageImageableArea) { return $null }
+  $area = $capability.PageImageableArea
+  $physicalWidth = $null
+  $physicalHeight = $null
+  try { $physicalWidth = $capability.OrientedPageMediaWidth } catch { $physicalWidth = $null }
+  try { $physicalHeight = $capability.OrientedPageMediaHeight } catch { $physicalHeight = $null }
+  if (($null -eq $physicalWidth -or $physicalWidth -le 0) -and $null -ne $ticket.PageMediaSize) {
+    $physicalWidth = $ticket.PageMediaSize.Width
+  }
+  if (($null -eq $physicalHeight -or $physicalHeight -le 0) -and $null -ne $ticket.PageMediaSize) {
+    $physicalHeight = $ticket.PageMediaSize.Height
+  }
+
+  $rightMargin = $null
+  $bottomMargin = $null
+  $printableScalePercent = $null
+  if ($null -ne $physicalWidth -and $physicalWidth -gt 0 -and $null -ne $physicalHeight -and $physicalHeight -gt 0) {
+    $rightMargin = [Math]::Max(0, [double]$physicalWidth - [double]$area.OriginWidth - [double]$area.ExtentWidth)
+    $bottomMargin = [Math]::Max(0, [double]$physicalHeight - [double]$area.OriginHeight - [double]$area.ExtentHeight)
+    $printableScalePercent = [Math]::Round(([Math]::Min(([double]$area.ExtentWidth / [double]$physicalWidth), ([double]$area.ExtentHeight / [double]$physicalHeight)) * 100.0), 3)
+  }
+
+  return [ordered]@{
+    physicalWidthDiu = $physicalWidth
+    physicalHeightDiu = $physicalHeight
+    physicalWidthMm = ToMm $physicalWidth
+    physicalHeightMm = ToMm $physicalHeight
+    originXDiu = $area.OriginWidth
+    originYDiu = $area.OriginHeight
+    extentWidthDiu = $area.ExtentWidth
+    extentHeightDiu = $area.ExtentHeight
+    originXMm = ToMm $area.OriginWidth
+    originYMm = ToMm $area.OriginHeight
+    extentWidthMm = ToMm $area.ExtentWidth
+    extentHeightMm = ToMm $area.ExtentHeight
+    printableScalePercent = $printableScalePercent
+    hardwareMarginsDiu = [ordered]@{
+      left = $area.OriginWidth
+      right = $rightMargin
+      top = $area.OriginHeight
+      bottom = $bottomMargin
+    }
+    hardwareMarginsMm = [ordered]@{
+      left = ToMm $area.OriginWidth
+      right = ToMm $rightMargin
+      top = ToMm $area.OriginHeight
+      bottom = ToMm $bottomMargin
+    }
+  }
+}
 $result = [ordered]@{
   ok = $true
   printerName = $PrinterName
@@ -4255,7 +4306,10 @@ $result = [ordered]@{
   printConfiguration = $null
   defaultTicketBefore = $null
   defaultTicketAfter = $null
+  validationConflictStatus = $null
+  pageImageableAreaBefore = $null
   pageImageableArea = $null
+  pageImageableAreaAfter = $null
   pageBorderlessCapability = @()
   pageMediaSizeCapability = @()
   pageScalingCapability = @()
@@ -4284,6 +4338,7 @@ try {
   $result.defaultTicketBefore = TicketRecord $ticket
   $result.borderlessSelectedBefore = ((EnumName $ticket.PageBorderless) -eq 'Borderless')
   $result.mediaSelectedBefore = $result.defaultTicketBefore.pageMediaSize
+  $result.pageImageableAreaBefore = ImageableAreaRecord $cap $ticket
 
   foreach ($item in $cap.PageBorderlessCapability) {
     $result.pageBorderlessCapability += (EnumName $item)
@@ -4308,18 +4363,6 @@ try {
   foreach ($item in $cap.PageScalingCapability) {
     $result.pageScalingCapability += (EnumName $item)
   }
-  if ($null -ne $cap.PageImageableArea) {
-    $result.pageImageableArea = [ordered]@{
-      originWidthDiu = $cap.PageImageableArea.OriginWidth
-      originHeightDiu = $cap.PageImageableArea.OriginHeight
-      extentWidthDiu = $cap.PageImageableArea.ExtentWidth
-      extentHeightDiu = $cap.PageImageableArea.ExtentHeight
-      originWidthMm = ToMm $cap.PageImageableArea.OriginWidth
-      originHeightMm = ToMm $cap.PageImageableArea.OriginHeight
-      extentWidthMm = ToMm $cap.PageImageableArea.ExtentWidth
-      extentHeightMm = ToMm $cap.PageImageableArea.ExtentHeight
-    }
-  }
 
   $nextTicket = $ticket
   if ($result.borderlessSupported -and -not $result.borderlessSelectedBefore) {
@@ -4337,6 +4380,7 @@ try {
 
   if ($result.attemptedBorderless -or $result.attemptedMediaSize) {
     $validation = $queue.MergeAndValidatePrintTicket($queue.DefaultPrintTicket, $nextTicket)
+    $result.validationConflictStatus = EnumName $validation.ConflictStatus
     $queue.DefaultPrintTicket = $validation.ValidatedPrintTicket
     $queue.Commit()
     $queue.Refresh()
@@ -4347,6 +4391,9 @@ try {
   $result.defaultTicketAfter = TicketRecord $afterTicket
   $result.borderlessSelectedAfter = ((EnumName $afterTicket.PageBorderless) -eq 'Borderless')
   $result.mediaSelectedAfter = $result.defaultTicketAfter.pageMediaSize
+  $afterCap = $queue.GetPrintCapabilities($afterTicket)
+  $result.pageImageableAreaAfter = ImageableAreaRecord $afterCap $afterTicket
+  $result.pageImageableArea = $result.pageImageableAreaAfter
 } catch {
   $result.ok = $false
   $result.error = $_.Exception.Message
@@ -4881,6 +4928,8 @@ async function submitSinglePrintCopy({
     if (process.platform === 'win32' && !app.isPackaged) {
       console.log('[WINDOWS PRINT SNAPSHOT]', compactDiagnosticValue(windowsPrintSnapshot));
       await writeDiagnosticEvent('WINDOWS PRINT SNAPSHOT', windowsPrintSnapshot);
+      console.log('[WINDOWS PRINT DIAGNOSTICS]', compactDiagnosticValue(windowsPrintSnapshot));
+      await writeDiagnosticEvent('WINDOWS PRINT DIAGNOSTICS', windowsPrintSnapshot);
       if (!printInvariantReport.ok) {
         console.warn('[WINDOWS PRINT INVARIANT VIOLATION]', compactDiagnosticValue(printInvariantReport));
         await writeDiagnosticEvent('WINDOWS PRINT INVARIANT VIOLATION', printInvariantReport);

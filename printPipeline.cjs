@@ -245,6 +245,71 @@ function marginsAreZero(margins = {}) {
     && Number(margins.left) === 0;
 }
 
+function getWindowsPrintTicketArea(windowsPrintPrep = null) {
+  if (!windowsPrintPrep || typeof windowsPrintPrep !== 'object') return null;
+  return windowsPrintPrep.pageImageableAreaAfter
+    || windowsPrintPrep.pageImageableArea
+    || windowsPrintPrep.pageImageableAreaBefore
+    || null;
+}
+
+function getWindowsPhysicalPage(windowsPrintPrep = null, printFit = null) {
+  const ticketArea = getWindowsPrintTicketArea(windowsPrintPrep);
+  if (ticketArea?.physicalWidthMm && ticketArea?.physicalHeightMm) {
+    return {
+      widthMm: ticketArea.physicalWidthMm,
+      heightMm: ticketArea.physicalHeightMm,
+      source: 'windows_print_ticket_imageable_area',
+    };
+  }
+  const media = windowsPrintPrep?.mediaSelectedAfter
+    || windowsPrintPrep?.mediaSelectedBefore
+    || windowsPrintPrep?.selectedMediaCandidate
+    || null;
+  if (media?.widthMm && media?.heightMm) {
+    return {
+      widthMm: media.widthMm,
+      heightMm: media.heightMm,
+      source: 'windows_print_ticket_media',
+    };
+  }
+  if (printFit?.reportedPrinterPageSize?.widthMm && printFit?.reportedPrinterPageSize?.heightMm) {
+    return {
+      widthMm: printFit.reportedPrinterPageSize.widthMm,
+      heightMm: printFit.reportedPrinterPageSize.heightMm,
+      source: 'electron_printer_options',
+    };
+  }
+  return null;
+}
+
+function getWindowsPrintableArea(windowsPrintPrep = null, printFit = null) {
+  const ticketArea = getWindowsPrintTicketArea(windowsPrintPrep);
+  if (ticketArea?.extentWidthMm && ticketArea?.extentHeightMm) {
+    return {
+      xMm: ticketArea.originXMm ?? null,
+      yMm: ticketArea.originYMm ?? null,
+      widthMm: ticketArea.extentWidthMm,
+      heightMm: ticketArea.extentHeightMm,
+      source: 'windows_print_ticket_imageable_area',
+    };
+  }
+  if (printFit?.reportedPrinterPrintableArea?.widthMm && printFit?.reportedPrinterPrintableArea?.heightMm) {
+    return {
+      xMm: printFit.reportedPrinterPrintableArea.leftMicrons != null
+        ? printFit.reportedPrinterPrintableArea.leftMicrons / 1000
+        : null,
+      yMm: printFit.reportedPrinterPrintableArea.bottomMicrons != null
+        ? printFit.reportedPrinterPrintableArea.bottomMicrons / 1000
+        : null,
+      widthMm: printFit.reportedPrinterPrintableArea.widthMm,
+      heightMm: printFit.reportedPrinterPrintableArea.heightMm,
+      source: 'electron_printer_options',
+    };
+  }
+  return null;
+}
+
 function validateWindowsPrintInvariants(printPageConfig, printOptions, {
   platform = process.platform,
   printer = null,
@@ -320,11 +385,31 @@ function buildWindowsPrintSnapshot({
   windowsPrintPrep = null,
   invariantReport = null,
 } = {}) {
+  const physicalPage = getWindowsPhysicalPage(windowsPrintPrep, printFit);
+  const printableArea = getWindowsPrintableArea(windowsPrintPrep, printFit);
+  const ticketArea = getWindowsPrintTicketArea(windowsPrintPrep);
+  const hardwareMargins = ticketArea?.hardwareMarginsMm || null;
+  const printableScalePercent = ticketArea?.printableScalePercent
+    ?? printFit?.reportedPrintableScalePercent
+    ?? null;
+
   return {
     jobType,
     printer: printer?.name || printerName || null,
     deviceName: printOptions?.deviceName || printerName || null,
     profileId: printPageConfig?.id || null,
+    requestedPaper: {
+      width: printPageConfig?.cssWidth || null,
+      height: printPageConfig?.cssHeight || null,
+      widthMm: printPageConfig?.widthMm || null,
+      heightMm: printPageConfig?.heightMm || null,
+      widthMicrons: printPageConfig?.widthMicrons || null,
+      heightMicrons: printPageConfig?.heightMicrons || null,
+    },
+    physicalPage,
+    printableArea,
+    hardwareMargins,
+    printableScalePercent,
     sourceWidth: readiness?.naturalWidth ?? printFit?.sourceImage?.widthPx ?? null,
     sourceHeight: readiness?.naturalHeight ?? printFit?.sourceImage?.heightPx ?? null,
     pageWidth: printPageConfig?.cssWidth || null,
@@ -353,6 +438,9 @@ function buildWindowsPrintSnapshot({
       selectedCandidate: windowsPrintPrep?.selectedMediaCandidate ?? null,
       reportedPageSize: printFit?.reportedPrinterPageSize || null,
       reportedPrintableArea: printFit?.reportedPrinterPrintableArea || null,
+      printTicketImageableAreaBefore: windowsPrintPrep?.pageImageableAreaBefore || null,
+      printTicketImageableAreaAfter: windowsPrintPrep?.pageImageableAreaAfter || null,
+      validationConflictStatus: windowsPrintPrep?.validationConflictStatus || null,
     },
     invariants: invariantReport || null,
   };
