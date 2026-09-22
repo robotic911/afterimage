@@ -53,6 +53,7 @@ const WINDOWS_SELPHY_CP1500_PRINT_PAGE = Object.freeze({
   borderlessIntent: true,
   borderlessOverscanPercent: WINDOWS_SELPHY_CP1500_OVERSCAN_PERCENT,
   physicalPageLayer: 'windows_driver_native_4x6_borderless',
+  backend: 'native_windows_printticket_xps',
   windowsCompensation: 'Windows Canon SELPHY CP1500 must use the generated artwork as the source of truth, add zero software margin, and rely on the driver native 4x6/borderless media instead of shrinking into a custom Electron page.',
 });
 

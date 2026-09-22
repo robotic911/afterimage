@@ -21,6 +21,7 @@ const {
   isSelphyPrinter,
   validateWindowsPrintInvariants,
 } = require('./printPipeline.cjs');
+const { WINDOWS_CP1500_BACKEND, printUsingWindowsCp1500 } = require('./windowsPrintBackend.cjs');
 
 const APP_ID = 'com.kennethpatino.kukuphotobooth';
 const SOFTCOPY_SAVE_CHANNEL = 'softcopy-local:save-session-media';
@@ -4899,19 +4900,21 @@ async function submitSinglePrintCopy({
     const artworkReady = readiness?.imageLoaded === true
       && readiness?.imageDecoded === true
       && readiness?.layoutReady === true;
-    const windowsPrintPrep = await prepareWindowsBorderlessPrint(printerName, printPageConfig);
+    let windowsPrintPrep = process.platform === 'win32'
+      ? { ok: true, pending: true, backend: WINDOWS_CP1500_BACKEND }
+      : await prepareWindowsBorderlessPrint(printerName, printPageConfig);
     const printOptions = buildCanonicalElectronPrintOptions(printPageConfig, {
       silent,
       printerName,
     });
-    const printFit = buildPrintFitDiagnostics(printPageConfig, readiness, printOptions, printer, windowsPrintPrep);
+    let printFit = buildPrintFitDiagnostics(printPageConfig, readiness, printOptions, printer, windowsPrintPrep);
     const printInvariantReport = validateWindowsPrintInvariants(printPageConfig, printOptions, {
       platform: process.platform,
       printer,
       printerName,
       readiness,
     });
-    const windowsPrintSnapshot = process.platform === 'win32'
+    let windowsPrintSnapshot = process.platform === 'win32'
       ? buildWindowsPrintSnapshot({
         jobType: getPrintJobType(job),
         printerName,
@@ -4924,17 +4927,6 @@ async function submitSinglePrintCopy({
         invariantReport: printInvariantReport,
       })
       : null;
-
-    if (process.platform === 'win32' && !app.isPackaged) {
-      console.log('[WINDOWS PRINT SNAPSHOT]', compactDiagnosticValue(windowsPrintSnapshot));
-      await writeDiagnosticEvent('WINDOWS PRINT SNAPSHOT', windowsPrintSnapshot);
-      console.log('[WINDOWS PRINT DIAGNOSTICS]', compactDiagnosticValue(windowsPrintSnapshot));
-      await writeDiagnosticEvent('WINDOWS PRINT DIAGNOSTICS', windowsPrintSnapshot);
-      if (!printInvariantReport.ok) {
-        console.warn('[WINDOWS PRINT INVARIANT VIOLATION]', compactDiagnosticValue(printInvariantReport));
-        await writeDiagnosticEvent('WINDOWS PRINT INVARIANT VIOLATION', printInvariantReport);
-      }
-    }
 
     if (!artworkReady) {
       const failureReason = readiness?.error || readiness?.decodeError || 'print artwork was not ready';
@@ -4981,15 +4973,122 @@ async function submitSinglePrintCopy({
       });
     }
 
-    const result = await new Promise((resolve) => {
-      printWin.webContents.print(printOptions, (success, failureReason) => {
-        resolve({
-          success,
-          failureReason: failureReason || null,
-          rawFailureReason: failureReason || null,
+    let result;
+    if (process.platform === 'win32' && isSelphyPrinter(printer)) {
+      let validatedTicketLog = null;
+      const nativeResult = await printUsingWindowsCp1500({
+        dataUrl,
+        printerName,
+        jobName: printDocumentTitle,
+        tempDirectory: app.getPath('temp'),
+        onTicketValidated: (ticket) => {
+          const area = ticket?.pageImageableArea || null;
+          validatedTicketLog = {
+            printer: ticket?.printerName || printerName,
+            media: ticket?.media || null,
+            borderlessRequested: ticket?.borderlessRequested ?? null,
+            borderlessValidated: ticket?.borderlessValidated ?? null,
+            scalingRequested: ticket?.scalingRequested || null,
+            scalingValidated: ticket?.scalingValidated || null,
+            physicalWidth: area?.physicalWidthMm ?? null,
+            physicalHeight: area?.physicalHeightMm ?? null,
+            imageableX: area?.originXMm ?? null,
+            imageableY: area?.originYMm ?? null,
+            imageableWidth: area?.extentWidthMm ?? null,
+            imageableHeight: area?.extentHeightMm ?? null,
+            calculatedInsetLeft: area?.hardwareMarginsMm?.left ?? null,
+            calculatedInsetRight: area?.hardwareMarginsMm?.right ?? null,
+            calculatedInsetTop: area?.hardwareMarginsMm?.top ?? null,
+            calculatedInsetBottom: area?.hardwareMarginsMm?.bottom ?? null,
+            sourceWidth: readiness?.naturalWidth || null,
+            sourceHeight: readiness?.naturalHeight || null,
+            backend: ticket?.backend || WINDOWS_CP1500_BACKEND,
+            stage: 'validated_before_submission',
+          };
+          console.log('[WINDOWS CP1500 PRINT]', compactDiagnosticValue(validatedTicketLog));
+          void writeDiagnosticEvent('WINDOWS CP1500 PRINT', validatedTicketLog);
+        },
+      });
+      windowsPrintPrep = {
+        ...nativeResult,
+        borderlessSelectedAfter: nativeResult.borderlessSelected,
+        mediaSelectedAfter: nativeResult.media,
+        pageImageableAreaAfter: nativeResult.pageImageableArea,
+      };
+      printFit = buildPrintFitDiagnostics(printPageConfig, readiness, printOptions, printer, windowsPrintPrep);
+      windowsPrintSnapshot = buildWindowsPrintSnapshot({
+        jobType: getPrintJobType(job),
+        printerName,
+        printer,
+        printPageConfig,
+        printOptions,
+        readiness,
+        printFit,
+        windowsPrintPrep,
+        invariantReport: printInvariantReport,
+      });
+      const nativeArea = nativeResult.pageImageableArea;
+      const windowsLog = {
+        backend: nativeResult.backend || WINDOWS_CP1500_BACKEND,
+        printer: printer?.displayName || printerName,
+        deviceName: printerName,
+        physicalPage: nativeArea ? { widthMm: nativeArea.physicalWidthMm, heightMm: nativeArea.physicalHeightMm } : null,
+        printableArea: nativeArea ? { xMm: nativeArea.originXMm, yMm: nativeArea.originYMm, widthMm: nativeArea.extentWidthMm, heightMm: nativeArea.extentHeightMm } : null,
+        media: nativeResult.media || null,
+        borderless: { supported: nativeResult.borderlessSupported, selected: nativeResult.borderlessSelected },
+        margins: nativeArea?.hardwareMarginsMm || null,
+        scale: 'direct image to physical media (no Chromium scale)',
+        overscan: 0,
+        sourcePng: { width: readiness?.naturalWidth || null, height: readiness?.naturalHeight || null },
+        submitted: nativeResult.submitted === true,
+        error: nativeResult.error || null,
+      };
+      if (!validatedTicketLog) {
+        console.log('[WINDOWS CP1500 PRINT]', compactDiagnosticValue(windowsLog));
+        await writeDiagnosticEvent('WINDOWS CP1500 PRINT', windowsLog);
+      }
+      if (!nativeResult.borderlessSelected || !nativeArea || Object.values(nativeArea.hardwareMarginsMm || {}).some((value) => Number(value) > 0.3)) {
+        console.warn('[WINDOWS CP1500 PRINT WARNING] Borderless output was not validated; artwork was not silently shrunk.', compactDiagnosticValue(windowsLog));
+        await writeDiagnosticEvent('WINDOWS CP1500 PRINT WARNING', windowsLog);
+      }
+      result = {
+        success: nativeResult.ok === true && nativeResult.submitted === true,
+        failureReason: nativeResult.error || null,
+        rawFailureReason: nativeResult.error || null,
+        backend: nativeResult.backend || WINDOWS_CP1500_BACKEND,
+        windowsPrint: {
+          ok: nativeResult.ok === true,
+          backend: nativeResult.backend || WINDOWS_CP1500_BACKEND,
+          printer: nativeResult.printerName || printerName,
+          media: nativeResult.media || null,
+          borderless: {
+            requested: true,
+            supported: nativeResult.borderlessSupported ?? null,
+            validated: nativeResult.borderlessSelected ?? null,
+          },
+          scaling: {
+            requested: nativeResult.scalingRequested || 'None',
+            validated: nativeResult.scalingValidated || null,
+          },
+          physicalPage: nativeArea ? { widthMm: nativeArea.physicalWidthMm, heightMm: nativeArea.physicalHeightMm } : null,
+          imageableArea: nativeArea ? { xMm: nativeArea.originXMm, yMm: nativeArea.originYMm, widthMm: nativeArea.extentWidthMm, heightMm: nativeArea.extentHeightMm } : null,
+          insets: nativeArea?.hardwareMarginsMm || null,
+          sourceSize: { width: readiness?.naturalWidth || null, height: readiness?.naturalHeight || null },
+          error: nativeResult.error || null,
+        },
+      };
+    } else {
+      // Keep the established macOS/non-SELPHY Chromium path and its option values unchanged.
+      result = await new Promise((resolve) => {
+        printWin.webContents.print(printOptions, (success, failureReason) => {
+          resolve({
+            success,
+            failureReason: failureReason || null,
+            rawFailureReason: failureReason || null,
+          });
         });
       });
-    });
+    }
     const printerDiagnostics = buildPrintDiagnostics({
       selectedDevice: printerName,
       selectedPrinterName,
@@ -5288,6 +5387,99 @@ ipcMain.handle('printers:list', async (event) => {
       selectedPrinterName: null,
       defaultPrinter: null,
       guidance: null,
+    };
+  }
+});
+
+ipcMain.handle('app:build-info', async () => {
+  const packagedAppPath = app.isPackaged ? path.join(process.resourcesPath, 'app.asar') : __filename;
+  let buildTimestamp = null;
+  try { buildTimestamp = fs.statSync(packagedAppPath).mtime.toISOString(); } catch { /* unavailable */ }
+  return {
+    appVersion: app.getVersion(),
+    platform: process.platform,
+    isPackaged: app.isPackaged,
+    preloadBridgeVersion: 'cp1500-native-v2',
+    windowsPrintBackendId: 'native-windows-printticket-xps-v2',
+    buildTimestamp,
+  };
+});
+
+ipcMain.handle('print:windows-cp1500-calibration', async (event) => {
+  if (process.platform !== 'win32') {
+    return {
+      ok: false,
+      backend: null,
+      printer: null,
+      media: null,
+      borderless: null,
+      scaling: null,
+      physicalPage: null,
+      imageableArea: null,
+      insets: null,
+      sourceSize: { width: 1200, height: 1800 },
+      error: 'The CP1500 calibration print is Windows-only.',
+    };
+  }
+  try {
+    const target = await resolveTargetPrinter(event.sender);
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1800" viewBox="0 0 1200 1800">
+      <rect width="1200" height="1800" fill="#d9f4ff"/>
+      <path d="M0 0H1200V1800H0Z" fill="none" stroke="black" stroke-width="8"/>
+      <rect x="0" y="0" width="1200" height="36" fill="#ed1c24"/><text x="600" y="30" text-anchor="middle" font-family="Arial" font-size="26" font-weight="bold">TOP EDGE</text>
+      <rect x="1164" y="0" width="36" height="1800" fill="#00a651"/><text x="1171" y="900" transform="rotate(90 1171 900)" text-anchor="middle" font-family="Arial" font-size="26" font-weight="bold">RIGHT EDGE</text>
+      <rect x="0" y="1764" width="1200" height="36" fill="#0072bc"/><text x="600" y="1792" text-anchor="middle" font-family="Arial" font-size="26" font-weight="bold" fill="white">BOTTOM EDGE</text>
+      <rect x="0" y="0" width="36" height="1800" fill="#ffde17"/><text x="29" y="900" transform="rotate(-90 29 900)" text-anchor="middle" font-family="Arial" font-size="26" font-weight="bold">LEFT EDGE</text>
+      <path d="M500 900H700M600 800V1000" stroke="black" stroke-width="8"/><circle cx="600" cy="900" r="70" fill="none" stroke="black" stroke-width="6"/>
+      <text x="600" y="850" text-anchor="middle" font-family="Arial" font-size="52" font-weight="bold">AFTERIMAGE CP1500</text>
+      <text x="600" y="1060" text-anchor="middle" font-family="Arial" font-size="36">NATIVE BORDERLESS CALIBRATION</text>
+      <text x="600" y="1110" text-anchor="middle" font-family="Arial" font-size="28">Every colored band must reach its paper edge.</text>
+    </svg>`;
+    const calibrationImage = nativeImage.createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`);
+    if (calibrationImage.isEmpty()) throw new Error('Could not create calibration image');
+    const dataUrl = `data:image/png;base64,${calibrationImage.toPNG().toString('base64')}`;
+    const job = {
+      id: `cp1500_calibration_${Date.now()}`,
+      sessionId: 'cp1500-calibration',
+      finalCopies: 1,
+    };
+    const result = await submitSinglePrintCopy({
+      dataUrl,
+      silent: true,
+      job,
+      copyIndex: 1,
+      printerName: target.printer.name,
+      printer: target.printer,
+      printerList: target.printerList,
+      selectedPrinterName: target.settings?.selectedPrinterName || target.printer.name,
+    });
+    const diagnostic = result?.windowsPrint || {};
+    return {
+      ok: result?.success === true,
+      backend: diagnostic.backend || result?.backend || WINDOWS_CP1500_BACKEND,
+      printer: diagnostic.printer || target.printer.name,
+      media: diagnostic.media || null,
+      borderless: diagnostic.borderless || null,
+      scaling: diagnostic.scaling || null,
+      physicalPage: diagnostic.physicalPage || null,
+      imageableArea: diagnostic.imageableArea || null,
+      insets: diagnostic.insets || null,
+      sourceSize: diagnostic.sourceSize || { width: 1200, height: 1800 },
+      error: diagnostic.error || result?.failureReason || null,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      backend: WINDOWS_CP1500_BACKEND,
+      printer: null,
+      media: null,
+      borderless: null,
+      scaling: null,
+      physicalPage: null,
+      imageableArea: null,
+      insets: null,
+      sourceSize: { width: 1200, height: 1800 },
+      error: error?.message || String(error),
     };
   }
 });

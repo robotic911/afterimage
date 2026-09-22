@@ -17,6 +17,11 @@ const {
   getCanonicalPrintPageConfig,
   validateWindowsPrintInvariants,
 } = require('../printPipeline.cjs');
+const {
+  WINDOWS_CP1500_BACKEND,
+  buildWindowsCp1500PrintScript,
+  decodeImageDataUrl,
+} = require('../windowsPrintBackend.cjs');
 
 test('Windows Canon SELPHY CP1500 resolves to the zero-margin canonical 4x6 profile', () => {
   const printer = { name: 'Canon SELPHY CP1500' };
@@ -190,7 +195,10 @@ test('main process keeps one physical webContents.print implementation', () => {
   assert.equal(printCalls.length, 1);
   assert.doesNotMatch(source, /function buildPrintShell/);
   assert.match(source, /buildCanonicalPrintShell/);
-  assert.match(source, /WINDOWS PRINT DIAGNOSTICS/);
+  assert.match(source, /\[WINDOWS CP1500 PRINT\]/);
+  assert.match(source, /process\.platform === 'win32' && isSelphyPrinter\(printer\)/);
+  assert.match(source, /printUsingWindowsCp1500\(\{/);
+  assert.match(source, /else \{[\s\S]*printWin\.webContents\.print\(printOptions/);
 
   const extraPrintBlock = source.slice(
     source.indexOf("ipcMain.handle('today-monitor:print-extra-session-copy'"),
@@ -212,4 +220,42 @@ test('main process keeps one physical webContents.print implementation', () => {
   );
   assert.match(queueBlock, /submitSinglePrintCopy\(\{[\s\S]*printer:\s*target\.printer/);
   assert.match(queueBlock, /submitSinglePrintCopy\(\{[\s\S]*printerList:\s*target\.printerList/);
+});
+
+test('native Windows backend sends an explicit per-job borderless PrintTicket', () => {
+  const script = buildWindowsCp1500PrintScript({
+    printerName: 'Canon SELPHY CP1500',
+    imagePath: 'C:\\Temp\\afterimage.png',
+    jobName: 'Afterimage calibration',
+  });
+
+  assert.equal(WINDOWS_CP1500_BACKEND, 'Native Windows PrintTicket/XPS');
+  assert.match(script, /PageBorderless\]::Borderless/);
+  assert.match(script, /PageScaling\]::None/);
+  assert.match(script, /OutputQuality\]::Photographic/);
+  assert.match(script, /MergeAndValidatePrintTicket/);
+  assert.match(script, /CreateXpsDocumentWriter/);
+  assert.match(script, /maximum inset/);
+  assert.doesNotMatch(script, /DefaultPrintTicket\s*=/);
+});
+
+test('native Windows backend accepts the existing PNG without recomposition', () => {
+  const decoded = decodeImageDataUrl('data:image/png;base64,iVBORw0KGgo=');
+  assert.equal(decoded.extension, '.png');
+  assert.deepEqual(decoded.bytes, Buffer.from('iVBORw0KGgo=', 'base64'));
+  assert.throws(() => decodeImageDataUrl('data:text/plain;base64,SGVsbG8='), /PNG or JPEG/);
+});
+
+test('calibration IPC is bridged through preload to the matching main handler', () => {
+  const preload = readFileSync(new URL('../preload.cjs', import.meta.url), 'utf8');
+  const main = readFileSync(new URL('../electron.cjs', import.meta.url), 'utf8');
+  const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+
+  assert.match(preload, /printWindowsCp1500Calibration:\s*\(\)\s*=>\s*ipcRenderer\.invoke\('print:windows-cp1500-calibration'\)/);
+  assert.match(main, /ipcMain\.handle\('print:windows-cp1500-calibration'/);
+  assert.match(main, /print:windows-cp1500-calibration[\s\S]*submitSinglePrintCopy\(\{/);
+  assert.match(main, /submitSinglePrintCopy[\s\S]*printUsingWindowsCp1500\(\{/);
+  assert.ok(packageJson.build.files.includes('preload.cjs'));
+  assert.ok(packageJson.build.files.includes('windowsPrintBackend.cjs'));
+  assert.ok(packageJson.build.files.includes('printPipeline.cjs'));
 });

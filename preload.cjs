@@ -36,6 +36,8 @@ if (process.platform === 'win32') {
 
 // ── Hardware printing ──────────────────────────────────────────────────
 contextBridge.exposeInMainWorld('printApi', {
+  preloadBridgeVersion: 'cp1500-native-v2',
+  windowsPrintBackendId: 'native-windows-printticket-xps-v2',
   platform: process.platform,
   isPackaged: !process.defaultApp,
   canOpenPrintCenter: process.platform === 'darwin',
@@ -59,6 +61,10 @@ contextBridge.exposeInMainWorld('printApi', {
     ipcRenderer.invoke('print-queue:clear-completed'),
   listPrinters: () =>
     ipcRenderer.invoke('printers:list'),
+  printWindowsCp1500Calibration: () =>
+    ipcRenderer.invoke('print:windows-cp1500-calibration'),
+  getBuildInfo: () =>
+    ipcRenderer.invoke('app:build-info'),
   onPrintProgress: (cb) => {
     const listener = (_ev, progress) => { try { cb(progress); } catch { /* ignore */ } };
     ipcRenderer.on('print-strip-progress', listener);

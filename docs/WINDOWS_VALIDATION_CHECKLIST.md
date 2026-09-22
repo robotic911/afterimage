@@ -44,3 +44,15 @@
 
 - Test on the actual Windows laptop, camera, SELPHY driver, paper, and network intended for deployment.
 - Record the Windows version, Electron build, printer driver version, and final calibration values.
+
+## CP1500 native borderless validation
+
+1. Open the Electron DevTools console on the Windows booth and run:
+
+   `await window.printApi.printWindowsCp1500Calibration()`
+
+2. Confirm the returned result has `success: true`.
+3. In the Afterimage diagnostics log, find `[WINDOWS CP1500 PRINT]` and record the detected physical page, printable area, four hardware margins, media name, and borderless values.
+4. Verify the red (top), green (right), blue (bottom), and yellow (left) lines reach the trimmed paper edges. Then print one normal Afterimage template.
+
+The native backend rejects the job if the Windows queue does not expose both a Postcard/4×6 medium and `PageBorderless=Borderless`, or if the validated borderless ticket still reports a hardware inset greater than 0.3 mm. It does not shrink the artwork to hide that condition.
