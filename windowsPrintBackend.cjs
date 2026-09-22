@@ -6,7 +6,7 @@ const WINDOWS_CP1500_BACKEND = 'Native Windows PrintTicket/XPS';
 const WINDOWS_CP1500_JOB_TIMEOUT_MS = 60000;
 // Physical-output calibration only. Keep close to 1.0 and tune after inspecting
 // a torn CP1500 print; this never changes the generated/saved source artwork.
-const WINDOWS_CP1500_CONTENT_SCALE = 1.02;
+const WINDOWS_CP1500_CONTENT_SCALE = 1.00;
 
 function calculateCenteredContentRectangle({ sourceWidth, sourceHeight, pageWidth, pageHeight, contentScale = WINDOWS_CP1500_CONTENT_SCALE }) {
   const values = [sourceWidth, sourceHeight, pageWidth, pageHeight, contentScale].map(Number);
@@ -14,7 +14,7 @@ function calculateCenteredContentRectangle({ sourceWidth, sourceHeight, pageWidt
     throw new Error('CP1500 content geometry requires positive finite dimensions and scale');
   }
   const [sourceW, sourceH, pageW, pageH, scale] = values;
-  const uniformBaseScale = Math.max(pageW / sourceW, pageH / sourceH);
+  const uniformBaseScale = Math.min(pageW / sourceW, pageH / sourceH);
   const baseWidth = sourceW * uniformBaseScale;
   const baseHeight = sourceH * uniformBaseScale;
   const baseX = (pageW - baseWidth) / 2;
@@ -143,7 +143,7 @@ try {
   $pageWidth = [double]$ticket.PageMediaSize.Width; $pageHeight = [double]$ticket.PageMediaSize.Height
   if ($pageWidth -gt $pageHeight -and $bitmap.PixelWidth -lt $bitmap.PixelHeight) { $swap = $pageWidth; $pageWidth = $pageHeight; $pageHeight = $swap }
   if ($pageHeight -gt $pageWidth -and $bitmap.PixelWidth -gt $bitmap.PixelHeight) { $swap = $pageWidth; $pageWidth = $pageHeight; $pageHeight = $swap }
-  $baseUniformScale = [Math]::Max($pageWidth / [double]$bitmap.PixelWidth, $pageHeight / [double]$bitmap.PixelHeight)
+  $baseUniformScale = [Math]::Min($pageWidth / [double]$bitmap.PixelWidth, $pageHeight / [double]$bitmap.PixelHeight)
   $baseWidth = [double]$bitmap.PixelWidth * $baseUniformScale; $baseHeight = [double]$bitmap.PixelHeight * $baseUniformScale
   $baseX = ($pageWidth - $baseWidth) / 2; $baseY = ($pageHeight - $baseHeight) / 2
   $width = $baseWidth * $ContentScale; $height = $baseHeight * $ContentScale

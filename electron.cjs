@@ -5010,6 +5010,33 @@ async function submitSinglePrintCopy({
           void writeDiagnosticEvent('WINDOWS CP1500 PRINT', validatedTicketLog);
           console.log('[WINDOWS CP1500 CONTENT CALIBRATION]', compactDiagnosticValue(contentCalibration));
           void writeDiagnosticEvent('WINDOWS CP1500 CONTENT CALIBRATION', contentCalibration);
+          const physicalMapping = {
+            source: contentCalibration?.source || {
+              width: readiness?.naturalWidth || null,
+              height: readiness?.naturalHeight || null,
+            },
+            sourceAspect: readiness?.naturalWidth && readiness?.naturalHeight
+              ? readiness.naturalWidth / readiness.naturalHeight
+              : null,
+            driverMedia: ticket?.media || null,
+            imageableArea: area ? {
+              xMm: area.originXMm ?? null,
+              yMm: area.originYMm ?? null,
+              widthMm: area.extentWidthMm ?? null,
+              heightMm: area.extentHeightMm ?? null,
+            } : null,
+            detectedFinalTrimmedArea: null,
+            destinationArtwork: contentCalibration?.finalDestination || null,
+            perforatedArea: {
+              topMm: null,
+              bottomMm: null,
+              detection: 'not exposed by the Windows PrintTicket; physical measurement required',
+            },
+            mappingStrategy: 'complete source, uniform aspect-preserving mapping, centered, content scale 1.00',
+            contentCrop: contentCalibration?.cropBeyondPage || null,
+          };
+          console.log('[CP1500 PHYSICAL MAPPING]', compactDiagnosticValue(physicalMapping));
+          void writeDiagnosticEvent('CP1500 PHYSICAL MAPPING', physicalMapping);
         },
       });
       windowsPrintPrep = {

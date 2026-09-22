@@ -238,12 +238,12 @@ test('native Windows backend sends an explicit per-job borderless PrintTicket', 
   assert.match(script, /MergeAndValidatePrintTicket/);
   assert.match(script, /CreateXpsDocumentWriter/);
   assert.match(script, /Stretch\]::Uniform/);
-  assert.match(script, /\$ContentScale = \[double\]1\.02/);
+  assert.match(script, /\$ContentScale = \[double\]1/);
   assert.match(script, /maximum inset/);
   assert.doesNotMatch(script, /DefaultPrintTicket\s*=/);
 });
 
-test('Windows CP1500 content calibration uniformly enlarges and recenters 4x6 artwork', () => {
+test('Windows CP1500 1.00 baseline uniformly maps and centers complete 4x6 artwork', () => {
   const geometry = calculateCenteredContentRectangle({
     sourceWidth: 1200,
     sourceHeight: 1800,
@@ -257,22 +257,22 @@ test('Windows CP1500 content calibration uniformly enlarges and recenters 4x6 ar
   const baseCenter = center(geometry.base);
   const finalCenter = center(geometry.final);
 
-  assert.equal(WINDOWS_CP1500_CONTENT_SCALE, 1.02);
+  assert.equal(WINDOWS_CP1500_CONTENT_SCALE, 1);
   assert.equal(geometry.base.x, 0);
   assert.equal(geometry.base.y, 0);
   assert.equal(geometry.base.width, 384);
   assert.equal(geometry.base.height, 576);
-  assert.ok(Math.abs(geometry.final.width - 391.68) < 1e-10);
-  assert.ok(Math.abs(geometry.final.height - 587.52) < 1e-10);
-  assert.ok(Math.abs(geometry.final.x - (-3.84)) < 1e-10);
-  assert.ok(Math.abs(geometry.final.y - (-5.76)) < 1e-10);
+  assert.ok(Math.abs(geometry.final.width - 384) < 1e-10);
+  assert.ok(Math.abs(geometry.final.height - 576) < 1e-10);
+  assert.ok(Math.abs(geometry.final.x) < 1e-10);
+  assert.ok(Math.abs(geometry.final.y) < 1e-10);
   assert.ok(Math.abs(baseCenter.x - finalCenter.x) < 1e-10);
   assert.ok(Math.abs(baseCenter.y - finalCenter.y) < 1e-10);
   assert.ok(Math.abs((geometry.final.width / geometry.final.height) - (1200 / 1800)) < 1e-10);
-  assert.ok(Math.abs(geometry.cropBeyondPage.left - 3.84) < 1e-10);
-  assert.ok(Math.abs(geometry.cropBeyondPage.right - 3.84) < 1e-10);
-  assert.ok(Math.abs(geometry.cropBeyondPage.top - 5.76) < 1e-10);
-  assert.ok(Math.abs(geometry.cropBeyondPage.bottom - 5.76) < 1e-10);
+  assert.equal(geometry.cropBeyondPage.left, 0);
+  assert.equal(geometry.cropBeyondPage.right, 0);
+  assert.equal(geometry.cropBeyondPage.top, 0);
+  assert.equal(geometry.cropBeyondPage.bottom, 0);
 });
 
 test('Windows content scale is confined to the native Windows backend', () => {
