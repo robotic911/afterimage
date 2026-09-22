@@ -63,6 +63,12 @@ contextBridge.exposeInMainWorld('printApi', {
     ipcRenderer.invoke('printers:list'),
   printWindowsCp1500Calibration: () =>
     ipcRenderer.invoke('print:windows-cp1500-calibration'),
+  getWindowsCp1500ContentCalibration: () =>
+    ipcRenderer.invoke('print:windows-cp1500-calibration:get'),
+  setWindowsCp1500ContentCalibration: (calibration) =>
+    ipcRenderer.invoke('print:windows-cp1500-calibration:set', calibration),
+  resetWindowsCp1500ContentCalibration: () =>
+    ipcRenderer.invoke('print:windows-cp1500-calibration:reset'),
   getBuildInfo: () =>
     ipcRenderer.invoke('app:build-info'),
   onPrintProgress: (cb) => {

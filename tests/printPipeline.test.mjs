@@ -19,7 +19,7 @@ const {
 } = require('../printPipeline.cjs');
 const {
   WINDOWS_CP1500_BACKEND,
-  WINDOWS_CP1500_CONTENT_SCALE,
+  WINDOWS_CP1500_CALIBRATION,
   buildWindowsCp1500PrintScript,
   calculateCenteredContentRectangle,
   decodeImageDataUrl,
@@ -239,6 +239,8 @@ test('native Windows backend sends an explicit per-job borderless PrintTicket', 
   assert.match(script, /CreateXpsDocumentWriter/);
   assert.match(script, /Stretch\]::Uniform/);
   assert.match(script, /\$ContentScale = \[double\]1/);
+  assert.match(script, /\$OffsetXmm = \[double\]0/);
+  assert.match(script, /\$OffsetYmm = \[double\]0/);
   assert.match(script, /maximum inset/);
   assert.doesNotMatch(script, /DefaultPrintTicket\s*=/);
 });
@@ -257,7 +259,7 @@ test('Windows CP1500 1.00 baseline uniformly maps and centers complete 4x6 artwo
   const baseCenter = center(geometry.base);
   const finalCenter = center(geometry.final);
 
-  assert.equal(WINDOWS_CP1500_CONTENT_SCALE, 1);
+  assert.deepEqual(WINDOWS_CP1500_CALIBRATION, { scale: 1, offsetXmm: 0, offsetYmm: 0 });
   assert.equal(geometry.base.x, 0);
   assert.equal(geometry.base.y, 0);
   assert.equal(geometry.base.width, 384);
@@ -275,14 +277,50 @@ test('Windows CP1500 1.00 baseline uniformly maps and centers complete 4x6 artwo
   assert.equal(geometry.cropBeyondPage.bottom, 0);
 });
 
+test('Windows CP1500 scale presets remain uniform and centered', () => {
+  for (const scale of [0.98, 0.99, 1, 1.01, 1.02]) {
+    const geometry = calculateCenteredContentRectangle({
+      sourceWidth: 1200,
+      sourceHeight: 1800,
+      pageWidth: 384,
+      pageHeight: 576,
+      scale,
+      offsetXmm: 0,
+      offsetYmm: 0,
+    });
+    assert.ok(Math.abs((geometry.final.x + geometry.final.width / 2) - 192) < 1e-10);
+    assert.ok(Math.abs((geometry.final.y + geometry.final.height / 2) - 288) < 1e-10);
+    assert.ok(Math.abs((geometry.final.width / geometry.final.height) - (2 / 3)) < 1e-10);
+    assert.ok(Math.abs(geometry.final.width - (384 * scale)) < 1e-10);
+    assert.ok(Math.abs(geometry.final.height - (576 * scale)) < 1e-10);
+  }
+});
+
+test('Windows CP1500 millimeter offsets move position without changing scale or size', () => {
+  const base = calculateCenteredContentRectangle({ sourceWidth: 1200, sourceHeight: 1800, pageWidth: 384, pageHeight: 576 });
+  const moved = calculateCenteredContentRectangle({
+    sourceWidth: 1200,
+    sourceHeight: 1800,
+    pageWidth: 384,
+    pageHeight: 576,
+    scale: 1,
+    offsetXmm: 1.5,
+    offsetYmm: -2,
+  });
+  assert.equal(moved.final.width, base.final.width);
+  assert.equal(moved.final.height, base.final.height);
+  assert.ok(Math.abs((moved.final.x - base.final.x) - (1.5 * 96 / 25.4)) < 1e-10);
+  assert.ok(Math.abs((moved.final.y - base.final.y) - (-2 * 96 / 25.4)) < 1e-10);
+});
+
 test('Windows content scale is confined to the native Windows backend', () => {
   const main = readFileSync(new URL('../electron.cjs', import.meta.url), 'utf8');
   const preload = readFileSync(new URL('../preload.cjs', import.meta.url), 'utf8');
   const pipeline = readFileSync(new URL('../printPipeline.cjs', import.meta.url), 'utf8');
 
-  assert.doesNotMatch(main, /WINDOWS_CP1500_CONTENT_SCALE/);
-  assert.doesNotMatch(preload, /WINDOWS_CP1500_CONTENT_SCALE/);
-  assert.doesNotMatch(pipeline, /WINDOWS_CP1500_CONTENT_SCALE/);
+  assert.doesNotMatch(main, /WINDOWS_CP1500_CALIBRATION/);
+  assert.doesNotMatch(preload, /WINDOWS_CP1500_CALIBRATION/);
+  assert.doesNotMatch(pipeline, /WINDOWS_CP1500_CALIBRATION/);
 });
 
 test('native Windows backend accepts the existing PNG without recomposition', () => {

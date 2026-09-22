@@ -4,36 +4,84 @@ const { spawn } = require('child_process');
 
 const WINDOWS_CP1500_BACKEND = 'Native Windows PrintTicket/XPS';
 const WINDOWS_CP1500_JOB_TIMEOUT_MS = 60000;
-// Physical-output calibration only. Keep close to 1.0 and tune after inspecting
-// a torn CP1500 print; this never changes the generated/saved source artwork.
-const WINDOWS_CP1500_CONTENT_SCALE = 1.00;
+// Windows CP1500 physical-output calibration only. Runtime overrides are
+// intentionally in-memory so testing never changes generated/saved artwork.
+const WINDOWS_CP1500_CALIBRATION = Object.freeze({
+  scale: 1.00,
+  offsetXmm: 0,
+  offsetYmm: 0,
+});
+let runtimeCalibration = { ...WINDOWS_CP1500_CALIBRATION };
 
-function calculateCenteredContentRectangle({ sourceWidth, sourceHeight, pageWidth, pageHeight, contentScale = WINDOWS_CP1500_CONTENT_SCALE }) {
-  const values = [sourceWidth, sourceHeight, pageWidth, pageHeight, contentScale].map(Number);
-  if (values.some((value) => !Number.isFinite(value) || value <= 0)) {
-    throw new Error('CP1500 content geometry requires positive finite dimensions and scale');
+function normalizeCalibration(calibration = {}) {
+  const scale = Number(calibration.scale);
+  const offsetXmm = Number(calibration.offsetXmm);
+  const offsetYmm = Number(calibration.offsetYmm);
+  if (!Number.isFinite(scale) || scale < 0.9 || scale > 1.1) {
+    throw new Error('Windows CP1500 scale must be between 0.90 and 1.10');
   }
-  const [sourceW, sourceH, pageW, pageH, scale] = values;
+  if (!Number.isFinite(offsetXmm) || Math.abs(offsetXmm) > 10 || !Number.isFinite(offsetYmm) || Math.abs(offsetYmm) > 10) {
+    throw new Error('Windows CP1500 offsets must be between -10 mm and 10 mm');
+  }
+  return { scale, offsetXmm, offsetYmm };
+}
+
+function getWindowsCp1500Calibration() {
+  return { ...runtimeCalibration };
+}
+
+function setWindowsCp1500Calibration(calibration) {
+  runtimeCalibration = normalizeCalibration(calibration);
+  return getWindowsCp1500Calibration();
+}
+
+function resetWindowsCp1500Calibration() {
+  runtimeCalibration = { ...WINDOWS_CP1500_CALIBRATION };
+  return getWindowsCp1500Calibration();
+}
+
+function calculateCenteredContentRectangle({
+  sourceWidth,
+  sourceHeight,
+  pageWidth,
+  pageHeight,
+  scale = WINDOWS_CP1500_CALIBRATION.scale,
+  offsetXmm = WINDOWS_CP1500_CALIBRATION.offsetXmm,
+  offsetYmm = WINDOWS_CP1500_CALIBRATION.offsetYmm,
+}) {
+  const values = [sourceWidth, sourceHeight, pageWidth, pageHeight, scale, offsetXmm, offsetYmm].map(Number);
+  if (values.some((value) => !Number.isFinite(value) || value <= 0)) {
+    if (values.slice(0, 5).some((value) => !Number.isFinite(value) || value <= 0) || values.slice(5).some((value) => !Number.isFinite(value))) {
+      throw new Error('CP1500 content geometry requires positive dimensions/scale and finite offsets');
+    }
+  }
+  const [sourceW, sourceH, pageW, pageH, contentScale, xMm, yMm] = values;
   const uniformBaseScale = Math.min(pageW / sourceW, pageH / sourceH);
   const baseWidth = sourceW * uniformBaseScale;
   const baseHeight = sourceH * uniformBaseScale;
   const baseX = (pageW - baseWidth) / 2;
   const baseY = (pageH - baseHeight) / 2;
-  const width = baseWidth * scale;
-  const height = baseHeight * scale;
-  const x = (pageW - width) / 2;
-  const y = (pageH - height) / 2;
+  const width = baseWidth * contentScale;
+  const height = baseHeight * contentScale;
+  const x = ((pageW - width) / 2) + (xMm * 96 / 25.4);
+  const y = ((pageH - height) / 2) + (yMm * 96 / 25.4);
   return {
     source: { width: sourceW, height: sourceH },
     page: { width: pageW, height: pageH },
     base: { x: baseX, y: baseY, width: baseWidth, height: baseHeight },
-    contentScale: scale,
+    calibration: { scale: contentScale, offsetXmm: xMm, offsetYmm: yMm },
     final: { x, y, width, height },
     cropBeyondPage: {
       left: Math.max(0, -x),
       right: Math.max(0, x + width - pageW),
       top: Math.max(0, -y),
       bottom: Math.max(0, y + height - pageH),
+    },
+    unused: {
+      left: Math.max(0, x),
+      right: Math.max(0, pageW - (x + width)),
+      top: Math.max(0, y),
+      bottom: Math.max(0, pageH - (y + height)),
     },
   };
 }
@@ -50,7 +98,7 @@ function encodedPowerShellValue(value) {
   return Buffer.from(String(value || ''), 'utf8').toString('base64');
 }
 
-function buildWindowsCp1500PrintScript({ printerName, imagePath, jobName }) {
+function buildWindowsCp1500PrintScript({ printerName, imagePath, jobName, calibration = getWindowsCp1500Calibration() }) {
   const printer = encodedPowerShellValue(printerName);
   const image = encodedPowerShellValue(imagePath);
   const job = encodedPowerShellValue(jobName);
@@ -59,7 +107,9 @@ $ErrorActionPreference = 'Stop'
 $PrinterName = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${printer}'))
 $ImagePath = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${image}'))
 $JobName = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${job}'))
-$ContentScale = [double]${WINDOWS_CP1500_CONTENT_SCALE}
+$ContentScale = [double]${calibration.scale}
+$OffsetXmm = [double]${calibration.offsetXmm}
+$OffsetYmm = [double]${calibration.offsetYmm}
 
 function EnumName($value) { if ($null -eq $value) { return $null }; return $value.ToString() }
 function ToMm($value) { if ($null -eq $value) { return $null }; return [Math]::Round(([double]$value * 25.4 / 96), 3) }
@@ -147,14 +197,16 @@ try {
   $baseWidth = [double]$bitmap.PixelWidth * $baseUniformScale; $baseHeight = [double]$bitmap.PixelHeight * $baseUniformScale
   $baseX = ($pageWidth - $baseWidth) / 2; $baseY = ($pageHeight - $baseHeight) / 2
   $width = $baseWidth * $ContentScale; $height = $baseHeight * $ContentScale
-  $x = ($pageWidth - $width) / 2; $y = ($pageHeight - $height) / 2
+  $offsetXDiu = $OffsetXmm * 96.0 / 25.4; $offsetYDiu = $OffsetYmm * 96.0 / 25.4
+  $x = (($pageWidth - $width) / 2) + $offsetXDiu; $y = (($pageHeight - $height) / 2) + $offsetYDiu
   $result.contentCalibration = [ordered]@{
     source = [ordered]@{ width = $bitmap.PixelWidth; height = $bitmap.PixelHeight }
     physicalPage = [ordered]@{ widthDiu = $pageWidth; heightDiu = $pageHeight; widthMm = ToMm $pageWidth; heightMm = ToMm $pageHeight }
     baseDestination = [ordered]@{ xDiu = $baseX; yDiu = $baseY; widthDiu = $baseWidth; heightDiu = $baseHeight; xMm = ToMm $baseX; yMm = ToMm $baseY; widthMm = ToMm $baseWidth; heightMm = ToMm $baseHeight }
-    contentScale = $ContentScale
+    scale = $ContentScale; offsetXmm = $OffsetXmm; offsetYmm = $OffsetYmm
     finalDestination = [ordered]@{ xDiu = $x; yDiu = $y; widthDiu = $width; heightDiu = $height; xMm = ToMm $x; yMm = ToMm $y; widthMm = ToMm $width; heightMm = ToMm $height }
     cropBeyondPage = [ordered]@{ leftMm = ToMm ([Math]::Max(0, -$x)); rightMm = ToMm ([Math]::Max(0, $x + $width - $pageWidth)); topMm = ToMm ([Math]::Max(0, -$y)); bottomMm = ToMm ([Math]::Max(0, $y + $height - $pageHeight)) }
+    unused = [ordered]@{ leftMm = ToMm ([Math]::Max(0, $x)); rightMm = ToMm ([Math]::Max(0, $pageWidth - ($x + $width))); topMm = ToMm ([Math]::Max(0, $y)); bottomMm = ToMm ([Math]::Max(0, $pageHeight - ($y + $height))) }
   }
   $ticketDiagnostic = [ordered]@{
     backend = $result.backend; printerName = $PrinterName; media = $result.media
@@ -216,7 +268,7 @@ async function printUsingWindowsCp1500({ dataUrl, printerName, jobName, tempDire
   const imagePath = path.join(tempDirectory, `afterimage-cp1500-${process.pid}-${Date.now()}${extension}`);
   await fs.promises.writeFile(imagePath, bytes, { flag: 'wx' });
   try {
-    return await runPowerShellJson(buildWindowsCp1500PrintScript({ printerName, imagePath, jobName }), WINDOWS_CP1500_JOB_TIMEOUT_MS, onTicketValidated);
+    return await runPowerShellJson(buildWindowsCp1500PrintScript({ printerName, imagePath, jobName, calibration: getWindowsCp1500Calibration() }), WINDOWS_CP1500_JOB_TIMEOUT_MS, onTicketValidated);
   } finally {
     await fs.promises.unlink(imagePath).catch(() => {});
   }
@@ -224,9 +276,12 @@ async function printUsingWindowsCp1500({ dataUrl, printerName, jobName, tempDire
 
 module.exports = {
   WINDOWS_CP1500_BACKEND,
-  WINDOWS_CP1500_CONTENT_SCALE,
+  WINDOWS_CP1500_CALIBRATION,
   buildWindowsCp1500PrintScript,
   calculateCenteredContentRectangle,
   decodeImageDataUrl,
+  getWindowsCp1500Calibration,
   printUsingWindowsCp1500,
+  resetWindowsCp1500Calibration,
+  setWindowsCp1500Calibration,
 };

@@ -21,7 +21,13 @@ const {
   isSelphyPrinter,
   validateWindowsPrintInvariants,
 } = require('./printPipeline.cjs');
-const { WINDOWS_CP1500_BACKEND, printUsingWindowsCp1500 } = require('./windowsPrintBackend.cjs');
+const {
+  WINDOWS_CP1500_BACKEND,
+  getWindowsCp1500Calibration,
+  printUsingWindowsCp1500,
+  resetWindowsCp1500Calibration,
+  setWindowsCp1500Calibration,
+} = require('./windowsPrintBackend.cjs');
 
 const APP_ID = 'com.kennethpatino.kukuphotobooth';
 const SOFTCOPY_SAVE_CHANNEL = 'softcopy-local:save-session-media';
@@ -5008,8 +5014,8 @@ async function submitSinglePrintCopy({
           };
           console.log('[WINDOWS CP1500 PRINT]', compactDiagnosticValue(validatedTicketLog));
           void writeDiagnosticEvent('WINDOWS CP1500 PRINT', validatedTicketLog);
-          console.log('[WINDOWS CP1500 CONTENT CALIBRATION]', compactDiagnosticValue(contentCalibration));
-          void writeDiagnosticEvent('WINDOWS CP1500 CONTENT CALIBRATION', contentCalibration);
+          console.log('[WINDOWS CP1500 CALIBRATION]', compactDiagnosticValue(contentCalibration));
+          void writeDiagnosticEvent('WINDOWS CP1500 CALIBRATION', contentCalibration);
           const physicalMapping = {
             source: contentCalibration?.source || {
               width: readiness?.naturalWidth || null,
@@ -5032,7 +5038,7 @@ async function submitSinglePrintCopy({
               bottomMm: null,
               detection: 'not exposed by the Windows PrintTicket; physical measurement required',
             },
-            mappingStrategy: 'complete source, uniform aspect-preserving mapping, centered, content scale 1.00',
+            mappingStrategy: `complete source, uniform aspect-preserving mapping, scale ${contentCalibration?.scale ?? null}, offsets ${contentCalibration?.offsetXmm ?? null} mm / ${contentCalibration?.offsetYmm ?? null} mm`,
             contentCrop: contentCalibration?.cropBeyondPage || null,
           };
           console.log('[CP1500 PHYSICAL MAPPING]', compactDiagnosticValue(physicalMapping));
@@ -5434,6 +5440,26 @@ ipcMain.handle('app:build-info', async () => {
     windowsPrintBackendId: 'native-windows-printticket-xps-v2',
     buildTimestamp,
   };
+});
+
+ipcMain.handle('print:windows-cp1500-calibration:get', async () => ({
+  ok: process.platform === 'win32',
+  calibration: process.platform === 'win32' ? getWindowsCp1500Calibration() : null,
+  error: process.platform === 'win32' ? null : 'Windows CP1500 calibration is Windows-only.',
+}));
+
+ipcMain.handle('print:windows-cp1500-calibration:set', async (_event, calibration = {}) => {
+  if (process.platform !== 'win32') return { ok: false, calibration: null, error: 'Windows CP1500 calibration is Windows-only.' };
+  try {
+    return { ok: true, calibration: setWindowsCp1500Calibration(calibration), error: null };
+  } catch (error) {
+    return { ok: false, calibration: getWindowsCp1500Calibration(), error: error?.message || String(error) };
+  }
+});
+
+ipcMain.handle('print:windows-cp1500-calibration:reset', async () => {
+  if (process.platform !== 'win32') return { ok: false, calibration: null, error: 'Windows CP1500 calibration is Windows-only.' };
+  return { ok: true, calibration: resetWindowsCp1500Calibration(), error: null };
 });
 
 ipcMain.handle('print:windows-cp1500-calibration', async (event) => {
