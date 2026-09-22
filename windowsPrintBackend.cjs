@@ -4,6 +4,39 @@ const { spawn } = require('child_process');
 
 const WINDOWS_CP1500_BACKEND = 'Native Windows PrintTicket/XPS';
 const WINDOWS_CP1500_JOB_TIMEOUT_MS = 60000;
+// Physical-output calibration only. Keep close to 1.0 and tune after inspecting
+// a torn CP1500 print; this never changes the generated/saved source artwork.
+const WINDOWS_CP1500_CONTENT_SCALE = 1.02;
+
+function calculateCenteredContentRectangle({ sourceWidth, sourceHeight, pageWidth, pageHeight, contentScale = WINDOWS_CP1500_CONTENT_SCALE }) {
+  const values = [sourceWidth, sourceHeight, pageWidth, pageHeight, contentScale].map(Number);
+  if (values.some((value) => !Number.isFinite(value) || value <= 0)) {
+    throw new Error('CP1500 content geometry requires positive finite dimensions and scale');
+  }
+  const [sourceW, sourceH, pageW, pageH, scale] = values;
+  const uniformBaseScale = Math.max(pageW / sourceW, pageH / sourceH);
+  const baseWidth = sourceW * uniformBaseScale;
+  const baseHeight = sourceH * uniformBaseScale;
+  const baseX = (pageW - baseWidth) / 2;
+  const baseY = (pageH - baseHeight) / 2;
+  const width = baseWidth * scale;
+  const height = baseHeight * scale;
+  const x = (pageW - width) / 2;
+  const y = (pageH - height) / 2;
+  return {
+    source: { width: sourceW, height: sourceH },
+    page: { width: pageW, height: pageH },
+    base: { x: baseX, y: baseY, width: baseWidth, height: baseHeight },
+    contentScale: scale,
+    final: { x, y, width, height },
+    cropBeyondPage: {
+      left: Math.max(0, -x),
+      right: Math.max(0, x + width - pageW),
+      top: Math.max(0, -y),
+      bottom: Math.max(0, y + height - pageH),
+    },
+  };
+}
 
 function decodeImageDataUrl(dataUrl) {
   const match = /^data:image\/(png|jpe?g);base64,([\s\S]+)$/i.exec(String(dataUrl || ''));
@@ -26,6 +59,7 @@ $ErrorActionPreference = 'Stop'
 $PrinterName = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${printer}'))
 $ImagePath = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${image}'))
 $JobName = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${job}'))
+$ContentScale = [double]${WINDOWS_CP1500_CONTENT_SCALE}
 
 function EnumName($value) { if ($null -eq $value) { return $null }; return $value.ToString() }
 function ToMm($value) { if ($null -eq $value) { return $null }; return [Math]::Round(([double]$value * 25.4 / 96), 3) }
@@ -103,31 +137,43 @@ try {
   $maxInsetMm = (@($area.hardwareMarginsMm.left, $area.hardwareMarginsMm.right, $area.hardwareMarginsMm.top, $area.hardwareMarginsMm.bottom) | Measure-Object -Maximum).Maximum
   if ([double]$maxInsetMm -gt 0.3) { throw ('Validated borderless ticket still reports a reduced printable area (maximum inset {0} mm).' -f $maxInsetMm) }
 
+  $bitmap = New-Object Windows.Media.Imaging.BitmapImage
+  $bitmap.BeginInit(); $bitmap.CacheOption = [Windows.Media.Imaging.BitmapCacheOption]::OnLoad
+  $bitmap.UriSource = New-Object Uri -ArgumentList $ImagePath, ([UriKind]::Absolute); $bitmap.EndInit(); $bitmap.Freeze()
+  $pageWidth = [double]$ticket.PageMediaSize.Width; $pageHeight = [double]$ticket.PageMediaSize.Height
+  if ($pageWidth -gt $pageHeight -and $bitmap.PixelWidth -lt $bitmap.PixelHeight) { $swap = $pageWidth; $pageWidth = $pageHeight; $pageHeight = $swap }
+  if ($pageHeight -gt $pageWidth -and $bitmap.PixelWidth -gt $bitmap.PixelHeight) { $swap = $pageWidth; $pageWidth = $pageHeight; $pageHeight = $swap }
+  $baseUniformScale = [Math]::Max($pageWidth / [double]$bitmap.PixelWidth, $pageHeight / [double]$bitmap.PixelHeight)
+  $baseWidth = [double]$bitmap.PixelWidth * $baseUniformScale; $baseHeight = [double]$bitmap.PixelHeight * $baseUniformScale
+  $baseX = ($pageWidth - $baseWidth) / 2; $baseY = ($pageHeight - $baseHeight) / 2
+  $width = $baseWidth * $ContentScale; $height = $baseHeight * $ContentScale
+  $x = ($pageWidth - $width) / 2; $y = ($pageHeight - $height) / 2
+  $result.contentCalibration = [ordered]@{
+    source = [ordered]@{ width = $bitmap.PixelWidth; height = $bitmap.PixelHeight }
+    physicalPage = [ordered]@{ widthDiu = $pageWidth; heightDiu = $pageHeight; widthMm = ToMm $pageWidth; heightMm = ToMm $pageHeight }
+    baseDestination = [ordered]@{ xDiu = $baseX; yDiu = $baseY; widthDiu = $baseWidth; heightDiu = $baseHeight; xMm = ToMm $baseX; yMm = ToMm $baseY; widthMm = ToMm $baseWidth; heightMm = ToMm $baseHeight }
+    contentScale = $ContentScale
+    finalDestination = [ordered]@{ xDiu = $x; yDiu = $y; widthDiu = $width; heightDiu = $height; xMm = ToMm $x; yMm = ToMm $y; widthMm = ToMm $width; heightMm = ToMm $height }
+    cropBeyondPage = [ordered]@{ leftMm = ToMm ([Math]::Max(0, -$x)); rightMm = ToMm ([Math]::Max(0, $x + $width - $pageWidth)); topMm = ToMm ([Math]::Max(0, -$y)); bottomMm = ToMm ([Math]::Max(0, $y + $height - $pageHeight)) }
+  }
   $ticketDiagnostic = [ordered]@{
     backend = $result.backend; printerName = $PrinterName; media = $result.media
     borderlessRequested = $true; borderlessValidated = $result.borderlessSelected
     scalingRequested = $result.scalingRequested; scalingValidated = $result.scalingValidated
-    pageImageableArea = $result.pageImageableArea
+    pageImageableArea = $result.pageImageableArea; contentCalibration = $result.contentCalibration
   }
-  Write-Output ('AFTERIMAGE_CP1500_TICKET:' + ($ticketDiagnostic | ConvertTo-Json -Depth 8 -Compress))
-
-  $bitmap = New-Object Windows.Media.Imaging.BitmapImage
-  $bitmap.BeginInit(); $bitmap.CacheOption = [Windows.Media.Imaging.BitmapCacheOption]::OnLoad
-  $bitmap.UriSource = New-Object Uri -ArgumentList $ImagePath, ([UriKind]::Absolute); $bitmap.EndInit(); $bitmap.Freeze()
-  $width = [double]$ticket.PageMediaSize.Width; $height = [double]$ticket.PageMediaSize.Height
-  if ($width -gt $height -and $bitmap.PixelWidth -lt $bitmap.PixelHeight) { $swap = $width; $width = $height; $height = $swap }
-  if ($height -gt $width -and $bitmap.PixelWidth -gt $bitmap.PixelHeight) { $swap = $width; $width = $height; $height = $swap }
+  Write-Output ('AFTERIMAGE_CP1500_TICKET:' + ($ticketDiagnostic | ConvertTo-Json -Depth 10 -Compress))
 
   $control = New-Object Windows.Controls.Image
-  $control.Source = $bitmap; $control.Stretch = [Windows.Media.Stretch]::Fill
+  $control.Source = $bitmap; $control.Stretch = [Windows.Media.Stretch]::Uniform
   $control.Width = $width; $control.Height = $height
-  [Windows.Controls.Canvas]::SetLeft($control, 0); [Windows.Controls.Canvas]::SetTop($control, 0)
+  [Windows.Controls.Canvas]::SetLeft($control, $x); [Windows.Controls.Canvas]::SetTop($control, $y)
   $page = New-Object Windows.Documents.FixedPage
-  $page.Width = $width; $page.Height = $height; [void]$page.Children.Add($control)
+  $page.Width = $pageWidth; $page.Height = $pageHeight; $page.ClipToBounds = $true; [void]$page.Children.Add($control)
   $content = New-Object Windows.Documents.PageContent
   ([Windows.Markup.IAddChild]$content).AddChild($page)
   $document = New-Object Windows.Documents.FixedDocument
-  $document.DocumentPaginator.PageSize = New-Object Windows.Size -ArgumentList $width, $height
+  $document.DocumentPaginator.PageSize = New-Object Windows.Size -ArgumentList $pageWidth, $pageHeight
   [void]$document.Pages.Add($content)
   $writer = [System.Printing.PrintQueue]::CreateXpsDocumentWriter($queue)
   $writer.Write($document.DocumentPaginator, $ticket)
@@ -176,4 +222,11 @@ async function printUsingWindowsCp1500({ dataUrl, printerName, jobName, tempDire
   }
 }
 
-module.exports = { WINDOWS_CP1500_BACKEND, buildWindowsCp1500PrintScript, decodeImageDataUrl, printUsingWindowsCp1500 };
+module.exports = {
+  WINDOWS_CP1500_BACKEND,
+  WINDOWS_CP1500_CONTENT_SCALE,
+  buildWindowsCp1500PrintScript,
+  calculateCenteredContentRectangle,
+  decodeImageDataUrl,
+  printUsingWindowsCp1500,
+};

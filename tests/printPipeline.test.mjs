@@ -19,7 +19,9 @@ const {
 } = require('../printPipeline.cjs');
 const {
   WINDOWS_CP1500_BACKEND,
+  WINDOWS_CP1500_CONTENT_SCALE,
   buildWindowsCp1500PrintScript,
+  calculateCenteredContentRectangle,
   decodeImageDataUrl,
 } = require('../windowsPrintBackend.cjs');
 
@@ -235,8 +237,52 @@ test('native Windows backend sends an explicit per-job borderless PrintTicket', 
   assert.match(script, /OutputQuality\]::Photographic/);
   assert.match(script, /MergeAndValidatePrintTicket/);
   assert.match(script, /CreateXpsDocumentWriter/);
+  assert.match(script, /Stretch\]::Uniform/);
+  assert.match(script, /\$ContentScale = \[double\]1\.02/);
   assert.match(script, /maximum inset/);
   assert.doesNotMatch(script, /DefaultPrintTicket\s*=/);
+});
+
+test('Windows CP1500 content calibration uniformly enlarges and recenters 4x6 artwork', () => {
+  const geometry = calculateCenteredContentRectangle({
+    sourceWidth: 1200,
+    sourceHeight: 1800,
+    pageWidth: 384,
+    pageHeight: 576,
+  });
+  const center = (rectangle) => ({
+    x: rectangle.x + rectangle.width / 2,
+    y: rectangle.y + rectangle.height / 2,
+  });
+  const baseCenter = center(geometry.base);
+  const finalCenter = center(geometry.final);
+
+  assert.equal(WINDOWS_CP1500_CONTENT_SCALE, 1.02);
+  assert.equal(geometry.base.x, 0);
+  assert.equal(geometry.base.y, 0);
+  assert.equal(geometry.base.width, 384);
+  assert.equal(geometry.base.height, 576);
+  assert.ok(Math.abs(geometry.final.width - 391.68) < 1e-10);
+  assert.ok(Math.abs(geometry.final.height - 587.52) < 1e-10);
+  assert.ok(Math.abs(geometry.final.x - (-3.84)) < 1e-10);
+  assert.ok(Math.abs(geometry.final.y - (-5.76)) < 1e-10);
+  assert.ok(Math.abs(baseCenter.x - finalCenter.x) < 1e-10);
+  assert.ok(Math.abs(baseCenter.y - finalCenter.y) < 1e-10);
+  assert.ok(Math.abs((geometry.final.width / geometry.final.height) - (1200 / 1800)) < 1e-10);
+  assert.ok(Math.abs(geometry.cropBeyondPage.left - 3.84) < 1e-10);
+  assert.ok(Math.abs(geometry.cropBeyondPage.right - 3.84) < 1e-10);
+  assert.ok(Math.abs(geometry.cropBeyondPage.top - 5.76) < 1e-10);
+  assert.ok(Math.abs(geometry.cropBeyondPage.bottom - 5.76) < 1e-10);
+});
+
+test('Windows content scale is confined to the native Windows backend', () => {
+  const main = readFileSync(new URL('../electron.cjs', import.meta.url), 'utf8');
+  const preload = readFileSync(new URL('../preload.cjs', import.meta.url), 'utf8');
+  const pipeline = readFileSync(new URL('../printPipeline.cjs', import.meta.url), 'utf8');
+
+  assert.doesNotMatch(main, /WINDOWS_CP1500_CONTENT_SCALE/);
+  assert.doesNotMatch(preload, /WINDOWS_CP1500_CONTENT_SCALE/);
+  assert.doesNotMatch(pipeline, /WINDOWS_CP1500_CONTENT_SCALE/);
 });
 
 test('native Windows backend accepts the existing PNG without recomposition', () => {

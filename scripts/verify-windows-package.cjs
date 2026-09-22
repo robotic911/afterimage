@@ -10,7 +10,7 @@ if (!fs.existsSync(archivePath)) {
 const required = {
   'preload.cjs': ['printWindowsCp1500Calibration', 'cp1500-native-v2'],
   'electron.cjs': ['print:windows-cp1500-calibration', 'app:build-info'],
-  'windowsPrintBackend.cjs': ['Native Windows PrintTicket/XPS', 'PageBorderless'],
+  'windowsPrintBackend.cjs': ['Native Windows PrintTicket/XPS', 'PageBorderless', 'WINDOWS_CP1500_CONTENT_SCALE = 1.02', 'Stretch]::Uniform'],
   'printPipeline.cjs': ['native_windows_printticket_xps'],
 };
 

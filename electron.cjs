@@ -4983,6 +4983,7 @@ async function submitSinglePrintCopy({
         tempDirectory: app.getPath('temp'),
         onTicketValidated: (ticket) => {
           const area = ticket?.pageImageableArea || null;
+          const contentCalibration = ticket?.contentCalibration || null;
           validatedTicketLog = {
             printer: ticket?.printerName || printerName,
             media: ticket?.media || null,
@@ -5007,6 +5008,8 @@ async function submitSinglePrintCopy({
           };
           console.log('[WINDOWS CP1500 PRINT]', compactDiagnosticValue(validatedTicketLog));
           void writeDiagnosticEvent('WINDOWS CP1500 PRINT', validatedTicketLog);
+          console.log('[WINDOWS CP1500 CONTENT CALIBRATION]', compactDiagnosticValue(contentCalibration));
+          void writeDiagnosticEvent('WINDOWS CP1500 CONTENT CALIBRATION', contentCalibration);
         },
       });
       windowsPrintPrep = {
@@ -5074,6 +5077,7 @@ async function submitSinglePrintCopy({
           imageableArea: nativeArea ? { xMm: nativeArea.originXMm, yMm: nativeArea.originYMm, widthMm: nativeArea.extentWidthMm, heightMm: nativeArea.extentHeightMm } : null,
           insets: nativeArea?.hardwareMarginsMm || null,
           sourceSize: { width: readiness?.naturalWidth || null, height: readiness?.naturalHeight || null },
+          contentCalibration: nativeResult.contentCalibration || null,
           error: nativeResult.error || null,
         },
       };
