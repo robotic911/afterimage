@@ -1,4 +1,4 @@
-import { DEFAULT_SAFE_MARGIN_OVERRIDE } from './printSettings';
+import { DEFAULT_SAFE_MARGIN_OVERRIDE } from './printSettings.js';
 
 export const DEFAULT_PRINTER_PROFILES = {
   selphy_cp1500: {

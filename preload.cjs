@@ -69,12 +69,6 @@ contextBridge.exposeInMainWorld('printApi', {
     ipcRenderer.invoke('print:windows-cp1500-calibration:set', calibration),
   resetWindowsCp1500ContentCalibration: () =>
     ipcRenderer.invoke('print:windows-cp1500-calibration:reset'),
-  setWindowsCp1500LayoutMargins: (margins) =>
-    ipcRenderer.invoke('print:windows-cp1500-layout-margins:set', margins),
-  getWindowsCp1500LayoutMargins: () =>
-    ipcRenderer.invoke('print:windows-cp1500-layout-margins:get'),
-  resetWindowsCp1500LayoutMargins: () =>
-    ipcRenderer.invoke('print:windows-cp1500-layout-margins:reset'),
   getWindowsCp1500GeometryDiagnostics: (options = {}) =>
     ipcRenderer.invoke('print:windows-cp1500-geometry-diagnostics', options),
   getBuildInfo: () =>

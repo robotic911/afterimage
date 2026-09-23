@@ -13,37 +13,7 @@ const WINDOWS_CP1500_CALIBRATION = Object.freeze({
   offsetXmm: 0,
   offsetYmm: 0,
 });
-const WINDOWS_CP1500_LAYOUT = Object.freeze({
-  marginTopMm: 0,
-  marginRightMm: 0,
-  marginBottomMm: 0,
-  marginLeftMm: 0,
-});
 let runtimeCalibration = { ...WINDOWS_CP1500_CALIBRATION };
-let runtimeLayoutMargins = { topMm: 0, rightMm: 0, bottomMm: 0, leftMm: 0 };
-
-function normalizeLayoutMargins(margins = {}) {
-  const normalized = {
-    topMm: Number(margins.topMm),
-    rightMm: Number(margins.rightMm),
-    bottomMm: Number(margins.bottomMm),
-    leftMm: Number(margins.leftMm),
-  };
-  if (Object.values(normalized).some((value) => !Number.isFinite(value) || value < -5 || value > 5)) {
-    throw new Error('Windows CP1500 layout margins must be between -5 mm and 5 mm');
-  }
-  return normalized;
-}
-
-function getWindowsCp1500LayoutMargins() { return { ...runtimeLayoutMargins }; }
-function setWindowsCp1500LayoutMargins(margins) {
-  runtimeLayoutMargins = normalizeLayoutMargins(margins);
-  return getWindowsCp1500LayoutMargins();
-}
-function resetWindowsCp1500LayoutMargins() {
-  runtimeLayoutMargins = { topMm: 0, rightMm: 0, bottomMm: 0, leftMm: 0 };
-  return getWindowsCp1500LayoutMargins();
-}
 
 function normalizeCalibration(calibration = {}) {
   const scale = Number(calibration.scale);
@@ -118,33 +88,6 @@ function calculateCenteredContentRectangle({
   };
 }
 
-function calculateMarginCalibratedRectangle({ sourceWidth, sourceHeight, base, margins = getWindowsCp1500LayoutMargins() }) {
-  const sourceW = Number(sourceWidth); const sourceH = Number(sourceHeight);
-  const margin = normalizeLayoutMargins(margins);
-  const mmToDip = (value) => value * 96 / 25.4;
-  const available = {
-    x: Number(base.x) + mmToDip(margin.leftMm),
-    y: Number(base.y) + mmToDip(margin.topMm),
-    width: Number(base.width) - mmToDip(margin.leftMm + margin.rightMm),
-    height: Number(base.height) - mmToDip(margin.topMm + margin.bottomMm),
-  };
-  if (![sourceW, sourceH, available.width, available.height].every((value) => Number.isFinite(value) && value > 0)) {
-    throw new Error('Windows CP1500 margins leave no usable destination area');
-  }
-  const uniformScale = Math.min(available.width / sourceW, available.height / sourceH);
-  const width = sourceW * uniformScale; const height = sourceH * uniformScale;
-  return {
-    margins: margin,
-    available,
-    final: {
-      x: available.x + (available.width - width) / 2,
-      y: available.y + (available.height - height) / 2,
-      width,
-      height,
-    },
-  };
-}
-
 function decodeImageDataUrl(dataUrl) {
   const match = /^data:image\/(png|jpe?g);base64,([\s\S]+)$/i.exec(String(dataUrl || ''));
   if (!match) throw new Error('Windows printing requires a PNG or JPEG data URL');
@@ -186,7 +129,7 @@ function createSolidDiagnosticPng(width = 1200, height = 1800) {
   return Buffer.concat([signature, chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
 }
 
-function buildWindowsCp1500PrintScript({ printerName, imagePath, jobName, calibration = WINDOWS_CP1500_CALIBRATION, layoutMargins = getWindowsCp1500LayoutMargins(), diagnosticOnly = false }) {
+function buildWindowsCp1500PrintScript({ printerName, imagePath, jobName, calibration = WINDOWS_CP1500_CALIBRATION, diagnosticOnly = false }) {
   const printer = encodedPowerShellValue(printerName);
   const image = encodedPowerShellValue(imagePath);
   const job = encodedPowerShellValue(jobName);
@@ -198,10 +141,6 @@ $JobName = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${job}')
 $ContentScale = [double]${calibration.scale}
 $OffsetXmm = [double]${calibration.offsetXmm}
 $OffsetYmm = [double]${calibration.offsetYmm}
-$MarginTopMm = [double]${layoutMargins.topMm}
-$MarginRightMm = [double]${layoutMargins.rightMm}
-$MarginBottomMm = [double]${layoutMargins.bottomMm}
-$MarginLeftMm = [double]${layoutMargins.leftMm}
 $DiagnosticOnly = ${diagnosticOnly ? '$true' : '$false'}
 
 function EnumName($value) { if ($null -eq $value) { return $null }; return $value.ToString() }
@@ -501,24 +440,14 @@ try {
   $baseUniformScale = [Math]::Min($pageWidth / [double]$bitmap.PixelWidth, $pageHeight / [double]$bitmap.PixelHeight)
   $baseWidth = [double]$bitmap.PixelWidth * $baseUniformScale; $baseHeight = [double]$bitmap.PixelHeight * $baseUniformScale
   $baseX = ($pageWidth - $baseWidth) / 2; $baseY = ($pageHeight - $baseHeight) / 2
-  $marginTopDiu = $MarginTopMm * 96.0 / 25.4; $marginRightDiu = $MarginRightMm * 96.0 / 25.4
-  $marginBottomDiu = $MarginBottomMm * 96.0 / 25.4; $marginLeftDiu = $MarginLeftMm * 96.0 / 25.4
-  $availableX = $baseX + $marginLeftDiu; $availableY = $baseY + $marginTopDiu
-  $availableWidth = $baseWidth - $marginLeftDiu - $marginRightDiu
-  $availableHeight = $baseHeight - $marginTopDiu - $marginBottomDiu
-  if ($availableWidth -le 0 -or $availableHeight -le 0) { throw 'Windows CP1500 margins leave no usable destination area.' }
-  $layoutScale = [Math]::Min($availableWidth / [double]$bitmap.PixelWidth, $availableHeight / [double]$bitmap.PixelHeight)
-  $width = [double]$bitmap.PixelWidth * $layoutScale * $ContentScale
-  $height = [double]$bitmap.PixelHeight * $layoutScale * $ContentScale
+  $width = $baseWidth * $ContentScale; $height = $baseHeight * $ContentScale
   $offsetXDiu = $OffsetXmm * 96.0 / 25.4; $offsetYDiu = $OffsetYmm * 96.0 / 25.4
-  $x = $availableX + (($availableWidth - $width) / 2) + $offsetXDiu
-  $y = $availableY + (($availableHeight - $height) / 2) + $offsetYDiu
+  $x = (($pageWidth - $width) / 2) + $offsetXDiu; $y = (($pageHeight - $height) / 2) + $offsetYDiu
   $result.contentCalibration = [ordered]@{
     source = [ordered]@{ width = $bitmap.PixelWidth; height = $bitmap.PixelHeight }
     physicalPage = [ordered]@{ widthDiu = $pageWidth; heightDiu = $pageHeight; widthMm = ToMm $pageWidth; heightMm = ToMm $pageHeight }
     baseDestination = [ordered]@{ xDiu = $baseX; yDiu = $baseY; widthDiu = $baseWidth; heightDiu = $baseHeight; xMm = ToMm $baseX; yMm = ToMm $baseY; widthMm = ToMm $baseWidth; heightMm = ToMm $baseHeight }
     scale = $ContentScale; offsetXmm = $OffsetXmm; offsetYmm = $OffsetYmm
-    layoutMarginsMm = [ordered]@{ top = $MarginTopMm; right = $MarginRightMm; bottom = $MarginBottomMm; left = $MarginLeftMm }
     finalDestination = [ordered]@{ xDiu = $x; yDiu = $y; widthDiu = $width; heightDiu = $height; xMm = ToMm $x; yMm = ToMm $y; widthMm = ToMm $width; heightMm = ToMm $height }
     cropBeyondPage = [ordered]@{ leftMm = ToMm ([Math]::Max(0, -$x)); rightMm = ToMm ([Math]::Max(0, $x + $width - $pageWidth)); topMm = ToMm ([Math]::Max(0, -$y)); bottomMm = ToMm ([Math]::Max(0, $y + $height - $pageHeight)) }
     unused = [ordered]@{ leftMm = ToMm ([Math]::Max(0, $x)); rightMm = ToMm ([Math]::Max(0, $pageWidth - ($x + $width))); topMm = ToMm ([Math]::Max(0, $y)); bottomMm = ToMm ([Math]::Max(0, $pageHeight - ($y + $height))) }
@@ -648,7 +577,7 @@ async function printUsingWindowsCp1500({ dataUrl, printerName, jobName, tempDire
   const imagePath = path.join(tempDirectory, `afterimage-cp1500-${process.pid}-${Date.now()}${extension}`);
   await fs.promises.writeFile(imagePath, bytes, { flag: 'wx' });
   try {
-    return await runPowerShellJson(buildWindowsCp1500PrintScript({ printerName, imagePath, jobName, calibration: WINDOWS_CP1500_CALIBRATION, layoutMargins: getWindowsCp1500LayoutMargins() }), WINDOWS_CP1500_JOB_TIMEOUT_MS, onTicketValidated, tempDirectory);
+    return await runPowerShellJson(buildWindowsCp1500PrintScript({ printerName, imagePath, jobName, calibration: WINDOWS_CP1500_CALIBRATION }), WINDOWS_CP1500_JOB_TIMEOUT_MS, onTicketValidated, tempDirectory);
   } finally {
     await fs.promises.unlink(imagePath).catch(() => {});
   }
@@ -786,19 +715,14 @@ async function getWindowsCp1500GeometryDiagnostics({ dataUrl = null, imagePath: 
 module.exports = {
   WINDOWS_CP1500_BACKEND,
   WINDOWS_CP1500_CALIBRATION,
-  WINDOWS_CP1500_LAYOUT,
   buildPowerShellFileLaunch,
   buildWindowsCp1500PrintScript,
   calculateCenteredContentRectangle,
-  calculateMarginCalibratedRectangle,
   createSolidDiagnosticPng,
   decodeImageDataUrl,
   getWindowsCp1500Calibration,
   getWindowsCp1500GeometryDiagnostics,
-  getWindowsCp1500LayoutMargins,
   printUsingWindowsCp1500,
   resetWindowsCp1500Calibration,
-  resetWindowsCp1500LayoutMargins,
   setWindowsCp1500Calibration,
-  setWindowsCp1500LayoutMargins,
 };

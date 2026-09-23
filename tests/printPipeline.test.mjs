@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import test from 'node:test';
+import { getPrintArea, getPrinterProfile } from '../src/constants/printers.js';
 
 const require = createRequire(import.meta.url);
 const {
@@ -20,11 +21,9 @@ const {
 const {
   WINDOWS_CP1500_BACKEND,
   WINDOWS_CP1500_CALIBRATION,
-  WINDOWS_CP1500_LAYOUT,
   buildPowerShellFileLaunch,
   buildWindowsCp1500PrintScript,
   calculateCenteredContentRectangle,
-  calculateMarginCalibratedRectangle,
   createSolidDiagnosticPng,
   decodeImageDataUrl,
 } = require('../windowsPrintBackend.cjs');
@@ -281,26 +280,26 @@ test('Windows CP1500 1.00 baseline uniformly maps and centers complete 4x6 artwo
   assert.equal(geometry.cropBeyondPage.bottom, 0);
 });
 
-test('Windows CP1500 zero layout margins exactly preserve the safe 1.00 destination', () => {
-  const base = { x: 0, y: 0, width: 384, height: 576 };
-  const geometry = calculateMarginCalibratedRectangle({ sourceWidth: 1200, sourceHeight: 1800, base });
-  assert.deepEqual(WINDOWS_CP1500_LAYOUT, { marginTopMm: 0, marginRightMm: 0, marginBottomMm: 0, marginLeftMm: 0 });
-  assert.deepEqual(geometry.final, base);
+test('CP1500 Admin safe area calculates the shared 1200x1800 physical print area', () => {
+  const area = getPrintArea(getPrinterProfile('selphy_cp1500'), {
+    top: 33,
+    right: 33,
+    bottom: 76,
+    left: 32,
+  });
+  assert.deepEqual(area, { x: 32, y: 33, w: 1135, h: 1691 });
 });
 
-test('Windows CP1500 margins resize and position uniformly without distortion', () => {
-  const base = { x: 0, y: 0, width: 384, height: 576 };
-  const zero = calculateMarginCalibratedRectangle({ sourceWidth: 1200, sourceHeight: 1800, base });
-  const positive = calculateMarginCalibratedRectangle({ sourceWidth: 1200, sourceHeight: 1800, base, margins: { topMm: 1, rightMm: 1, bottomMm: 1, leftMm: 1 } });
-  const negative = calculateMarginCalibratedRectangle({ sourceWidth: 1200, sourceHeight: 1800, base, margins: { topMm: -1, rightMm: -1, bottomMm: -1, leftMm: -1 } });
-  const asymmetric = calculateMarginCalibratedRectangle({ sourceWidth: 1200, sourceHeight: 1800, base, margins: { topMm: 1, rightMm: 0, bottomMm: 0, leftMm: 2 } });
-  assert.ok(positive.final.width < zero.final.width && positive.final.height < zero.final.height);
-  assert.ok(negative.final.width > zero.final.width && negative.final.height > zero.final.height);
-  assert.notEqual(asymmetric.final.x, zero.final.x);
-  assert.notEqual(asymmetric.final.y, zero.final.y);
-  for (const geometry of [positive, negative, asymmetric]) {
-    assert.ok(Math.abs(geometry.final.width / geometry.final.height - 2 / 3) < 1e-12);
-  }
+test('Mac and Windows branch only after the same safe-area-prepared bitmap exists', () => {
+  const renderer = readFileSync(new URL('../src/components/screens/PrintScreen.jsx', import.meta.url), 'utf8');
+  const main = readFileSync(new URL('../electron.cjs', import.meta.url), 'utf8');
+  const backend = readFileSync(new URL('../windowsPrintBackend.cjs', import.meta.url), 'utf8');
+  assert.ok(renderer.indexOf('finalArtifact = await getFinalPrintArtifact()') < renderer.indexOf('window.printApi.printStrip(jpegUrl'));
+  assert.match(renderer, /getActiveSafeMargin\(printerProfile, settings\?\.safeMarginOverride\)/);
+  assert.match(renderer, /getPrintArea\(printerProfile, settings\?\.safeMarginOverride\)/);
+  assert.ok(main.indexOf("console.log('[CP1500 PRINT PREPARATION]'") < main.indexOf("if (process.platform === 'win32' && isSelphyPrinter(printer))"));
+  assert.doesNotMatch(backend, /MarginTopMm|layoutMarginsMm|CP1500_LAYOUT/);
+  assert.match(backend, /calibration: WINDOWS_CP1500_CALIBRATION/);
 });
 
 test('Windows CP1500 scale presets remain uniform and centered', () => {
@@ -372,10 +371,8 @@ test('calibration IPC is bridged through preload to the matching main handler', 
   assert.match(main, /ipcMain\.handle\('print:windows-cp1500-calibration:set'[\s\S]*return setWindowsCp1500Calibration\(calibration\)/);
   assert.match(main, /ipcMain\.handle\('print:windows-cp1500-calibration:reset'[\s\S]*return resetWindowsCp1500Calibration\(\)/);
   assert.match(main, /ipcMain\.handle\('print:windows-cp1500-geometry-diagnostics'[\s\S]*getWindowsCp1500GeometryDiagnostics\(\{/);
-  assert.match(preload, /setWindowsCp1500LayoutMargins:\s*\(margins\)[\s\S]*print:windows-cp1500-layout-margins:set/);
-  assert.match(preload, /getWindowsCp1500LayoutMargins:\s*\(\)[\s\S]*print:windows-cp1500-layout-margins:get/);
-  assert.match(preload, /resetWindowsCp1500LayoutMargins:\s*\(\)[\s\S]*print:windows-cp1500-layout-margins:reset/);
-  assert.equal((main.match(/ipcMain\.handle\('print:windows-cp1500-layout-margins:/g) || []).length, 3);
+  assert.doesNotMatch(preload, /WindowsCp1500LayoutMargins/);
+  assert.doesNotMatch(main, /windows-cp1500-layout-margins/);
   assert.match(main, /print:windows-cp1500-calibration[\s\S]*submitSinglePrintCopy\(\{/);
   assert.match(main, /submitSinglePrintCopy[\s\S]*printUsingWindowsCp1500\(\{/);
   assert.ok(packageJson.build.files.includes('preload.cjs'));

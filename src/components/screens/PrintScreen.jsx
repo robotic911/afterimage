@@ -14,7 +14,13 @@ import {
 import { versionTemplateAssetSrc } from '../../lib/templateAssetUrl';
 import { resolveTemplateRenderAssets } from '../../lib/templateRenderAssets';
 import { AFTERIMAGE_BUILD, createAfterimageBuildPayload } from '../../lib/buildInfo';
-import { DEFAULT_PRINTER_PROFILE_ID, DEFAULT_SAFE_MARGIN_OVERRIDE } from '../../constants/printers';
+import {
+  DEFAULT_PRINTER_PROFILE_ID,
+  DEFAULT_SAFE_MARGIN_OVERRIDE,
+  getActiveSafeMargin,
+  getPrintArea,
+  getPrinterProfile,
+} from '../../constants/printers';
 import {
   createSoftcopySessionToken,
   runSoftcopyQrDiagnosticProbe,
@@ -2640,12 +2646,28 @@ export default function PrintScreen({
         timeStart('[print] send job');
         let res;
         try {
+          const printerProfile = getPrinterProfile(settings?.printerProfileId);
+          const safeArea = getActiveSafeMargin(printerProfile, settings?.safeMarginOverride);
+          const calculatedPrintArea = getPrintArea(printerProfile, settings?.safeMarginOverride);
+          const printPreparation = {
+            source: { width: finalArtifact.canvas.width, height: finalArtifact.canvas.height },
+            safeArea,
+            calculatedPrintArea,
+            preparedBitmapWidth: finalArtifact.canvas.width,
+            preparedBitmapHeight: finalArtifact.canvas.height,
+            safeAreaStatus: 'applied',
+          };
+          console.log('[CP1500 PRINT PREPARATION]', {
+            platform: window.printApi.platform,
+            ...printPreparation,
+          });
           res = await window.printApi.printStrip(jpegUrl, {
             copies: selectedCopies,
             sessionId: sessionRecordId,
             templateName: template.name,
             layoutName: layout?.name || layout?.id || null,
             cameraOrientation: normalizedCameraOrientation,
+            printPreparation,
           });
         } finally {
           timeEnd('[print] send job');

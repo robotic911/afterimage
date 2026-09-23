@@ -14,12 +14,9 @@ const required = {
     'getWindowsCp1500ContentCalibration',
     'resetWindowsCp1500ContentCalibration',
     'getWindowsCp1500GeometryDiagnostics',
-    'setWindowsCp1500LayoutMargins',
-    'getWindowsCp1500LayoutMargins',
-    'resetWindowsCp1500LayoutMargins',
     'cp1500-geometry-diagnostics-v4',
   ],
-  'electron.cjs': ['print:windows-cp1500-calibration', 'print:windows-cp1500-geometry-diagnostics', 'print:windows-cp1500-layout-margins:set', 'print:windows-cp1500-layout-margins:get', 'print:windows-cp1500-layout-margins:reset', 'app:build-info'],
+  'electron.cjs': ['print:windows-cp1500-calibration', 'print:windows-cp1500-geometry-diagnostics', 'app:build-info'],
   'windowsPrintBackend.cjs': ['Native Windows PrintTicket/XPS', 'PageBorderless', 'WINDOWS_CP1500_CALIBRATION', 'offsetXmm: 0', 'offsetYmm: 0', 'Stretch]::Uniform'],
   'printPipeline.cjs': ['native_windows_printticket_xps'],
 };
