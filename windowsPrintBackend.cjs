@@ -98,7 +98,7 @@ function encodedPowerShellValue(value) {
   return Buffer.from(String(value || ''), 'utf8').toString('base64');
 }
 
-function buildWindowsCp1500PrintScript({ printerName, imagePath, jobName, calibration = getWindowsCp1500Calibration() }) {
+function buildWindowsCp1500PrintScript({ printerName, imagePath, jobName, calibration = getWindowsCp1500Calibration(), diagnosticOnly = false }) {
   const printer = encodedPowerShellValue(printerName);
   const image = encodedPowerShellValue(imagePath);
   const job = encodedPowerShellValue(jobName);
@@ -110,12 +110,13 @@ $JobName = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${job}')
 $ContentScale = [double]${calibration.scale}
 $OffsetXmm = [double]${calibration.offsetXmm}
 $OffsetYmm = [double]${calibration.offsetYmm}
+$DiagnosticOnly = ${diagnosticOnly ? '$true' : '$false'}
 
 function EnumName($value) { if ($null -eq $value) { return $null }; return $value.ToString() }
 function ToMm($value) { if ($null -eq $value) { return $null }; return [Math]::Round(([double]$value * 25.4 / 96), 3) }
 function MediaRecord($media) {
   if ($null -eq $media) { return $null }
-  return [ordered]@{ name = EnumName $media.PageMediaSizeName; widthMm = ToMm $media.Width; heightMm = ToMm $media.Height }
+  return [ordered]@{ name = EnumName $media.PageMediaSizeName; widthDip = $media.Width; heightDip = $media.Height; widthMm = ToMm $media.Width; heightMm = ToMm $media.Height }
 }
 function AreaRecord($cap, $ticket) {
   if ($null -eq $cap.PageImageableArea) { return $null }
@@ -126,7 +127,10 @@ function AreaRecord($cap, $ticket) {
   $right = [Math]::Max(0, [double]$pw - [double]$area.OriginWidth - [double]$area.ExtentWidth)
   $bottom = [Math]::Max(0, [double]$ph - [double]$area.OriginHeight - [double]$area.ExtentHeight)
   return [ordered]@{
+    physicalWidthDip = $pw; physicalHeightDip = $ph
     physicalWidthMm = ToMm $pw; physicalHeightMm = ToMm $ph
+    originXDip = $area.OriginWidth; originYDip = $area.OriginHeight
+    extentWidthDip = $area.ExtentWidth; extentHeightDip = $area.ExtentHeight
     originXMm = ToMm $area.OriginWidth; originYMm = ToMm $area.OriginHeight
     extentWidthMm = ToMm $area.ExtentWidth; extentHeightMm = ToMm $area.ExtentHeight
     hardwareMarginsMm = [ordered]@{ left = ToMm $area.OriginWidth; right = ToMm $right; top = ToMm $area.OriginHeight; bottom = ToMm $bottom }
@@ -222,14 +226,21 @@ try {
   [Windows.Controls.Canvas]::SetLeft($control, $x); [Windows.Controls.Canvas]::SetTop($control, $y)
   $page = New-Object Windows.Documents.FixedPage
   $page.Width = $pageWidth; $page.Height = $pageHeight; $page.ClipToBounds = $true; [void]$page.Children.Add($control)
+  $result.wpfGeometry = [ordered]@{
+    image = [ordered]@{ width = $control.Width; height = $control.Height; canvasLeft = [Windows.Controls.Canvas]::GetLeft($control); canvasTop = [Windows.Controls.Canvas]::GetTop($control); stretch = EnumName $control.Stretch; renderTransform = $null; layoutTransform = $null }
+    fixedPage = [ordered]@{ width = $page.Width; height = $page.Height; clipToBounds = $page.ClipToBounds }
+  }
   $content = New-Object Windows.Documents.PageContent
   ([Windows.Markup.IAddChild]$content).AddChild($page)
   $document = New-Object Windows.Documents.FixedDocument
   $document.DocumentPaginator.PageSize = New-Object Windows.Size -ArgumentList $pageWidth, $pageHeight
   [void]$document.Pages.Add($content)
-  $writer = [System.Printing.PrintQueue]::CreateXpsDocumentWriter($queue)
-  $writer.Write($document.DocumentPaginator, $ticket)
-  $result.ok = $true; $result.submitted = $true
+  if (-not $DiagnosticOnly) {
+    $writer = [System.Printing.PrintQueue]::CreateXpsDocumentWriter($queue)
+    $writer.Write($document.DocumentPaginator, $ticket)
+    $result.submitted = $true
+  }
+  $result.ok = $true
 } catch { $result.error = $_.Exception.Message }
 $result | ConvertTo-Json -Depth 10 -Compress
 `;
@@ -274,6 +285,65 @@ async function printUsingWindowsCp1500({ dataUrl, printerName, jobName, tempDire
   }
 }
 
+async function getWindowsCp1500GeometryDiagnostics({ dataUrl, printerName, tempDirectory }) {
+  if (process.platform !== 'win32') throw new Error('Windows CP1500 diagnostics called on a non-Windows platform');
+  const { bytes, extension } = decodeImageDataUrl(dataUrl);
+  const imagePath = path.join(tempDirectory, `afterimage-cp1500-diagnostic-${process.pid}-${Date.now()}${extension}`);
+  await fs.promises.writeFile(imagePath, bytes, { flag: 'wx' });
+  try {
+    const result = await runPowerShellJson(buildWindowsCp1500PrintScript({
+      printerName,
+      imagePath,
+      jobName: 'Afterimage CP1500 Geometry Diagnostic',
+      calibration: getWindowsCp1500Calibration(),
+      diagnosticOnly: true,
+    }));
+    const pageWidth = result?.contentCalibration?.physicalPage?.widthDiu;
+    const pageHeight = result?.contentCalibration?.physicalPage?.heightDiu;
+    const sourceWidth = result?.contentCalibration?.source?.width;
+    const sourceHeight = result?.contentCalibration?.source?.height;
+    const comparisons = {};
+    if ([pageWidth, pageHeight, sourceWidth, sourceHeight].every((value) => Number.isFinite(Number(value)))) {
+      for (const scale of [1, 1.005, 1.01]) {
+        const geometry = calculateCenteredContentRectangle({ sourceWidth, sourceHeight, pageWidth, pageHeight, scale, offsetXmm: 0, offsetYmm: 0 });
+        const toMm = (value) => value * 25.4 / 96;
+        const toPrinterPixels = (value) => toMm(value) * 300 / 25.4;
+        comparisons[String(scale)] = {
+          calibration: geometry.calibration,
+          baseDip: geometry.base,
+          destinationDip: geometry.final,
+          destinationMm: Object.fromEntries(Object.entries(geometry.final).map(([key, value]) => [key, toMm(value)])),
+          destination300DpiPixels: Object.fromEntries(Object.entries(geometry.final).map(([key, value]) => [key, toPrinterPixels(value)])),
+          overflowDip: geometry.cropBeyondPage,
+          unusedDip: geometry.unused,
+          finalXpsImage: { width: geometry.final.width, height: geometry.final.height, left: geometry.final.x, top: geometry.final.y },
+          fixedPage: { width: Number(pageWidth), height: Number(pageHeight) },
+          renderTransform: null,
+          layoutTransform: null,
+        };
+      }
+    }
+    return {
+      ...result,
+      source: sourceWidth && sourceHeight ? { widthPx: sourceWidth, heightPx: sourceHeight, dpiX: null, dpiY: null, aspect: sourceWidth / sourceHeight } : null,
+      media: result?.media ? { ...result.media, widthDip: pageWidth ?? result.media.widthDip ?? null, heightDip: pageHeight ?? result.media.heightDip ?? null, aspect: pageWidth && pageHeight ? pageWidth / pageHeight : null } : null,
+      imageableArea: result?.pageImageableArea || null,
+      comparisons,
+      serializedXpsGeometry: null,
+      serializedXpsGeometryReason: 'Diagnostic mode constructs the identical WPF geometry but intentionally does not spool or serialize a job.',
+      canonPaperSpecification: {
+        completeSheetMm: { width: 100, height: 177, aspect: 100 / 177 },
+        finalTrimmedMm: { width: 100, height: 148, aspect: 100 / 148 },
+        totalPerforationMm: 29,
+        individualTabMm: null,
+        source: 'Canon SELPHY CP1500 specifications; individual top/bottom split is not specified',
+      },
+    };
+  } finally {
+    await fs.promises.unlink(imagePath).catch(() => {});
+  }
+}
+
 module.exports = {
   WINDOWS_CP1500_BACKEND,
   WINDOWS_CP1500_CALIBRATION,
@@ -281,6 +351,7 @@ module.exports = {
   calculateCenteredContentRectangle,
   decodeImageDataUrl,
   getWindowsCp1500Calibration,
+  getWindowsCp1500GeometryDiagnostics,
   printUsingWindowsCp1500,
   resetWindowsCp1500Calibration,
   setWindowsCp1500Calibration,

@@ -339,14 +339,30 @@ test('calibration IPC is bridged through preload to the matching main handler', 
   assert.match(preload, /getWindowsCp1500ContentCalibration:\s*\(\)\s*=>\s*ipcRenderer\.invoke\('print:windows-cp1500-calibration:get'\)/);
   assert.match(preload, /setWindowsCp1500ContentCalibration:\s*\(calibration\)\s*=>\s*ipcRenderer\.invoke\('print:windows-cp1500-calibration:set', calibration\)/);
   assert.match(preload, /resetWindowsCp1500ContentCalibration:\s*\(\)\s*=>\s*ipcRenderer\.invoke\('print:windows-cp1500-calibration:reset'\)/);
+  assert.match(preload, /getWindowsCp1500GeometryDiagnostics:\s*\(\)\s*=>\s*ipcRenderer\.invoke\('print:windows-cp1500-geometry-diagnostics'\)/);
   assert.match(preload, /preloadBridgeVersion:\s*'cp1500-runtime-calibration-v3'/);
   assert.match(main, /ipcMain\.handle\('print:windows-cp1500-calibration'/);
   assert.match(main, /ipcMain\.handle\('print:windows-cp1500-calibration:get'[\s\S]*return getWindowsCp1500Calibration\(\)/);
   assert.match(main, /ipcMain\.handle\('print:windows-cp1500-calibration:set'[\s\S]*return setWindowsCp1500Calibration\(calibration\)/);
   assert.match(main, /ipcMain\.handle\('print:windows-cp1500-calibration:reset'[\s\S]*return resetWindowsCp1500Calibration\(\)/);
+  assert.match(main, /ipcMain\.handle\('print:windows-cp1500-geometry-diagnostics'[\s\S]*getWindowsCp1500GeometryDiagnostics\(\{/);
   assert.match(main, /print:windows-cp1500-calibration[\s\S]*submitSinglePrintCopy\(\{/);
   assert.match(main, /submitSinglePrintCopy[\s\S]*printUsingWindowsCp1500\(\{/);
   assert.ok(packageJson.build.files.includes('preload.cjs'));
   assert.ok(packageJson.build.files.includes('windowsPrintBackend.cjs'));
   assert.ok(packageJson.build.files.includes('printPipeline.cjs'));
+});
+
+test('CP1500 diagnostic scales remain numerically distinct at 300 DPI', () => {
+  const pageWidth = 100 * 96 / 25.4;
+  const pageHeight = 148 * 96 / 25.4;
+  const at1005 = calculateCenteredContentRectangle({ sourceWidth: 1200, sourceHeight: 1800, pageWidth, pageHeight, scale: 1.005 });
+  const at101 = calculateCenteredContentRectangle({ sourceWidth: 1200, sourceHeight: 1800, pageWidth, pageHeight, scale: 1.01 });
+  const dipToMm = (value) => value * 25.4 / 96;
+  const dipTo300Dpi = (value) => value * 300 / 96;
+
+  assert.ok(Math.abs(dipToMm(at101.final.width - at1005.final.width) - 0.49333333333333335) < 1e-10);
+  assert.ok(Math.abs(dipToMm(at101.final.height - at1005.final.height) - 0.74) < 1e-10);
+  assert.ok(Math.abs(dipTo300Dpi(at101.final.width - at1005.final.width) - 5.826771653543307) < 1e-10);
+  assert.ok(Math.abs(dipTo300Dpi(at101.final.height - at1005.final.height) - 8.740157480314961) < 1e-10);
 });

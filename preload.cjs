@@ -69,6 +69,8 @@ contextBridge.exposeInMainWorld('printApi', {
     ipcRenderer.invoke('print:windows-cp1500-calibration:set', calibration),
   resetWindowsCp1500ContentCalibration: () =>
     ipcRenderer.invoke('print:windows-cp1500-calibration:reset'),
+  getWindowsCp1500GeometryDiagnostics: () =>
+    ipcRenderer.invoke('print:windows-cp1500-geometry-diagnostics'),
   getBuildInfo: () =>
     ipcRenderer.invoke('app:build-info'),
   onPrintProgress: (cb) => {

@@ -24,6 +24,7 @@ const {
 const {
   WINDOWS_CP1500_BACKEND,
   getWindowsCp1500Calibration,
+  getWindowsCp1500GeometryDiagnostics,
   printUsingWindowsCp1500,
   resetWindowsCp1500Calibration,
   setWindowsCp1500Calibration,
@@ -5455,6 +5456,20 @@ ipcMain.handle('print:windows-cp1500-calibration:set', async (_event, calibratio
 ipcMain.handle('print:windows-cp1500-calibration:reset', async () => {
   if (process.platform !== 'win32') throw new Error('Windows CP1500 calibration is Windows-only.');
   return resetWindowsCp1500Calibration();
+});
+
+ipcMain.handle('print:windows-cp1500-geometry-diagnostics', async (event) => {
+  if (process.platform !== 'win32') throw new Error('Windows CP1500 geometry diagnostics are Windows-only.');
+  const target = await resolveTargetPrinter(event.sender);
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1800"><rect width="1200" height="1800" fill="white"/></svg>';
+  const image = nativeImage.createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`);
+  if (image.isEmpty()) throw new Error('Could not create diagnostic source image');
+  const dataUrl = `data:image/png;base64,${image.toPNG().toString('base64')}`;
+  return getWindowsCp1500GeometryDiagnostics({
+    dataUrl,
+    printerName: target.printer.name,
+    tempDirectory: app.getPath('temp'),
+  });
 });
 
 ipcMain.handle('print:windows-cp1500-calibration', async (event) => {
