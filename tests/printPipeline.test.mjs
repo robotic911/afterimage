@@ -340,7 +340,7 @@ test('calibration IPC is bridged through preload to the matching main handler', 
   assert.match(preload, /setWindowsCp1500ContentCalibration:\s*\(calibration\)\s*=>\s*ipcRenderer\.invoke\('print:windows-cp1500-calibration:set', calibration\)/);
   assert.match(preload, /resetWindowsCp1500ContentCalibration:\s*\(\)\s*=>\s*ipcRenderer\.invoke\('print:windows-cp1500-calibration:reset'\)/);
   assert.match(preload, /getWindowsCp1500GeometryDiagnostics:\s*\(\)\s*=>\s*ipcRenderer\.invoke\('print:windows-cp1500-geometry-diagnostics'\)/);
-  assert.match(preload, /preloadBridgeVersion:\s*'cp1500-runtime-calibration-v3'/);
+  assert.match(preload, /preloadBridgeVersion:\s*'cp1500-geometry-diagnostics-v4'/);
   assert.match(main, /ipcMain\.handle\('print:windows-cp1500-calibration'/);
   assert.match(main, /ipcMain\.handle\('print:windows-cp1500-calibration:get'[\s\S]*return getWindowsCp1500Calibration\(\)/);
   assert.match(main, /ipcMain\.handle\('print:windows-cp1500-calibration:set'[\s\S]*return setWindowsCp1500Calibration\(calibration\)/);
@@ -365,4 +365,29 @@ test('CP1500 diagnostic scales remain numerically distinct at 300 DPI', () => {
   assert.ok(Math.abs(dipToMm(at101.final.height - at1005.final.height) - 0.74) < 1e-10);
   assert.ok(Math.abs(dipTo300Dpi(at101.final.width - at1005.final.width) - 5.826771653543307) < 1e-10);
   assert.ok(Math.abs(dipTo300Dpi(at101.final.height - at1005.final.height) - 8.740157480314961) < 1e-10);
+});
+
+test('CP1500 geometry diagnostic is best-effort for partial Canon capabilities', () => {
+  const script = buildWindowsCp1500PrintScript({
+    printerName: 'Canon SELPHY CP1500',
+    imagePath: 'C:\\Temp\\diagnostic.png',
+    jobName: 'Read-only diagnostic',
+    diagnosticOnly: true,
+  });
+
+  assert.match(script, /if \(\$DiagnosticOnly\) \{ Warn 'PageImageableArea unavailable from Canon driver' \}/);
+  assert.match(script, /if \(\$DiagnosticOnly\) \{ Warn 'PageBorderless capability unavailable from Canon driver' \}/);
+  assert.match(script, /Warn 'PageMediaSize dimensions unavailable from Canon driver'/);
+  assert.match(script, /Warn 'Validated PageBorderless value unavailable or not Borderless'/);
+  assert.match(script, /validatedScaling = EnumName \$ticket\.PageScaling/);
+  assert.match(script, /if \(-not \$DiagnosticOnly\) \{[\s\S]*CreateXpsDocumentWriter/);
+  assert.match(script, /stage = \$Stage/);
+});
+
+test('CP1500 geometry diagnostic IPC returns structured errors instead of rejecting', () => {
+  const main = readFileSync(new URL('../electron.cjs', import.meta.url), 'utf8');
+  const registrations = main.match(/ipcMain\.handle\('print:windows-cp1500-geometry-diagnostics'/g) || [];
+  assert.equal(registrations.length, 1);
+  assert.match(main, /\[WINDOWS CP1500 GEOMETRY DIAGNOSTIC ERROR\]/);
+  assert.match(main, /return \{[\s\S]*ok: false,[\s\S]*submitted: false,[\s\S]*error: structuredError/);
 });

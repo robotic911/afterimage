@@ -5437,7 +5437,7 @@ ipcMain.handle('app:build-info', async () => {
     appVersion: app.getVersion(),
     platform: process.platform,
     isPackaged: app.isPackaged,
-    preloadBridgeVersion: 'cp1500-runtime-calibration-v3',
+    preloadBridgeVersion: 'cp1500-geometry-diagnostics-v4',
     windowsPrintBackendId: 'native-windows-printticket-xps-v2',
     buildTimestamp,
   };
@@ -5459,17 +5459,56 @@ ipcMain.handle('print:windows-cp1500-calibration:reset', async () => {
 });
 
 ipcMain.handle('print:windows-cp1500-geometry-diagnostics', async (event) => {
-  if (process.platform !== 'win32') throw new Error('Windows CP1500 geometry diagnostics are Windows-only.');
-  const target = await resolveTargetPrinter(event.sender);
-  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1800"><rect width="1200" height="1800" fill="white"/></svg>';
-  const image = nativeImage.createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`);
-  if (image.isEmpty()) throw new Error('Could not create diagnostic source image');
-  const dataUrl = `data:image/png;base64,${image.toPNG().toString('base64')}`;
-  return getWindowsCp1500GeometryDiagnostics({
-    dataUrl,
-    printerName: target.printer.name,
-    tempDirectory: app.getPath('temp'),
-  });
+  let stage = 'platform-check';
+  let printerName = null;
+  let mediaName = null;
+  try {
+    if (process.platform !== 'win32') throw new Error('Windows CP1500 geometry diagnostics are Windows-only.');
+    stage = 'resolve-printer';
+    const target = await resolveTargetPrinter(event.sender);
+    printerName = target?.printer?.name || null;
+    if (!printerName) throw new Error('Resolved printer has no Windows device name.');
+    stage = 'create-diagnostic-source';
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1800"><rect width="1200" height="1800" fill="white"/></svg>';
+    const image = nativeImage.createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`);
+    if (image.isEmpty()) throw new Error('Could not create diagnostic source image');
+    const dataUrl = `data:image/png;base64,${image.toPNG().toString('base64')}`;
+    stage = 'query-windows-printing';
+    const result = await getWindowsCp1500GeometryDiagnostics({
+      dataUrl,
+      printerName,
+      tempDirectory: app.getPath('temp'),
+    });
+    mediaName = result?.media?.name || result?.ticket?.mediaName || null;
+    if (result?.error) {
+      console.error('[WINDOWS CP1500 GEOMETRY DIAGNOSTIC ERROR]', {
+        ...result.error,
+        printerName,
+        mediaName,
+      });
+    }
+    return result;
+  } catch (error) {
+    const structuredError = {
+      name: error?.name || 'Error',
+      message: error?.message || String(error),
+      stack: error?.stack || null,
+      stage,
+    };
+    console.error('[WINDOWS CP1500 GEOMETRY DIAGNOSTIC ERROR]', {
+      ...structuredError,
+      printerName,
+      mediaName,
+    });
+    return {
+      ok: false,
+      submitted: false,
+      printerName,
+      media: mediaName ? { name: mediaName } : null,
+      warnings: [],
+      error: structuredError,
+    };
+  }
 });
 
 ipcMain.handle('print:windows-cp1500-calibration', async (event) => {

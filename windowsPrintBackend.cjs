@@ -118,6 +118,168 @@ function MediaRecord($media) {
   if ($null -eq $media) { return $null }
   return [ordered]@{ name = EnumName $media.PageMediaSizeName; widthDip = $media.Width; heightDip = $media.Height; widthMm = ToMm $media.Width; heightMm = ToMm $media.Height }
 }
+
+<#$null = @'
+function buildWindowsCp1500GeometryDiagnosticScript({ printerName, imagePath, calibration = getWindowsCp1500Calibration() }) {
+  const printer = encodedPowerShellValue(printerName);
+  const image = encodedPowerShellValue(imagePath);
+  return String.raw
+$ErrorActionPreference = 'Stop'
+$PrinterName = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${printer}'))
+$ImagePath = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${image}'))
+$ContentScale = [double]${calibration.scale}
+$OffsetXmm = [double]${calibration.offsetXmm}
+$OffsetYmm = [double]${calibration.offsetYmm}
+$Stage = 'initialize'
+$Warnings = New-Object System.Collections.Generic.List[string]
+function Warn($message) { [void]$Warnings.Add([string]$message) }
+function EnumName($value) { if ($null -eq $value) { return $null }; return $value.ToString() }
+function ToMm($value) { if ($null -eq $value) { return $null }; return ([double]$value * 25.4 / 96.0) }
+function PositiveNumber($value) { return ($null -ne $value -and [double]$value -gt 0) }
+function MediaRecord($media) {
+  if ($null -eq $media) { return $null }
+  $width = $media.Width; $height = $media.Height
+  return [ordered]@{
+    name = EnumName $media.PageMediaSizeName
+    widthDip = $width; heightDip = $height
+    widthMm = ToMm $width; heightMm = ToMm $height
+    aspect = if ((PositiveNumber $width) -and (PositiveNumber $height)) { [double]$width / [double]$height } else { $null }
+  }
+}
+function MediaScore($media) {
+  $record = MediaRecord $media
+  if ($null -eq $record) { return 0 }
+  $name = ([string]$record.name).ToLowerInvariant(); $score = 0
+  if ($name -match 'postcard|4x6|4 x 6|photo') { $score += 100 }
+  if ($name -match 'borderless|full|bleed|edge') { $score += 50 }
+  if ((PositiveNumber $record.widthMm) -and (PositiveNumber $record.heightMm)) {
+    $short = [Math]::Min([double]$record.widthMm, [double]$record.heightMm)
+    $long = [Math]::Max([double]$record.widthMm, [double]$record.heightMm)
+    if ($short -ge 98 -and $short -le 103 -and $long -ge 146 -and $long -le 153) { $score += 40 }
+  }
+  return $score
+}
+function ErrorRecord($exception, $stage) {
+  return [ordered]@{ name = $exception.GetType().FullName; message = $exception.Message; stack = $exception.StackTrace; stage = $stage }
+}
+
+$result = [ordered]@{
+  ok = $false; submitted = $false; backend = '${WINDOWS_CP1500_BACKEND}'
+  printerName = $PrinterName; calibration = [ordered]@{ scale = $ContentScale; offsetXmm = $OffsetXmm; offsetYmm = $OffsetYmm }
+  source = $null; ticket = $null; media = $null; imageableArea = $null
+  destinationRectDip = $null; destinationRectMm = $null; wpfGeometry = $null
+  warnings = $Warnings; error = $null
+}
+try {
+  $Stage = 'load-windows-printing-assemblies'
+  Add-Type -AssemblyName System.Printing
+  Add-Type -AssemblyName ReachFramework
+  Add-Type -AssemblyName PresentationCore
+  Add-Type -AssemblyName PresentationFramework
+
+  $Stage = 'open-printer-queue'
+  $server = New-Object System.Printing.LocalPrintServer
+  $queue = $server.GetPrintQueue($PrinterName); $queue.Refresh()
+
+  $baseTicket = $null; $baseCapabilities = $null
+  $Stage = 'read-default-print-ticket'
+  try { $baseTicket = $queue.DefaultPrintTicket } catch { Warn ('DefaultPrintTicket unavailable: ' + $_.Exception.Message) }
+  $Stage = 'read-print-capabilities'
+  try { $baseCapabilities = $queue.GetPrintCapabilities($baseTicket) } catch { Warn ('PrintCapabilities unavailable: ' + $_.Exception.Message) }
+
+  $borderlessValues = @(); $scalingValues = @(); $bestMedia = $null
+  if ($null -ne $baseCapabilities) {
+    try { $borderlessValues = @($baseCapabilities.PageBorderlessCapability | ForEach-Object { EnumName $_ }) } catch { Warn ('PageBorderless capability unavailable: ' + $_.Exception.Message) }
+    try { $scalingValues = @($baseCapabilities.PageScalingCapability | ForEach-Object { EnumName $_ }) } catch { Warn ('PageScaling capability unavailable: ' + $_.Exception.Message) }
+    try {
+      $bestMedia = $baseCapabilities.PageMediaSizeCapability | ForEach-Object {
+        [pscustomobject]@{ Media = $_; Score = MediaScore $_ }
+      } | Sort-Object Score -Descending | Select-Object -First 1
+    } catch { Warn ('PageMediaSize capabilities unavailable: ' + $_.Exception.Message) }
+  }
+  if ($borderlessValues.Count -eq 0) { Warn 'PageBorderless capability unavailable from Canon driver' }
+  if ($scalingValues.Count -eq 0) { Warn 'PageScaling capability unavailable from Canon driver' }
+
+  $ticket = $baseTicket
+  if ($null -ne $baseTicket) {
+    $Stage = 'validate-print-ticket'
+    try {
+      $requestedTicket = $baseTicket.Clone()
+      if ($borderlessValues -contains 'Borderless') { $requestedTicket.PageBorderless = [System.Printing.PageBorderless]::Borderless }
+      if ($null -ne $bestMedia -and $null -ne $bestMedia.Media) { $requestedTicket.PageMediaSize = $bestMedia.Media }
+      if ($scalingValues -contains 'None') { $requestedTicket.PageScaling = [System.Printing.PageScaling]::None }
+      $validation = $queue.MergeAndValidatePrintTicket($baseTicket, $requestedTicket)
+      if ($null -ne $validation -and $null -ne $validation.ValidatedPrintTicket) { $ticket = $validation.ValidatedPrintTicket }
+      else { Warn 'ValidatedPrintTicket unavailable; using the default ticket' }
+    } catch { Warn ('PrintTicket validation unavailable: ' + $_.Exception.Message) }
+  }
+
+  $mediaObject = if ($null -ne $ticket -and $null -ne $ticket.PageMediaSize) { $ticket.PageMediaSize } elseif ($null -ne $bestMedia) { $bestMedia.Media } else { $null }
+  $result.media = MediaRecord $mediaObject
+  if ($null -eq $result.media) { Warn 'PageMediaSize unavailable from Canon driver' }
+  elseif (-not (PositiveNumber $result.media.widthDip) -or -not (PositiveNumber $result.media.heightDip)) { Warn 'PageMediaSize dimensions unavailable from Canon driver' }
+  $result.ticket = [ordered]@{
+    mediaName = if ($null -ne $result.media) { $result.media.name } else { $null }
+    validatedBorderless = if ($null -ne $ticket) { EnumName $ticket.PageBorderless } else { $null }
+    validatedScaling = if ($null -ne $ticket) { EnumName $ticket.PageScaling } else { $null }
+  }
+
+  $validatedCapabilities = $null
+  $Stage = 'read-validated-print-capabilities'
+  try { if ($null -ne $ticket) { $validatedCapabilities = $queue.GetPrintCapabilities($ticket) } } catch { Warn ('Validated PrintCapabilities unavailable: ' + $_.Exception.Message) }
+  if ($null -ne $validatedCapabilities -and $null -ne $validatedCapabilities.PageImageableArea) {
+    try {
+      $area = $validatedCapabilities.PageImageableArea
+      $result.imageableArea = [ordered]@{
+        originXDip = $area.OriginWidth; originYDip = $area.OriginHeight
+        widthDip = $area.ExtentWidth; heightDip = $area.ExtentHeight
+        originXMm = ToMm $area.OriginWidth; originYMm = ToMm $area.OriginHeight
+        widthMm = ToMm $area.ExtentWidth; heightMm = ToMm $area.ExtentHeight
+      }
+    } catch { Warn ('PageImageableArea values unavailable: ' + $_.Exception.Message); $result.imageableArea = $null }
+  } else { Warn 'PageImageableArea unavailable from Canon driver' }
+
+  $Stage = 'read-source-bitmap'
+  try {
+    $bitmap = New-Object Windows.Media.Imaging.BitmapImage
+    $bitmap.BeginInit(); $bitmap.CacheOption = [Windows.Media.Imaging.BitmapCacheOption]::OnLoad
+    $bitmap.UriSource = New-Object Uri -ArgumentList $ImagePath, ([UriKind]::Absolute); $bitmap.EndInit(); $bitmap.Freeze()
+    $result.source = [ordered]@{ widthPx = $bitmap.PixelWidth; heightPx = $bitmap.PixelHeight; dpiX = $bitmap.DpiX; dpiY = $bitmap.DpiY; aspect = [double]$bitmap.PixelWidth / [double]$bitmap.PixelHeight }
+  } catch { Warn ('Source bitmap metadata unavailable: ' + $_.Exception.Message) }
+
+  if ($null -ne $result.media -and (PositiveNumber $result.media.widthDip) -and (PositiveNumber $result.media.heightDip) -and $null -ne $result.source) {
+    $Stage = 'calculate-wpf-geometry'
+    try {
+      $pageWidth = [double]$result.media.widthDip; $pageHeight = [double]$result.media.heightDip
+      if ($pageWidth -gt $pageHeight -and $result.source.widthPx -lt $result.source.heightPx) { $swap = $pageWidth; $pageWidth = $pageHeight; $pageHeight = $swap }
+      if ($pageHeight -gt $pageWidth -and $result.source.widthPx -gt $result.source.heightPx) { $swap = $pageWidth; $pageWidth = $pageHeight; $pageHeight = $swap }
+      $baseScale = [Math]::Min($pageWidth / [double]$result.source.widthPx, $pageHeight / [double]$result.source.heightPx)
+      $width = [double]$result.source.widthPx * $baseScale * $ContentScale
+      $height = [double]$result.source.heightPx * $baseScale * $ContentScale
+      $x = (($pageWidth - $width) / 2) + ($OffsetXmm * 96.0 / 25.4)
+      $y = (($pageHeight - $height) / 2) + ($OffsetYmm * 96.0 / 25.4)
+      $result.destinationRectDip = [ordered]@{ x = $x; y = $y; width = $width; height = $height }
+      $result.destinationRectMm = [ordered]@{ x = ToMm $x; y = ToMm $y; width = ToMm $width; height = ToMm $height }
+      $control = New-Object Windows.Controls.Image
+      $control.Stretch = [Windows.Media.Stretch]::Uniform; $control.Width = $width; $control.Height = $height
+      [Windows.Controls.Canvas]::SetLeft($control, $x); [Windows.Controls.Canvas]::SetTop($control, $y)
+      $page = New-Object Windows.Documents.FixedPage; $page.Width = $pageWidth; $page.Height = $pageHeight
+      $result.wpfGeometry = [ordered]@{
+        image = [ordered]@{ width = $control.Width; height = $control.Height; left = [Windows.Controls.Canvas]::GetLeft($control); top = [Windows.Controls.Canvas]::GetTop($control); stretch = EnumName $control.Stretch }
+        fixedPage = [ordered]@{ width = $page.Width; height = $page.Height }
+      }
+    } catch { Warn ('WPF geometry unavailable: ' + $_.Exception.Message) }
+  } else { Warn 'Destination geometry unavailable because source or media dimensions are missing' }
+  $result.ok = $true
+} catch {
+  $result.error = ErrorRecord $_.Exception $Stage
+}
+$result.warnings = @($Warnings)
+$result | ConvertTo-Json -Depth 12 -Compress
+;
+}
+'@
+#>
 function AreaRecord($cap, $ticket) {
   if ($null -eq $cap.PageImageableArea) { return $null }
   $area = $cap.PageImageableArea
@@ -147,54 +309,101 @@ function MediaScore($media) {
   return $score
 }
 
-$result = [ordered]@{ ok = $false; submitted = $false; backend = '${WINDOWS_CP1500_BACKEND}'; printerName = $PrinterName; borderlessSupported = $false; borderlessSelected = $false; media = $null; pageImageableArea = $null; conflictStatus = $null; error = $null }
+$Stage = 'initialize'; $Warnings = New-Object System.Collections.Generic.List[string]
+function Warn($message) { [void]$Warnings.Add([string]$message) }
+$result = [ordered]@{ ok = $false; submitted = $false; backend = '${WINDOWS_CP1500_BACKEND}'; printerName = $PrinterName; source = $null; ticket = $null; borderlessSupported = $false; borderlessSelected = $false; media = $null; pageImageableArea = $null; conflictStatus = $null; warnings = $Warnings; error = $null }
 try {
+  $Stage = 'load-windows-printing-assemblies'
   Add-Type -AssemblyName System.Printing
   Add-Type -AssemblyName ReachFramework
   Add-Type -AssemblyName PresentationCore
   Add-Type -AssemblyName PresentationFramework
-  $server = New-Object System.Printing.LocalPrintServer
+  $Stage = 'open-printer-queue'; $server = New-Object System.Printing.LocalPrintServer
   $queue = $server.GetPrintQueue($PrinterName); $queue.Refresh()
-  $baseTicket = $queue.DefaultPrintTicket
-  $baseCapabilities = $queue.GetPrintCapabilities($baseTicket)
+  $Stage = 'read-default-print-ticket'; $baseTicket = $queue.DefaultPrintTicket
+  $Stage = 'read-print-capabilities'; $baseCapabilities = $queue.GetPrintCapabilities($baseTicket)
   $borderlessValues = @($baseCapabilities.PageBorderlessCapability | ForEach-Object { EnumName $_ })
   $result.borderlessSupported = $borderlessValues -contains 'Borderless'
-  if (-not $result.borderlessSupported) { throw 'The selected Windows printer queue does not expose PageBorderless=Borderless.' }
+  if (-not $result.borderlessSupported) {
+    if ($DiagnosticOnly) { Warn 'PageBorderless capability unavailable from Canon driver' }
+    else { throw 'The selected Windows printer queue does not expose PageBorderless=Borderless.' }
+  }
 
   $bestMedia = $baseCapabilities.PageMediaSizeCapability | ForEach-Object {
     [pscustomobject]@{ Media = $_; Score = MediaScore $_ }
   } | Sort-Object Score -Descending | Select-Object -First 1
-  if ($null -eq $bestMedia -or $bestMedia.Score -lt 40) { throw 'The selected Windows printer queue does not expose a Postcard/4x6 media size.' }
+  if ($null -eq $bestMedia -or $bestMedia.Score -lt 40) {
+    if ($DiagnosticOnly) { Warn 'Preferred Postcard/4x6 PageMediaSize unavailable; using the default ticket media when available'; $bestMedia = $null }
+    else { throw 'The selected Windows printer queue does not expose a Postcard/4x6 media size.' }
+  }
 
+  $Stage = 'validate-print-ticket'
   $jobTicket = $baseTicket.Clone()
-  $jobTicket.PageBorderless = [System.Printing.PageBorderless]::Borderless
-  $jobTicket.PageMediaSize = $bestMedia.Media
+  if ($result.borderlessSupported) { $jobTicket.PageBorderless = [System.Printing.PageBorderless]::Borderless }
+  if ($null -ne $bestMedia -and $null -ne $bestMedia.Media) { $jobTicket.PageMediaSize = $bestMedia.Media }
   if (@($baseCapabilities.PageScalingCapability | ForEach-Object { EnumName $_ }) -contains 'None') {
     $jobTicket.PageScaling = [System.Printing.PageScaling]::None
   }
   if (@($baseCapabilities.OutputQualityCapability | ForEach-Object { EnumName $_ }) -contains 'Photographic') {
     $jobTicket.OutputQuality = [System.Printing.OutputQuality]::Photographic
   }
-  $validation = $queue.MergeAndValidatePrintTicket($baseTicket, $jobTicket)
-  $ticket = $validation.ValidatedPrintTicket
+  $validation = $null; $ticket = $baseTicket
+  try {
+    $validation = $queue.MergeAndValidatePrintTicket($baseTicket, $jobTicket)
+    if ($null -ne $validation -and $null -ne $validation.ValidatedPrintTicket) { $ticket = $validation.ValidatedPrintTicket }
+    elseif ($DiagnosticOnly) { Warn 'ValidatedPrintTicket unavailable; using the default ticket' }
+  } catch {
+    if ($DiagnosticOnly) { Warn ('PrintTicket validation unavailable: ' + $_.Exception.Message) }
+    else { throw }
+  }
   $result.conflictStatus = EnumName $validation.ConflictStatus
   $result.borderlessSelected = ((EnumName $ticket.PageBorderless) -eq 'Borderless')
   $result.media = MediaRecord $ticket.PageMediaSize
   $result.scalingRequested = 'None'
   $result.scalingValidated = EnumName $ticket.PageScaling
-  if (-not $result.borderlessSelected) { throw 'Windows rejected PageBorderless=Borderless for the selected media.' }
+  $result.ticket = [ordered]@{ mediaName = if ($null -ne $result.media) { $result.media.name } else { $null }; validatedBorderless = EnumName $ticket.PageBorderless; validatedScaling = EnumName $ticket.PageScaling }
+  if (-not $result.borderlessSelected) {
+    if ($DiagnosticOnly) { Warn 'Validated PageBorderless value unavailable or not Borderless' }
+    else { throw 'Windows rejected PageBorderless=Borderless for the selected media.' }
+  }
 
-  $cap = $queue.GetPrintCapabilities($ticket)
-  $result.pageImageableArea = AreaRecord $cap $ticket
+  $Stage = 'read-validated-print-capabilities'
+  $cap = $null
+  try { $cap = $queue.GetPrintCapabilities($ticket) } catch { if ($DiagnosticOnly) { Warn ('Validated PrintCapabilities unavailable: ' + $_.Exception.Message) } else { throw } }
+  if ($null -ne $cap -and $null -ne $cap.PageImageableArea) {
+    $rawArea = $cap.PageImageableArea
+    if ($DiagnosticOnly -and ($null -eq $rawArea.OriginWidth -or $null -eq $rawArea.OriginHeight -or $null -eq $rawArea.ExtentWidth -or $null -eq $rawArea.ExtentHeight)) {
+      Warn 'PageImageableArea contains incomplete values from Canon driver'
+      $result.pageImageableArea = [ordered]@{
+        physicalWidthDip = $ticket.PageMediaSize.Width; physicalHeightDip = $ticket.PageMediaSize.Height
+        physicalWidthMm = ToMm $ticket.PageMediaSize.Width; physicalHeightMm = ToMm $ticket.PageMediaSize.Height
+        originXDip = $rawArea.OriginWidth; originYDip = $rawArea.OriginHeight
+        extentWidthDip = $rawArea.ExtentWidth; extentHeightDip = $rawArea.ExtentHeight
+        originXMm = ToMm $rawArea.OriginWidth; originYMm = ToMm $rawArea.OriginHeight
+        extentWidthMm = ToMm $rawArea.ExtentWidth; extentHeightMm = ToMm $rawArea.ExtentHeight
+        hardwareMarginsMm = $null
+      }
+    } else { $result.pageImageableArea = AreaRecord $cap $ticket }
+  }
   $area = $result.pageImageableArea
-  if ($null -eq $area) { throw 'Windows did not report a printable area for the validated borderless ticket.' }
-  $maxInsetMm = (@($area.hardwareMarginsMm.left, $area.hardwareMarginsMm.right, $area.hardwareMarginsMm.top, $area.hardwareMarginsMm.bottom) | Measure-Object -Maximum).Maximum
-  if ([double]$maxInsetMm -gt 0.3) { throw ('Validated borderless ticket still reports a reduced printable area (maximum inset {0} mm).' -f $maxInsetMm) }
+  if ($null -eq $area) {
+    if ($DiagnosticOnly) { Warn 'PageImageableArea unavailable from Canon driver' }
+    else { throw 'Windows did not report a printable area for the validated borderless ticket.' }
+  } else {
+    $maxInsetMm = (@($area.hardwareMarginsMm.left, $area.hardwareMarginsMm.right, $area.hardwareMarginsMm.top, $area.hardwareMarginsMm.bottom) | Measure-Object -Maximum).Maximum
+    if ([double]$maxInsetMm -gt 0.3 -and -not $DiagnosticOnly) { throw ('Validated borderless ticket still reports a reduced printable area (maximum inset {0} mm).' -f $maxInsetMm) }
+  }
 
+  $Stage = 'read-source-bitmap'
   $bitmap = New-Object Windows.Media.Imaging.BitmapImage
   $bitmap.BeginInit(); $bitmap.CacheOption = [Windows.Media.Imaging.BitmapCacheOption]::OnLoad
   $bitmap.UriSource = New-Object Uri -ArgumentList $ImagePath, ([UriKind]::Absolute); $bitmap.EndInit(); $bitmap.Freeze()
-  $pageWidth = [double]$ticket.PageMediaSize.Width; $pageHeight = [double]$ticket.PageMediaSize.Height
+  $result.source = [ordered]@{ widthPx = $bitmap.PixelWidth; heightPx = $bitmap.PixelHeight; dpiX = $bitmap.DpiX; dpiY = $bitmap.DpiY; aspect = [double]$bitmap.PixelWidth / [double]$bitmap.PixelHeight }
+  $pageWidth = $ticket.PageMediaSize.Width; $pageHeight = $ticket.PageMediaSize.Height
+  if ($null -eq $result.media) { Warn 'PageMediaSize unavailable from Canon driver' }
+  elseif ($null -eq $pageWidth -or $null -eq $pageHeight -or [double]$pageWidth -le 0 -or [double]$pageHeight -le 0) { Warn 'PageMediaSize dimensions unavailable from Canon driver' }
+  if ($null -ne $pageWidth -and $null -ne $pageHeight -and [double]$pageWidth -gt 0 -and [double]$pageHeight -gt 0) {
+  $Stage = 'calculate-wpf-geometry'; $pageWidth = [double]$pageWidth; $pageHeight = [double]$pageHeight
   if ($pageWidth -gt $pageHeight -and $bitmap.PixelWidth -lt $bitmap.PixelHeight) { $swap = $pageWidth; $pageWidth = $pageHeight; $pageHeight = $swap }
   if ($pageHeight -gt $pageWidth -and $bitmap.PixelWidth -gt $bitmap.PixelHeight) { $swap = $pageWidth; $pageWidth = $pageHeight; $pageHeight = $swap }
   $baseUniformScale = [Math]::Min($pageWidth / [double]$bitmap.PixelWidth, $pageHeight / [double]$bitmap.PixelHeight)
@@ -235,13 +444,15 @@ try {
   $document = New-Object Windows.Documents.FixedDocument
   $document.DocumentPaginator.PageSize = New-Object Windows.Size -ArgumentList $pageWidth, $pageHeight
   [void]$document.Pages.Add($content)
+  } else { Warn 'Destination geometry unavailable because media dimensions are missing' }
   if (-not $DiagnosticOnly) {
     $writer = [System.Printing.PrintQueue]::CreateXpsDocumentWriter($queue)
     $writer.Write($document.DocumentPaginator, $ticket)
     $result.submitted = $true
   }
   $result.ok = $true
-} catch { $result.error = $_.Exception.Message }
+} catch { $result.error = [ordered]@{ name = $_.Exception.GetType().FullName; message = $_.Exception.Message; stack = $_.Exception.StackTrace; stage = $Stage } }
+$result.warnings = @($Warnings)
 $result | ConvertTo-Json -Depth 10 -Compress
 `;
 }
@@ -298,10 +509,13 @@ async function getWindowsCp1500GeometryDiagnostics({ dataUrl, printerName, tempD
       calibration: getWindowsCp1500Calibration(),
       diagnosticOnly: true,
     }));
-    const pageWidth = result?.contentCalibration?.physicalPage?.widthDiu;
-    const pageHeight = result?.contentCalibration?.physicalPage?.heightDiu;
-    const sourceWidth = result?.contentCalibration?.source?.width;
-    const sourceHeight = result?.contentCalibration?.source?.height;
+    if (result?.error && typeof result.error !== 'object') {
+      result.error = { name: 'Error', message: String(result.error), stack: null, stage: 'powershell-diagnostic' };
+    }
+    const pageWidth = result?.media?.widthDip;
+    const pageHeight = result?.media?.heightDip;
+    const sourceWidth = result?.source?.widthPx;
+    const sourceHeight = result?.source?.heightPx;
     const comparisons = {};
     if ([pageWidth, pageHeight, sourceWidth, sourceHeight].every((value) => Number.isFinite(Number(value)))) {
       for (const scale of [1, 1.005, 1.01]) {
@@ -325,9 +539,42 @@ async function getWindowsCp1500GeometryDiagnostics({ dataUrl, printerName, tempD
     }
     return {
       ...result,
-      source: sourceWidth && sourceHeight ? { widthPx: sourceWidth, heightPx: sourceHeight, dpiX: null, dpiY: null, aspect: sourceWidth / sourceHeight } : null,
-      media: result?.media ? { ...result.media, widthDip: pageWidth ?? result.media.widthDip ?? null, heightDip: pageHeight ?? result.media.heightDip ?? null, aspect: pageWidth && pageHeight ? pageWidth / pageHeight : null } : null,
+      source: result?.source || null,
+      media: result?.media || null,
       imageableArea: result?.pageImageableArea || null,
+      calibration: getWindowsCp1500Calibration(),
+      destinationRectDip: result?.contentCalibration?.finalDestination ? {
+        x: result.contentCalibration.finalDestination.xDiu,
+        y: result.contentCalibration.finalDestination.yDiu,
+        width: result.contentCalibration.finalDestination.widthDiu,
+        height: result.contentCalibration.finalDestination.heightDiu,
+      } : null,
+      destinationRectMm: result?.contentCalibration?.finalDestination ? {
+        x: result.contentCalibration.finalDestination.xMm,
+        y: result.contentCalibration.finalDestination.yMm,
+        width: result.contentCalibration.finalDestination.widthMm,
+        height: result.contentCalibration.finalDestination.heightMm,
+      } : null,
+      raw: {
+        printerName: result?.printerName || printerName || null,
+        mediaName: result?.media?.name || null,
+        rawMediaWidthDip: result?.media?.widthDip ?? null,
+        rawMediaHeightDip: result?.media?.heightDip ?? null,
+        mediaWidthMm: result?.media?.widthMm ?? null,
+        mediaHeightMm: result?.media?.heightMm ?? null,
+        rawImageableOriginX: result?.pageImageableArea?.originXDip ?? null,
+        rawImageableOriginY: result?.pageImageableArea?.originYDip ?? null,
+        rawImageableWidth: result?.pageImageableArea?.extentWidthDip ?? null,
+        rawImageableHeight: result?.pageImageableArea?.extentHeightDip ?? null,
+        validatedBorderless: result?.ticket?.validatedBorderless ?? null,
+        validatedScaling: result?.ticket?.validatedScaling ?? null,
+        sourcePixelWidth: result?.source?.widthPx ?? null,
+        sourcePixelHeight: result?.source?.heightPx ?? null,
+        sourceDpiX: result?.source?.dpiX ?? null,
+        sourceDpiY: result?.source?.dpiY ?? null,
+        calibration: getWindowsCp1500Calibration(),
+        destinationRectDip: result?.contentCalibration?.finalDestination || null,
+      },
       comparisons,
       serializedXpsGeometry: null,
       serializedXpsGeometryReason: 'Diagnostic mode constructs the identical WPF geometry but intentionally does not spool or serialize a job.',

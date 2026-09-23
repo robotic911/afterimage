@@ -36,7 +36,7 @@ if (process.platform === 'win32') {
 
 // ── Hardware printing ──────────────────────────────────────────────────
 contextBridge.exposeInMainWorld('printApi', {
-  preloadBridgeVersion: 'cp1500-runtime-calibration-v3',
+  preloadBridgeVersion: 'cp1500-geometry-diagnostics-v4',
   windowsPrintBackendId: 'native-windows-printticket-xps-v2',
   platform: process.platform,
   isPackaged: !process.defaultApp,

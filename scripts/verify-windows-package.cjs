@@ -14,7 +14,7 @@ const required = {
     'getWindowsCp1500ContentCalibration',
     'resetWindowsCp1500ContentCalibration',
     'getWindowsCp1500GeometryDiagnostics',
-    'cp1500-runtime-calibration-v3',
+    'cp1500-geometry-diagnostics-v4',
   ],
   'electron.cjs': ['print:windows-cp1500-calibration', 'print:windows-cp1500-geometry-diagnostics', 'app:build-info'],
   'windowsPrintBackend.cjs': ['Native Windows PrintTicket/XPS', 'PageBorderless', 'WINDOWS_CP1500_CALIBRATION', 'offsetXmm: 0', 'offsetYmm: 0', 'Stretch]::Uniform'],
@@ -39,7 +39,7 @@ console.log(JSON.stringify({
   ok: true,
   archivePath,
   archiveModifiedAt: fs.statSync(archivePath).mtime.toISOString(),
-  preloadBridgeVersion: 'cp1500-runtime-calibration-v3',
+  preloadBridgeVersion: 'cp1500-geometry-diagnostics-v4',
   windowsPrintBackendId: 'native-windows-printticket-xps-v2',
   files: Object.keys(required),
 }, null, 2));
