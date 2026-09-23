@@ -26,9 +26,12 @@ const {
   createSolidDiagnosticPng,
   getWindowsCp1500Calibration,
   getWindowsCp1500GeometryDiagnostics,
+  getWindowsCp1500LayoutMargins,
   printUsingWindowsCp1500,
   resetWindowsCp1500Calibration,
+  resetWindowsCp1500LayoutMargins,
   setWindowsCp1500Calibration,
+  setWindowsCp1500LayoutMargins,
 } = require('./windowsPrintBackend.cjs');
 
 const APP_ID = 'com.kennethpatino.kukuphotobooth';
@@ -5457,6 +5460,21 @@ ipcMain.handle('print:windows-cp1500-calibration:set', async (_event, calibratio
 ipcMain.handle('print:windows-cp1500-calibration:reset', async () => {
   if (process.platform !== 'win32') throw new Error('Windows CP1500 calibration is Windows-only.');
   return resetWindowsCp1500Calibration();
+});
+
+ipcMain.handle('print:windows-cp1500-layout-margins:get', async () => {
+  if (process.platform !== 'win32') throw new Error('Windows CP1500 layout margins are Windows-only.');
+  return getWindowsCp1500LayoutMargins();
+});
+
+ipcMain.handle('print:windows-cp1500-layout-margins:set', async (_event, margins = {}) => {
+  if (process.platform !== 'win32') throw new Error('Windows CP1500 layout margins are Windows-only.');
+  return setWindowsCp1500LayoutMargins(margins);
+});
+
+ipcMain.handle('print:windows-cp1500-layout-margins:reset', async () => {
+  if (process.platform !== 'win32') throw new Error('Windows CP1500 layout margins are Windows-only.');
+  return resetWindowsCp1500LayoutMargins();
 });
 
 ipcMain.handle('print:windows-cp1500-geometry-diagnostics', async (event, options = {}) => {
