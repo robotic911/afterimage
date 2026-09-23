@@ -20,6 +20,7 @@ const {
 const {
   WINDOWS_CP1500_BACKEND,
   WINDOWS_CP1500_CALIBRATION,
+  buildPowerShellFileLaunch,
   buildWindowsCp1500PrintScript,
   calculateCenteredContentRectangle,
   createSolidDiagnosticPng,
@@ -375,6 +376,21 @@ test('CP1500 diagnostic source is a non-empty 1200x1800 valid PNG', () => {
   assert.equal(png.subarray(12, 16).toString('ascii'), 'IHDR');
   assert.equal(png.readUInt32BE(16), 1200);
   assert.equal(png.readUInt32BE(20), 1800);
+});
+
+test('large CP1500 PowerShell scripts launch through a small temporary-file command', () => {
+  const largeScript = `# diagnostic\n${'Write-Output "geometry"\n'.repeat(10000)}`;
+  const scriptPath = 'C:\\Temp\\afterimage-cp1500-diagnostic.ps1';
+  const { executable, args, launch } = buildPowerShellFileLaunch(scriptPath, largeScript);
+
+  assert.equal(executable, 'powershell.exe');
+  assert.deepEqual(args.slice(-2), ['-File', scriptPath]);
+  assert.equal(args.includes('-EncodedCommand'), false);
+  assert.equal(args.some((argument) => argument.includes('Write-Output')), false);
+  assert.ok(launch.scriptCharacterLength > 200000);
+  assert.ok(launch.totalArgumentCharacterLength < 256);
+  assert.ok(launch.previousTotalArgumentCharacterLength > 500000);
+  assert.equal(launch.launchMode, 'temporary-ps1');
 });
 
 test('CP1500 geometry diagnostic is best-effort for partial Canon capabilities', () => {

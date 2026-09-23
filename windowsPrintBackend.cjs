@@ -1,4 +1,5 @@
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const zlib = require('zlib');
@@ -487,12 +488,57 @@ $result | ConvertTo-Json -Depth 10 -Compress
 `;
 }
 
-function runPowerShellJson(script, timeoutMs = WINDOWS_CP1500_JOB_TIMEOUT_MS, onTicketValidated = null) {
-  return new Promise((resolve) => {
-    const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Sta', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { windowsHide: true });
+function buildPowerShellFileLaunch(scriptPath, script) {
+  const executable = 'powershell.exe';
+  const args = ['-NoProfile', '-NonInteractive', '-Sta', '-ExecutionPolicy', 'Bypass', '-File', scriptPath];
+  const previousEncodedLength = Buffer.from(script, 'utf16le').toString('base64').length;
+  return {
+    executable,
+    args,
+    launch: {
+      launchMode: 'temporary-ps1',
+      executable,
+      argumentCount: args.length,
+      totalArgumentCharacterLength: args.reduce((total, value) => total + String(value).length, 0),
+      scriptCharacterLength: script.length,
+      previousEncodedCommandCharacterLength: previousEncodedLength,
+      previousTotalArgumentCharacterLength: '-NoProfile'.length + '-NonInteractive'.length + '-Sta'.length + '-ExecutionPolicy'.length + 'Bypass'.length + '-EncodedCommand'.length + previousEncodedLength,
+      temporaryScriptPath: scriptPath,
+      scriptFileExists: false,
+      scriptFileSize: null,
+      inputJsonPath: null,
+      inputJsonSize: null,
+      cleanupAttempted: false,
+      scriptFileCleanedUp: false,
+    },
+  };
+}
+
+async function runPowerShellJson(script, timeoutMs = WINDOWS_CP1500_JOB_TIMEOUT_MS, onTicketValidated = null, tempDirectory = os.tmpdir()) {
+  const scriptPath = path.join(tempDirectory, `afterimage-cp1500-powershell-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}.ps1`);
+  const fileBytes = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(script, 'utf8')]);
+  const command = buildPowerShellFileLaunch(scriptPath, script);
+  try {
+    await fs.promises.writeFile(scriptPath, fileBytes, { flag: 'wx' });
+    const scriptStats = await fs.promises.stat(scriptPath);
+    command.launch.scriptFileExists = true;
+    command.launch.scriptFileSize = scriptStats.size;
+    return await new Promise((resolve) => {
+    let child;
+    try { child = spawn(command.executable, command.args, { windowsHide: true }); }
+    catch (error) {
+      const errorDetails = { name: error.name, message: error.message, code: error.code || null, stack: error.stack || null, stage: 'spawn-powershell' };
+      resolve({ ok: false, submitted: false, backend: WINDOWS_CP1500_BACKEND, launch: command.launch, error: error.message, errorDetails });
+      return;
+    }
     let stdout = ''; let stderr = ''; let settled = false;
-    const finish = (value) => { if (!settled) { settled = true; clearTimeout(timer); resolve(value); } };
-    const timer = setTimeout(() => { try { child.kill(); } catch {} finish({ ok: false, submitted: false, backend: WINDOWS_CP1500_BACKEND, error: `Windows print submission timed out after ${timeoutMs}ms` }); }, timeoutMs);
+    let timedOut = false;
+    const finish = (value) => { if (!settled) { settled = true; clearTimeout(timer); resolve({ ...value, launch: command.launch }); } };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try { child.kill(); } catch {}
+      setTimeout(() => finish({ ok: false, submitted: false, backend: WINDOWS_CP1500_BACKEND, error: `Windows PowerShell operation timed out after ${timeoutMs}ms`, errorDetails: { name: 'TimeoutError', message: `Windows PowerShell operation timed out after ${timeoutMs}ms`, code: 'ETIMEDOUT', stack: null, stage: 'powershell-timeout' } }), 2000);
+    }, timeoutMs);
     let lineBuffer = '';
     child.stdout.on('data', (chunk) => {
       const text = chunk.toString('utf8');
@@ -506,12 +552,23 @@ function runPowerShellJson(script, timeoutMs = WINDOWS_CP1500_JOB_TIMEOUT_MS, on
       }
     });
     child.stderr.on('data', (chunk) => { stderr += chunk.toString('utf8'); });
-    child.on('error', (error) => finish({ ok: false, submitted: false, backend: WINDOWS_CP1500_BACKEND, error: error.message }));
+    child.on('error', (error) => finish({ ok: false, submitted: false, backend: WINDOWS_CP1500_BACKEND, error: error.message, errorDetails: { name: error.name, message: error.message, code: error.code || null, stack: error.stack || null, stage: 'spawn-powershell' } }));
     child.on('close', () => {
+      if (timedOut) {
+        finish({ ok: false, submitted: false, backend: WINDOWS_CP1500_BACKEND, error: `Windows PowerShell operation timed out after ${timeoutMs}ms`, errorDetails: { name: 'TimeoutError', message: `Windows PowerShell operation timed out after ${timeoutMs}ms`, code: 'ETIMEDOUT', stack: null, stage: 'powershell-timeout' } });
+        return;
+      }
       try { finish({ ...JSON.parse(stdout.trim().split(/\r?\n/).filter(Boolean).at(-1)), stderr: stderr.trim() || null }); }
-      catch { finish({ ok: false, submitted: false, backend: WINDOWS_CP1500_BACKEND, error: stderr.trim() || 'Windows print backend returned invalid output', stdout: stdout.slice(-2000) }); }
+      catch (error) { const message = stderr.trim() || 'Windows print backend returned invalid JSON output'; finish({ ok: false, submitted: false, backend: WINDOWS_CP1500_BACKEND, error: message, errorDetails: { name: error.name, message, code: null, stack: error.stack || null, stage: 'parse-powershell-output' }, stdout: stdout.slice(-2000) }); }
     });
-  });
+    });
+  } catch (error) {
+    return { ok: false, submitted: false, backend: WINDOWS_CP1500_BACKEND, launch: command.launch, error: error.message, errorDetails: { name: error.name, message: error.message, code: error.code || null, stack: error.stack || null, stage: 'write-powershell-script' } };
+  } finally {
+    command.launch.cleanupAttempted = true;
+    await fs.promises.unlink(scriptPath).catch(() => {});
+    command.launch.scriptFileCleanedUp = !fs.existsSync(scriptPath);
+  }
 }
 
 async function printUsingWindowsCp1500({ dataUrl, printerName, jobName, tempDirectory, onTicketValidated = null }) {
@@ -520,7 +577,7 @@ async function printUsingWindowsCp1500({ dataUrl, printerName, jobName, tempDire
   const imagePath = path.join(tempDirectory, `afterimage-cp1500-${process.pid}-${Date.now()}${extension}`);
   await fs.promises.writeFile(imagePath, bytes, { flag: 'wx' });
   try {
-    return await runPowerShellJson(buildWindowsCp1500PrintScript({ printerName, imagePath, jobName, calibration: getWindowsCp1500Calibration() }), WINDOWS_CP1500_JOB_TIMEOUT_MS, onTicketValidated);
+    return await runPowerShellJson(buildWindowsCp1500PrintScript({ printerName, imagePath, jobName, calibration: getWindowsCp1500Calibration() }), WINDOWS_CP1500_JOB_TIMEOUT_MS, onTicketValidated, tempDirectory);
   } finally {
     await fs.promises.unlink(imagePath).catch(() => {});
   }
@@ -544,9 +601,9 @@ async function getWindowsCp1500GeometryDiagnostics({ dataUrl = null, imagePath: 
       jobName: 'Afterimage CP1500 Geometry Diagnostic',
       calibration: diagnosticCalibration,
       diagnosticOnly: true,
-    }));
+    }), WINDOWS_CP1500_JOB_TIMEOUT_MS, null, tempDirectory);
     if (result?.error && typeof result.error !== 'object') {
-      result.error = { name: 'Error', message: String(result.error), stack: null, stage: 'powershell-diagnostic' };
+      result.error = result.errorDetails || { name: 'Error', message: String(result.error), stack: null, stage: 'powershell-diagnostic' };
     }
     const pageWidth = result?.media?.widthDip;
     const pageHeight = result?.media?.heightDip;
@@ -658,6 +715,7 @@ async function getWindowsCp1500GeometryDiagnostics({ dataUrl = null, imagePath: 
 module.exports = {
   WINDOWS_CP1500_BACKEND,
   WINDOWS_CP1500_CALIBRATION,
+  buildPowerShellFileLaunch,
   buildWindowsCp1500PrintScript,
   calculateCenteredContentRectangle,
   createSolidDiagnosticPng,
