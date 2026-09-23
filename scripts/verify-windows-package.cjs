@@ -8,7 +8,13 @@ if (!fs.existsSync(archivePath)) {
 }
 
 const required = {
-  'preload.cjs': ['printWindowsCp1500Calibration', 'cp1500-native-v2'],
+  'preload.cjs': [
+    'printWindowsCp1500Calibration',
+    'setWindowsCp1500ContentCalibration',
+    'getWindowsCp1500ContentCalibration',
+    'resetWindowsCp1500ContentCalibration',
+    'cp1500-runtime-calibration-v3',
+  ],
   'electron.cjs': ['print:windows-cp1500-calibration', 'app:build-info'],
   'windowsPrintBackend.cjs': ['Native Windows PrintTicket/XPS', 'PageBorderless', 'WINDOWS_CP1500_CALIBRATION', 'offsetXmm: 0', 'offsetYmm: 0', 'Stretch]::Uniform'],
   'printPipeline.cjs': ['native_windows_printticket_xps'],
@@ -32,7 +38,7 @@ console.log(JSON.stringify({
   ok: true,
   archivePath,
   archiveModifiedAt: fs.statSync(archivePath).mtime.toISOString(),
-  preloadBridgeVersion: 'cp1500-native-v2',
+  preloadBridgeVersion: 'cp1500-runtime-calibration-v3',
   windowsPrintBackendId: 'native-windows-printticket-xps-v2',
   files: Object.keys(required),
 }, null, 2));

@@ -336,7 +336,14 @@ test('calibration IPC is bridged through preload to the matching main handler', 
   const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
   assert.match(preload, /printWindowsCp1500Calibration:\s*\(\)\s*=>\s*ipcRenderer\.invoke\('print:windows-cp1500-calibration'\)/);
+  assert.match(preload, /getWindowsCp1500ContentCalibration:\s*\(\)\s*=>\s*ipcRenderer\.invoke\('print:windows-cp1500-calibration:get'\)/);
+  assert.match(preload, /setWindowsCp1500ContentCalibration:\s*\(calibration\)\s*=>\s*ipcRenderer\.invoke\('print:windows-cp1500-calibration:set', calibration\)/);
+  assert.match(preload, /resetWindowsCp1500ContentCalibration:\s*\(\)\s*=>\s*ipcRenderer\.invoke\('print:windows-cp1500-calibration:reset'\)/);
+  assert.match(preload, /preloadBridgeVersion:\s*'cp1500-runtime-calibration-v3'/);
   assert.match(main, /ipcMain\.handle\('print:windows-cp1500-calibration'/);
+  assert.match(main, /ipcMain\.handle\('print:windows-cp1500-calibration:get'[\s\S]*return getWindowsCp1500Calibration\(\)/);
+  assert.match(main, /ipcMain\.handle\('print:windows-cp1500-calibration:set'[\s\S]*return setWindowsCp1500Calibration\(calibration\)/);
+  assert.match(main, /ipcMain\.handle\('print:windows-cp1500-calibration:reset'[\s\S]*return resetWindowsCp1500Calibration\(\)/);
   assert.match(main, /print:windows-cp1500-calibration[\s\S]*submitSinglePrintCopy\(\{/);
   assert.match(main, /submitSinglePrintCopy[\s\S]*printUsingWindowsCp1500\(\{/);
   assert.ok(packageJson.build.files.includes('preload.cjs'));

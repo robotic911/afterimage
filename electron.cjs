@@ -5436,30 +5436,25 @@ ipcMain.handle('app:build-info', async () => {
     appVersion: app.getVersion(),
     platform: process.platform,
     isPackaged: app.isPackaged,
-    preloadBridgeVersion: 'cp1500-native-v2',
+    preloadBridgeVersion: 'cp1500-runtime-calibration-v3',
     windowsPrintBackendId: 'native-windows-printticket-xps-v2',
     buildTimestamp,
   };
 });
 
-ipcMain.handle('print:windows-cp1500-calibration:get', async () => ({
-  ok: process.platform === 'win32',
-  calibration: process.platform === 'win32' ? getWindowsCp1500Calibration() : null,
-  error: process.platform === 'win32' ? null : 'Windows CP1500 calibration is Windows-only.',
-}));
+ipcMain.handle('print:windows-cp1500-calibration:get', async () => {
+  if (process.platform !== 'win32') throw new Error('Windows CP1500 calibration is Windows-only.');
+  return getWindowsCp1500Calibration();
+});
 
 ipcMain.handle('print:windows-cp1500-calibration:set', async (_event, calibration = {}) => {
-  if (process.platform !== 'win32') return { ok: false, calibration: null, error: 'Windows CP1500 calibration is Windows-only.' };
-  try {
-    return { ok: true, calibration: setWindowsCp1500Calibration(calibration), error: null };
-  } catch (error) {
-    return { ok: false, calibration: getWindowsCp1500Calibration(), error: error?.message || String(error) };
-  }
+  if (process.platform !== 'win32') throw new Error('Windows CP1500 calibration is Windows-only.');
+  return setWindowsCp1500Calibration(calibration);
 });
 
 ipcMain.handle('print:windows-cp1500-calibration:reset', async () => {
-  if (process.platform !== 'win32') return { ok: false, calibration: null, error: 'Windows CP1500 calibration is Windows-only.' };
-  return { ok: true, calibration: resetWindowsCp1500Calibration(), error: null };
+  if (process.platform !== 'win32') throw new Error('Windows CP1500 calibration is Windows-only.');
+  return resetWindowsCp1500Calibration();
 });
 
 ipcMain.handle('print:windows-cp1500-calibration', async (event) => {
