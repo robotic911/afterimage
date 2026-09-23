@@ -22,6 +22,7 @@ const {
   WINDOWS_CP1500_CALIBRATION,
   buildWindowsCp1500PrintScript,
   calculateCenteredContentRectangle,
+  createSolidDiagnosticPng,
   decodeImageDataUrl,
 } = require('../windowsPrintBackend.cjs');
 
@@ -339,7 +340,7 @@ test('calibration IPC is bridged through preload to the matching main handler', 
   assert.match(preload, /getWindowsCp1500ContentCalibration:\s*\(\)\s*=>\s*ipcRenderer\.invoke\('print:windows-cp1500-calibration:get'\)/);
   assert.match(preload, /setWindowsCp1500ContentCalibration:\s*\(calibration\)\s*=>\s*ipcRenderer\.invoke\('print:windows-cp1500-calibration:set', calibration\)/);
   assert.match(preload, /resetWindowsCp1500ContentCalibration:\s*\(\)\s*=>\s*ipcRenderer\.invoke\('print:windows-cp1500-calibration:reset'\)/);
-  assert.match(preload, /getWindowsCp1500GeometryDiagnostics:\s*\(\)\s*=>\s*ipcRenderer\.invoke\('print:windows-cp1500-geometry-diagnostics'\)/);
+  assert.match(preload, /getWindowsCp1500GeometryDiagnostics:\s*\(options = \{\}\)\s*=>\s*ipcRenderer\.invoke\('print:windows-cp1500-geometry-diagnostics', options\)/);
   assert.match(preload, /preloadBridgeVersion:\s*'cp1500-geometry-diagnostics-v4'/);
   assert.match(main, /ipcMain\.handle\('print:windows-cp1500-calibration'/);
   assert.match(main, /ipcMain\.handle\('print:windows-cp1500-calibration:get'[\s\S]*return getWindowsCp1500Calibration\(\)/);
@@ -365,6 +366,15 @@ test('CP1500 diagnostic scales remain numerically distinct at 300 DPI', () => {
   assert.ok(Math.abs(dipToMm(at101.final.height - at1005.final.height) - 0.74) < 1e-10);
   assert.ok(Math.abs(dipTo300Dpi(at101.final.width - at1005.final.width) - 5.826771653543307) < 1e-10);
   assert.ok(Math.abs(dipTo300Dpi(at101.final.height - at1005.final.height) - 8.740157480314961) < 1e-10);
+});
+
+test('CP1500 diagnostic source is a non-empty 1200x1800 valid PNG', () => {
+  const png = createSolidDiagnosticPng(1200, 1800);
+  assert.ok(png.length > 0);
+  assert.deepEqual([...png.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+  assert.equal(png.subarray(12, 16).toString('ascii'), 'IHDR');
+  assert.equal(png.readUInt32BE(16), 1200);
+  assert.equal(png.readUInt32BE(20), 1800);
 });
 
 test('CP1500 geometry diagnostic is best-effort for partial Canon capabilities', () => {

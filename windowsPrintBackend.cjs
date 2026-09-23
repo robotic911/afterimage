@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
+const zlib = require('zlib');
 
 const WINDOWS_CP1500_BACKEND = 'Native Windows PrintTicket/XPS';
 const WINDOWS_CP1500_JOB_TIMEOUT_MS = 60000;
@@ -96,6 +97,35 @@ function decodeImageDataUrl(dataUrl) {
 
 function encodedPowerShellValue(value) {
   return Buffer.from(String(value || ''), 'utf8').toString('base64');
+}
+
+function crc32(buffer) {
+  let crc = 0xffffffff;
+  for (const byte of buffer) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function createSolidDiagnosticPng(width = 1200, height = 1800) {
+  if (!Number.isInteger(width) || width <= 0 || !Number.isInteger(height) || height <= 0) {
+    throw new TypeError('Diagnostic PNG dimensions must be positive integers');
+  }
+  const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  const chunk = (type, data) => {
+    const typeBytes = Buffer.from(type, 'ascii');
+    const length = Buffer.alloc(4); length.writeUInt32BE(data.length);
+    const checksum = Buffer.alloc(4); checksum.writeUInt32BE(crc32(Buffer.concat([typeBytes, data])));
+    return Buffer.concat([length, typeBytes, data, checksum]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0); ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8; ihdr[9] = 2; // 8-bit RGB
+  const row = Buffer.alloc(1 + width * 3, 255); row[0] = 0;
+  const raw = Buffer.alloc(row.length * height);
+  for (let y = 0; y < height; y += 1) row.copy(raw, y * row.length);
+  return Buffer.concat([signature, chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
 }
 
 function buildWindowsCp1500PrintScript({ printerName, imagePath, jobName, calibration = getWindowsCp1500Calibration(), diagnosticOnly = false }) {
@@ -361,7 +391,7 @@ try {
   $result.media = MediaRecord $ticket.PageMediaSize
   $result.scalingRequested = 'None'
   $result.scalingValidated = EnumName $ticket.PageScaling
-  $result.ticket = [ordered]@{ mediaName = if ($null -ne $result.media) { $result.media.name } else { $null }; validatedBorderless = EnumName $ticket.PageBorderless; validatedScaling = EnumName $ticket.PageScaling }
+  $result.ticket = [ordered]@{ mediaName = if ($null -ne $result.media) { $result.media.name } else { $null }; validatedBorderless = EnumName $ticket.PageBorderless; validatedScaling = EnumName $ticket.PageScaling; outputQuality = EnumName $ticket.OutputQuality }
   if (-not $result.borderlessSelected) {
     if ($DiagnosticOnly) { Warn 'Validated PageBorderless value unavailable or not Borderless' }
     else { throw 'Windows rejected PageBorderless=Borderless for the selected media.' }
@@ -496,17 +526,23 @@ async function printUsingWindowsCp1500({ dataUrl, printerName, jobName, tempDire
   }
 }
 
-async function getWindowsCp1500GeometryDiagnostics({ dataUrl, printerName, tempDirectory }) {
+async function getWindowsCp1500GeometryDiagnostics({ dataUrl = null, imagePath: providedImagePath = null, printerName, tempDirectory, calibration = getWindowsCp1500Calibration() }) {
   if (process.platform !== 'win32') throw new Error('Windows CP1500 diagnostics called on a non-Windows platform');
-  const { bytes, extension } = decodeImageDataUrl(dataUrl);
-  const imagePath = path.join(tempDirectory, `afterimage-cp1500-diagnostic-${process.pid}-${Date.now()}${extension}`);
-  await fs.promises.writeFile(imagePath, bytes, { flag: 'wx' });
+  const diagnosticCalibration = normalizeCalibration(calibration);
+  let imagePath = providedImagePath;
+  let ownsImagePath = false;
+  if (!imagePath) {
+    const { bytes, extension } = decodeImageDataUrl(dataUrl);
+    imagePath = path.join(tempDirectory, `afterimage-cp1500-diagnostic-${process.pid}-${Date.now()}${extension}`);
+    await fs.promises.writeFile(imagePath, bytes, { flag: 'wx' });
+    ownsImagePath = true;
+  }
   try {
     const result = await runPowerShellJson(buildWindowsCp1500PrintScript({
       printerName,
       imagePath,
       jobName: 'Afterimage CP1500 Geometry Diagnostic',
-      calibration: getWindowsCp1500Calibration(),
+      calibration: diagnosticCalibration,
       diagnosticOnly: true,
     }));
     if (result?.error && typeof result.error !== 'object') {
@@ -541,8 +577,17 @@ async function getWindowsCp1500GeometryDiagnostics({ dataUrl, printerName, tempD
       ...result,
       source: result?.source || null,
       media: result?.media || null,
-      imageableArea: result?.pageImageableArea || null,
-      calibration: getWindowsCp1500Calibration(),
+      imageableArea: result?.pageImageableArea ? {
+        ...result.pageImageableArea,
+        widthDip: result.pageImageableArea.extentWidthDip ?? null,
+        heightDip: result.pageImageableArea.extentHeightDip ?? null,
+        widthMm: result.pageImageableArea.extentWidthMm ?? null,
+        heightMm: result.pageImageableArea.extentHeightMm ?? null,
+        aspect: result.pageImageableArea.extentWidthDip && result.pageImageableArea.extentHeightDip
+          ? result.pageImageableArea.extentWidthDip / result.pageImageableArea.extentHeightDip
+          : null,
+      } : null,
+      calibration: diagnosticCalibration,
       destinationRectDip: result?.contentCalibration?.finalDestination ? {
         x: result.contentCalibration.finalDestination.xDiu,
         y: result.contentCalibration.finalDestination.yDiu,
@@ -554,6 +599,25 @@ async function getWindowsCp1500GeometryDiagnostics({ dataUrl, printerName, tempD
         y: result.contentCalibration.finalDestination.yMm,
         width: result.contentCalibration.finalDestination.widthMm,
         height: result.contentCalibration.finalDestination.heightMm,
+      } : null,
+      fixedPage: result?.wpfGeometry?.fixedPage ? {
+        widthDip: result.wpfGeometry.fixedPage.width,
+        heightDip: result.wpfGeometry.fixedPage.height,
+        widthMm: result.wpfGeometry.fixedPage.width * 25.4 / 96,
+        heightMm: result.wpfGeometry.fixedPage.height * 25.4 / 96,
+      } : null,
+      destination: result?.contentCalibration?.finalDestination || null,
+      xpsImage: result?.wpfGeometry?.image ? {
+        widthDip: result.wpfGeometry.image.width,
+        heightDip: result.wpfGeometry.image.height,
+        leftDip: result.wpfGeometry.image.canvasLeft,
+        topDip: result.wpfGeometry.image.canvasTop,
+      } : null,
+      printTicket: result?.ticket ? {
+        pageMediaSize: result.ticket.mediaName ?? null,
+        pageBorderless: result.ticket.validatedBorderless ?? null,
+        pageScaling: result.ticket.validatedScaling ?? null,
+        outputQuality: result.ticket.outputQuality ?? null,
       } : null,
       raw: {
         printerName: result?.printerName || printerName || null,
@@ -572,7 +636,7 @@ async function getWindowsCp1500GeometryDiagnostics({ dataUrl, printerName, tempD
         sourcePixelHeight: result?.source?.heightPx ?? null,
         sourceDpiX: result?.source?.dpiX ?? null,
         sourceDpiY: result?.source?.dpiY ?? null,
-        calibration: getWindowsCp1500Calibration(),
+        calibration: diagnosticCalibration,
         destinationRectDip: result?.contentCalibration?.finalDestination || null,
       },
       comparisons,
@@ -587,7 +651,7 @@ async function getWindowsCp1500GeometryDiagnostics({ dataUrl, printerName, tempD
       },
     };
   } finally {
-    await fs.promises.unlink(imagePath).catch(() => {});
+    if (ownsImagePath) await fs.promises.unlink(imagePath).catch(() => {});
   }
 }
 
@@ -596,6 +660,7 @@ module.exports = {
   WINDOWS_CP1500_CALIBRATION,
   buildWindowsCp1500PrintScript,
   calculateCenteredContentRectangle,
+  createSolidDiagnosticPng,
   decodeImageDataUrl,
   getWindowsCp1500Calibration,
   getWindowsCp1500GeometryDiagnostics,

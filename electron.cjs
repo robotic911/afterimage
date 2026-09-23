@@ -23,6 +23,7 @@ const {
 } = require('./printPipeline.cjs');
 const {
   WINDOWS_CP1500_BACKEND,
+  createSolidDiagnosticPng,
   getWindowsCp1500Calibration,
   getWindowsCp1500GeometryDiagnostics,
   printUsingWindowsCp1500,
@@ -5458,10 +5459,22 @@ ipcMain.handle('print:windows-cp1500-calibration:reset', async () => {
   return resetWindowsCp1500Calibration();
 });
 
-ipcMain.handle('print:windows-cp1500-geometry-diagnostics', async (event) => {
+ipcMain.handle('print:windows-cp1500-geometry-diagnostics', async (event, options = {}) => {
   let stage = 'platform-check';
   let printerName = null;
   let mediaName = null;
+  let diagnosticSourcePath = null;
+  const sourceCreation = {
+    attemptedPath: null,
+    outputDirectory: null,
+    widthPx: 1200,
+    heightPx: 1800,
+    encodingMethod: 'Node.js zlib PNG encoder (8-bit RGB)',
+    nativeImageEmpty: null,
+    writeFileFailed: false,
+    pngConversionFailed: false,
+    fileSizeBytes: null,
+  };
   try {
     if (process.platform !== 'win32') throw new Error('Windows CP1500 geometry diagnostics are Windows-only.');
     stage = 'resolve-printer';
@@ -5469,15 +5482,33 @@ ipcMain.handle('print:windows-cp1500-geometry-diagnostics', async (event) => {
     printerName = target?.printer?.name || null;
     if (!printerName) throw new Error('Resolved printer has no Windows device name.');
     stage = 'create-diagnostic-source';
-    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1800"><rect width="1200" height="1800" fill="white"/></svg>';
-    const image = nativeImage.createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`);
-    if (image.isEmpty()) throw new Error('Could not create diagnostic source image');
-    const dataUrl = `data:image/png;base64,${image.toPNG().toString('base64')}`;
+    const outputDirectory = app.getPath('temp');
+    diagnosticSourcePath = path.join(outputDirectory, `afterimage-cp1500-geometry-${process.pid}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.png`);
+    sourceCreation.attemptedPath = diagnosticSourcePath;
+    sourceCreation.outputDirectory = outputDirectory;
+    let pngBytes;
+    try { pngBytes = createSolidDiagnosticPng(1200, 1800); }
+    catch (error) { sourceCreation.pngConversionFailed = true; throw error; }
+    try { await fsp.writeFile(diagnosticSourcePath, pngBytes, { flag: 'wx' }); }
+    catch (error) { sourceCreation.writeFileFailed = true; throw error; }
+    const fileStats = await fsp.stat(diagnosticSourcePath);
+    sourceCreation.fileSizeBytes = fileStats.size;
+    if (fileStats.size <= 0) throw new Error('Diagnostic PNG was written with zero bytes.');
+    const image = nativeImage.createFromPath(diagnosticSourcePath);
+    sourceCreation.nativeImageEmpty = image.isEmpty();
+    if (image.isEmpty()) throw new Error('Electron could not decode the generated diagnostic PNG.');
+    const imageSize = image.getSize();
+    if (imageSize.width !== 1200 || imageSize.height !== 1800) {
+      throw new Error(`Diagnostic PNG decoded as ${imageSize.width}x${imageSize.height}; expected 1200x1800.`);
+    }
     stage = 'query-windows-printing';
+    const requestedScale = options?.scale == null ? getWindowsCp1500Calibration().scale : Number(options.scale);
+    const currentCalibration = getWindowsCp1500Calibration();
     const result = await getWindowsCp1500GeometryDiagnostics({
-      dataUrl,
+      imagePath: diagnosticSourcePath,
       printerName,
-      tempDirectory: app.getPath('temp'),
+      tempDirectory: outputDirectory,
+      calibration: { ...currentCalibration, scale: requestedScale },
     });
     mediaName = result?.media?.name || result?.ticket?.mediaName || null;
     if (result?.error) {
@@ -5487,13 +5518,14 @@ ipcMain.handle('print:windows-cp1500-geometry-diagnostics', async (event) => {
         mediaName,
       });
     }
-    return result;
+    return { ...result, diagnosticSource: sourceCreation };
   } catch (error) {
     const structuredError = {
       name: error?.name || 'Error',
       message: error?.message || String(error),
       stack: error?.stack || null,
       stage,
+      sourceCreation,
     };
     console.error('[WINDOWS CP1500 GEOMETRY DIAGNOSTIC ERROR]', {
       ...structuredError,
@@ -5508,6 +5540,8 @@ ipcMain.handle('print:windows-cp1500-geometry-diagnostics', async (event) => {
       warnings: [],
       error: structuredError,
     };
+  } finally {
+    if (diagnosticSourcePath) await fsp.unlink(diagnosticSourcePath).catch(() => {});
   }
 });
 
